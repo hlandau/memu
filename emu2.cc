@@ -44,6 +44,8 @@
 
 /* ARMv8-M Simulator                                                       {{{1
  * ============================================================================
+ * TODO LIST:
+ *  IMPL_DEF_OVERRIDDEN_EXCEPTIONS_PENDED
  */
 
 /* Simulator Debugging and Tracing Utilities {{{2
@@ -622,35 +624,44 @@ struct Emulator {
     _TakeReset();
   }
 
-  /* TopLevel {{{3
+  /* Public Functions {{{3
+   * ================
+   */
+
+  /* TopLevel {{{4
    * --------
    */
   void TopLevel() { _TopLevel(); }
 
+
+  /* Architectural Support Functions {{{3
+   * ===============================
+   */
 private:
-  /* _IsSEE {{{3
+
+  /* _IsSEE {{{4
    * ------
    */
   static bool _IsSEE(const Exception &e) { return e.GetType() == ExceptionType::SEE; }
 
-  /* _IsUNDEFINED {{{3
+  /* _IsUNDEFINED {{{4
    * ------------
    */
   static bool _IsUNDEFINED(const Exception &e) { return e.GetType() == ExceptionType::UNDEFINED; }
 
-  /* _IsExceptionTaken {{{3
+  /* _IsExceptionTaken {{{4
    * -----------------
    */
   static bool _IsExceptionTaken(const Exception &e) { return e.GetType() == ExceptionType::EndOfInstruction; }
 
-  /* _NestReset {{{3
+  /* _NestReset {{{4
    * ----------
    */
   void _NestReset() {
     _n = CpuNest();
   }
 
-  /* _NestAccessClassify {{{3
+  /* _NestAccessClassify {{{4
    * -------------------
    * {targetNS, targetRAZWI, targetFault}
    */
@@ -682,7 +693,7 @@ private:
     // NON-SECURE NPRIV ACCESS TO 0xE002_xxxx BusFault                    BusFault
     //
     // INTERNAL         ACCESS TO 0xE000_xxxx Secure space                Secure space
-    // INTERNAL         ACCESS TO 0xE002_xxxx Non-Secure space            [TODO] Non-Secure space
+    // INTERNAL         ACCESS TO 0xE002_xxxx Non-Secure space            UNREACHABLE
 
     //       SPA    S=Secure?  P=Privileged?  A=Alt Space?
     switch (code) {
@@ -699,7 +710,7 @@ private:
     return {targetNS, targetRAZWI, targetFault};
   }
 
-  /* _NestLoad32 {{{3
+  /* _NestLoad32 {{{4
    * -----------
    * Returns nonzero for BusFault.
    */
@@ -719,11 +730,14 @@ private:
     return 0;
   }
 
-  /* _NestLoad32Actual {{{3
+  /* _NestLoad32Actual {{{4
    * -----------------
    */
   uint32_t _NestLoad32Actual(phys_t addr) {
-    phys_t baddr = addr & ~0x2'0000U;
+    phys_t baddr    = addr & ~0x2'0000U;
+    bool   isNS     = !!(addr &  0x2'0000U);
+    if (isNS)
+      ASSERT(_HaveSecurityExt());
 
     switch (addr) {
       case REG_FPDSCR_S:      return _n.fpdscrS;
@@ -763,7 +777,7 @@ private:
       case REG_FP_CTRL:       return _n.fpCtrl;
       default:
         if (baddr >= 0xE000E200 && baddr < 0xE000E240)
-          return _NestLoadNvicPendingReg((addr/4)&0xF, /*secure=*/!(addr & 0x2'0000));
+          return _NestLoadNvicPendingReg((addr/4)&0xF, /*secure=*/!isNS);
 
         if (addr >= 0xE000E380 && addr < 0xE000E3C0)
           return _n.nvicNonSecure[(addr/4)&0xF];
@@ -776,7 +790,7 @@ private:
     }
   }
 
-  /* _NestLoadNvicPendingReg {{{3
+  /* _NestLoadNvicPendingReg {{{4
    * -----------------------
    */
   uint32_t _NestLoadNvicPendingReg(uint32_t groupNo, bool isSecure) {
@@ -789,7 +803,7 @@ private:
     return v;
   }
 
-  /* _NestStore32 {{{3
+  /* _NestStore32 {{{4
    * ------------
    */
   int _NestStore32(phys_t addr, bool isPriv, bool isSecure, uint32_t v) {
@@ -809,11 +823,14 @@ private:
     return 0;
   }
 
-  /* _NestStore32Actual {{{3
+  /* _NestStore32Actual {{{4
    * ------------------
    */
   void _NestStore32Actual(phys_t addr, uint32_t v) {
-    phys_t baddr = addr & ~0x2'0000U;
+    phys_t baddr    = addr & ~0x2'0000U;
+    bool   isNS     = !!(addr &  0x2'0000U);
+    if (isNS)
+      ASSERT(_HaveSecurityExt());
 
     switch (addr) {
       case REG_FPDSCR_S:  _n.fpdscrS  = v; break;
@@ -840,7 +857,7 @@ private:
     }
   }
 
-  /* InternalLoad32 {{{3
+  /* InternalLoad32 {{{4
    * --------------
    */
   uint32_t InternalLoad32(phys_t addr) {
@@ -848,7 +865,7 @@ private:
     return _NestLoad32Actual(addr);
   }
 
-  /* InternalStore32 {{{3
+  /* InternalStore32 {{{4
    * ---------------
    */
   void InternalStore32(phys_t addr, uint32_t v) {
@@ -856,21 +873,21 @@ private:
     _NestStore32Actual(addr, v);
   }
 
-  /* InternalOr32 {{{3
+  /* InternalOr32 {{{4
    * ------------
    */
   void InternalOr32(phys_t addr, uint32_t x) {
     InternalStore32(addr, InternalLoad32(addr) | x);
   }
 
-  /* InternalMask32 {{{3
+  /* InternalMask32 {{{4
    * --------------
    */
   void InternalMask32(phys_t addr, uint32_t x) {
     InternalStore32(addr, InternalLoad32(addr) & ~x);
   }
 
-  /* _InternalLoadMpuSecureRegion {{{3
+  /* _InternalLoadMpuSecureRegion {{{4
    * ----------------------------
    */
   std::tuple<uint32_t,uint32_t> _InternalLoadMpuSecureRegion(size_t idx) {
@@ -878,7 +895,7 @@ private:
     return {0,0}; // {RBAR,RLAR} // TODO
   }
 
-  /* _InternalLoadMpuNonSecureRegion {{{3
+  /* _InternalLoadMpuNonSecureRegion {{{4
    * -------------------------------
    */
   std::tuple<uint32_t,uint32_t> _InternalLoadMpuNonSecureRegion(size_t idx) {
@@ -886,7 +903,7 @@ private:
     return {0,0}; // {RBAR,RLAR} // TODO
   }
 
-  /* _InternalLoadSauRegion {{{3
+  /* _InternalLoadSauRegion {{{4
    * ----------------------
    */
   std::tuple<uint32_t,uint32_t> _InternalLoadSauRegion(size_t idx) {
@@ -894,27 +911,27 @@ private:
     return {0,0}; // {RBAR,RLAR} // TODO
   }
 
-  /* _ThisInstrAddr {{{3
+  /* _ThisInstrAddr {{{4
    * --------------
    */
   uint32_t _ThisInstrAddr() { return _s.pc; }
 
-  /* _IsSecure {{{3
+  /* _IsSecure {{{4
    * ---------
    */
   bool _IsSecure() { return _HaveSecurityExt() && _s.curState == SecurityState_Secure; }
 
-  /* _HaveMainExt {{{3
+  /* _HaveMainExt {{{4
    * ------------
    */
   bool _HaveMainExt() { return true; }
 
-  /* _HaveSecurityExt {{{3
+  /* _HaveSecurityExt {{{4
    * ----------------
    */
   bool _HaveSecurityExt() { return true; }
 
-  /* _SetThisInstrDetails {{{3
+  /* _SetThisInstrDetails {{{4
    * --------------------
    */
   void _SetThisInstrDetails(uint32_t opcode, int len, uint32_t defaultCond) {
@@ -924,22 +941,22 @@ private:
     _s.curCondOverride      = -1;
   }
 
-  /* _VFPSmallRegisterBank {{{3
+  /* _VFPSmallRegisterBank {{{4
    * ---------------------
    */
   bool _VFPSmallRegisterBank() { return false; }
 
-  /* _HaveDebugMonitor {{{3
+  /* _HaveDebugMonitor {{{4
    * -----------------
    */
   bool _HaveDebugMonitor() { return _HaveMainExt(); }
 
-  /* _MaxExceptionNum {{{3
+  /* _MaxExceptionNum {{{4
    * ----------------
    */
   int _MaxExceptionNum() { return _HaveMainExt() ? 511 : 47; }
 
-  /* _GetD {{{3
+  /* _GetD {{{4
    * -----
    */
   uint64_t _GetD(int n) {
@@ -948,7 +965,7 @@ private:
     return _s.d[n];
   }
 
-  /* _SetD {{{3
+  /* _SetD {{{4
    * -----
    */
   void _SetD(int n, uint64_t value) {
@@ -957,7 +974,7 @@ private:
     _s.d[n] = value;
   }
 
-  /* _GetS {{{3
+  /* _GetS {{{4
    * -----
    */
   uint32_t _GetS(int n) {
@@ -968,7 +985,7 @@ private:
       return (uint32_t)(_GetD(n/2)>>32);
   }
 
-  /* _SetS {{{3
+  /* _SetS {{{4
    * -----
    */
   void _SetS(int n, uint32_t value) {
@@ -979,46 +996,46 @@ private:
       _SetD(n/2, (_GetD(n/2) & ~UINT64_C(0xFFFF'FFFF'0000'0000)) | (uint64_t(value)<<32));
   }
 
-  /* _ClearExclusiveLocal {{{3
+  /* _ClearExclusiveLocal {{{4
    * --------------------
    */
   void _ClearExclusiveLocal(int procID) {}
 
-  /* _ProcessorID {{{3
+  /* _ProcessorID {{{4
    * ------------
    */
   int _ProcessorID() { return 0; }
 
-  /* _SetEventRegister {{{3
+  /* _SetEventRegister {{{4
    * -----------------
    */
   void _SetEventRegister() { _s.event = true; }
 
-  /* _ClearEventRegister {{{3
+  /* _ClearEventRegister {{{4
    * -------------------
    */
   void _ClearEventRegister() { _s.event = false; }
 
-  /* _InstructionSynchronizationBarrier {{{3
+  /* _InstructionSynchronizationBarrier {{{4
    * ----------------------------------
    */
   void _InstructionSynchronizationBarrier(uint8_t option) {
     // TODO
   }
 
-  /* _HaveFPB {{{3
+  /* _HaveFPB {{{4
    * --------
    */
   bool _HaveFPB() { return true; }
 
-  /* _FPB_BreakpointMatch {{{3
+  /* _FPB_BreakpointMatch {{{4
    * --------------------
    */
   void _FPB_BreakpointMatch() {
     _GenerateDebugEventResponse();
   }
 
-  /* _DefaultExcInfo {{{3
+  /* _DefaultExcInfo {{{4
    * ---------------
    */
   ExcInfo _DefaultExcInfo() {
@@ -1033,52 +1050,52 @@ private:
     return exc;
   }
 
-  /* _HaveDWT {{{3
+  /* _HaveDWT {{{4
    * --------
    */
   bool _HaveDWT() { return true; }
 
-  /* _HaveFPExt {{{3
+  /* _HaveFPExt {{{4
    * ----------
    */
   bool _HaveFPExt() { return true; }
 
-  /* _NoninvasiveDebugAllowed {{{3
+  /* _NoninvasiveDebugAllowed {{{4
    * ------------------------
    */
   bool _NoninvasiveDebugAllowed() {
     return _ExternalNoninvasiveDebugEnabled() || _HaltingDebugAllowed();
   }
 
-  /* _HaltingDebugAllowed {{{3
+  /* _HaltingDebugAllowed {{{4
    * --------------------
    */
   bool _HaltingDebugAllowed() {
     return _ExternalInvasiveDebugEnabled() || GETBITSM(InternalLoad32(REG_DHCSR), REG_DHCSR__S_HALT);
   }
 
-  /* _ExternalInvasiveDebugEnabled {{{3
+  /* _ExternalInvasiveDebugEnabled {{{4
    * -----------------------------
    */
   bool _ExternalInvasiveDebugEnabled() {
     return false; // TODO: DBGEN == HIGH
   }
 
-  /* _ExternalNoninvasiveDebugEnabled {{{3
+  /* _ExternalNoninvasiveDebugEnabled {{{4
    * --------------------------------
    */
   bool _ExternalNoninvasiveDebugEnabled() {
     return _ExternalInvasiveDebugEnabled() || false; // TODO: NIDEN == HIGH
   }
 
-  /* _IsDWTEnabled {{{3
+  /* _IsDWTEnabled {{{4
    * -------------
    */
   bool _IsDWTEnabled() {
     return _HaveDWT() && GETBITSM(InternalLoad32(REG_DEMCR), REG_DEMCR__TRCENA) && _NoninvasiveDebugAllowed();
   }
 
-  /* _SecureHaltingDebugAllowed {{{3
+  /* _SecureHaltingDebugAllowed {{{4
    * --------------------------
    */
   bool _SecureHaltingDebugAllowed() {
@@ -1090,14 +1107,14 @@ private:
       return _ExternalSecureInvasiveDebugEnabled();
   }
 
-  /* _ExternalSecureInvasiveDebugEnabled {{{3
+  /* _ExternalSecureInvasiveDebugEnabled {{{4
    * -----------------------------------
    */
   bool _ExternalSecureInvasiveDebugEnabled() {
     return _ExternalInvasiveDebugEnabled() && false; // TODO: SPIDEN == HIGH
   }
 
-  /* _CurrentCond {{{3
+  /* _CurrentCond {{{4
    * ------------
    */
   uint32_t _CurrentCond() {
@@ -1112,7 +1129,7 @@ private:
     return _s.thisInstrDefaultCond;
   }
 
-  /* _SecureDebugMonitorAllowed {{{3
+  /* _SecureDebugMonitorAllowed {{{4
    * --------------------------
    */
   bool _SecureDebugMonitorAllowed() {
@@ -1122,28 +1139,28 @@ private:
       return _ExternalSecureSelfHostedDebugEnabled();
   }
 
-  /* _ExternalSecureSelfHostedDebugEnabled {{{3
+  /* _ExternalSecureSelfHostedDebugEnabled {{{4
    * -------------------------------------
    */
   bool _ExternalSecureSelfHostedDebugEnabled() {
     return false && false; // DBGEN == HIGH && SPIDEN == HIGH // TODO
   }
 
-  /* _ResetSCSRegs {{{3
+  /* _ResetSCSRegs {{{4
    * -------------
    */
   void _ResetSCSRegs() {
     _NestReset();
   }
 
-  /* _IsCPEnabled {{{3
+  /* _IsCPEnabled {{{4
    * ------------
    */
   std::tuple<bool, bool> _IsCPEnabled(int cp) {
     return _IsCPEnabled(cp, _CurrentModeIsPrivileged(), _IsSecure());
   }
 
-  /* _CurrentModeIsPrivileged {{{3
+  /* _CurrentModeIsPrivileged {{{4
    * ------------------------
    */
   bool _CurrentModeIsPrivileged() {
@@ -1154,28 +1171,28 @@ private:
     return (_CurrentMode() == PEMode_Handler || !npriv);
   }
 
-  /* _CurrentMode {{{3
+  /* _CurrentMode {{{4
    * ------------
    */
   PEMode _CurrentMode() {
     return GETBITSM(_s.xpsr, XPSR__EXCEPTION) == NoFault ? PEMode_Thread : PEMode_Handler;
   }
 
-  /* _ConditionPassed {{{3
+  /* _ConditionPassed {{{4
    * ----------------
    */
   bool _ConditionPassed() {
     return _ConditionHolds(_CurrentCond());
   }
 
-  /* _GetPC {{{3
+  /* _GetPC {{{4
    * ------
    */
   uint32_t _GetPC() {
     return _GetR(15);
   }
 
-  /* _ThrowUnaligned {{{3
+  /* _ThrowUnaligned {{{4
    * ---------------
    * Custom function not corresponding to the ISA manual. Throws unaligned
    * usage fault. For use implementing UNPREDICTABLE where a permitted
@@ -1187,7 +1204,7 @@ private:
     _HandleException(excInfo);
   }
 
-  /* _ZeroExtend {{{3
+  /* _ZeroExtend {{{4
    * -----------
    * Exposition only
    */
@@ -1195,42 +1212,42 @@ private:
     return v;
   }
 
-  /* _Align {{{3
+  /* _Align {{{4
    * ------
    */
   static uint32_t _Align(uint32_t x, uint32_t align) {
     return x & ~(align-1);
   }
 
-  /* _BranchWritePC {{{3
+  /* _BranchWritePC {{{4
    * --------------
    */
   void _BranchWritePC(uint32_t address) {
     _BranchTo(address & ~BIT(0));
   }
 
-  /* _ALUWritePC {{{3
+  /* _ALUWritePC {{{4
    * -----------
    */
   void _ALUWritePC(uint32_t address) {
     _BranchWritePC(address);
   }
 
-  /* _InITBlock {{{3
+  /* _InITBlock {{{4
    * ----------
    */
   bool _InITBlock() {
     return !!(_GetITSTATE() & BITS(0,3));
   }
 
-  /* _LastInITBlock {{{3
+  /* _LastInITBlock {{{4
    * --------------
    */
   bool _LastInITBlock() {
     return GETBITS(_GetITSTATE(),0,3) == 0b1000;
   }
 
-  /* _LSL_C {{{3
+  /* _LSL_C {{{4
    * ------
    */
   static std::tuple<uint32_t, bool> _LSL_C(uint32_t x, int shift) {
@@ -1248,7 +1265,7 @@ private:
     return {result, carryOut};
   }
 
-  /* _LSR_C {{{3
+  /* _LSR_C {{{4
    * ------
    */
   static std::tuple<uint32_t, bool> _LSR_C(uint32_t x, int shift) {
@@ -1260,7 +1277,7 @@ private:
     return {result, carryOut};
   }
 
-  /* _ASR_C {{{3
+  /* _ASR_C {{{4
    * ------
    */
   static std::tuple<uint32_t, bool> _ASR_C(uint32_t x, int shift) {
@@ -1274,7 +1291,7 @@ private:
     return {result, carryOut};
   }
 
-  /* _LSL {{{3
+  /* _LSL {{{4
    * ----
    */
   static uint32_t _LSL(uint32_t x, int shift) {
@@ -1286,7 +1303,7 @@ private:
     return result;
   }
 
-  /* _LSR {{{3
+  /* _LSR {{{4
    * ----
    */
   static uint32_t _LSR(uint32_t x, int shift) {
@@ -1298,7 +1315,7 @@ private:
     return result;
   }
 
-  /* _ROR_C {{{3
+  /* _ROR_C {{{4
    * ------
    */
   static std::tuple<uint32_t, bool> _ROR_C(uint32_t x, int shift) {
@@ -1311,7 +1328,7 @@ private:
     return {result, carryOut};
   }
 
-  /* _RRX_C {{{3
+  /* _RRX_C {{{4
    * ------
    */
   static std::tuple<uint32_t, bool> _RRX_C(uint32_t x, bool carryIn) {
@@ -1321,7 +1338,7 @@ private:
     return {result, carryOut};
   }
 
-  /* _Shift_C {{{3
+  /* _Shift_C {{{4
    * --------
    */
   static std::tuple<uint32_t, bool> _Shift_C(uint32_t value, SRType srType, int amount, bool carryIn) {
@@ -1346,21 +1363,21 @@ private:
     }
   }
 
-  /* _IsZero {{{3
+  /* _IsZero {{{4
    * -------
    */
   static bool _IsZero(uint32_t x) {
     return !x;
   }
 
-  /* _IsZeroBit {{{3
+  /* _IsZeroBit {{{4
    * ----------
    */
   static bool _IsZeroBit(uint32_t x) {
     return _IsZero(x);
   }
 
-  /* _LookUpRName {{{3
+  /* _LookUpRName {{{4
    * ------------
    */
   RName _LookUpRName(int n) {
@@ -1386,7 +1403,7 @@ private:
     }
   }
 
-  /* _BranchToNS {{{3
+  /* _BranchToNS {{{4
    * -----------
    */
   void _BranchToNS(uint32_t addr) {
@@ -1402,7 +1419,7 @@ private:
     _BranchTo(addr & ~BIT(0));
   }
 
-  /* _FunctionReturn {{{3
+  /* _FunctionReturn {{{4
    * ---------------
    */
   ExcInfo _FunctionReturn() {
@@ -1482,7 +1499,7 @@ private:
     return exc;
   }
 
-  /* _BXWritePC {{{3
+  /* _BXWritePC {{{4
    * ----------
    */
   ExcInfo _BXWritePC(uint32_t addr, bool allowNonSecure) {
@@ -1514,7 +1531,7 @@ private:
     return exc;
   }
 
-  /* _LoadWritePC {{{3
+  /* _LoadWritePC {{{4
    * ------------
    */
   void _LoadWritePC(uint32_t addr, int baseReg, uint32_t baseRegVal, bool baseRegUpdate, bool spLimCheck) {
@@ -1540,14 +1557,14 @@ private:
     _HandleException(excInfo);
   }
 
-  /* _GetPRIMASK {{{3
+  /* _GetPRIMASK {{{4
    * -----------
    */
   uint32_t _GetPRIMASK() {
     return _IsSecure() ? _s.primaskS : _s.primaskNS;
   }
 
-  /* _SetPRIMASK {{{3
+  /* _SetPRIMASK {{{4
    * -----------
    */
   void _SetPRIMASK(uint32_t v) {
@@ -1557,14 +1574,14 @@ private:
       _s.primaskNS = v;
   }
 
-  /* _GetFAULTMASK {{{3
+  /* _GetFAULTMASK {{{4
    * -------------
    */
   uint32_t _GetFAULTMASK() {
     return _IsSecure() ? _s.faultmaskS : _s.faultmaskNS;
   }
 
-  /* _SetFAULTMASK {{{3
+  /* _SetFAULTMASK {{{4
    * -------------
    */
   void _SetFAULTMASK(uint32_t v) {
@@ -1574,7 +1591,7 @@ private:
       _s.faultmaskNS = v;
   }
 
-  /* _AddWithCarry {{{3
+  /* _AddWithCarry {{{4
    * -------------
    */
   std::tuple<uint32_t, bool, bool> _AddWithCarry(uint32_t x, uint32_t y, bool carryIn) {
@@ -1591,7 +1608,7 @@ private:
     return {unsignedSum, carryOut, overflow};
   }
 
-  /* _SignExtend {{{3
+  /* _SignExtend {{{4
    * -----------
    * Corresponds to SignExtend(), but has an additional parameter to represent input width.
    */
@@ -1602,14 +1619,14 @@ private:
       return x;
   }
 
-  /* _BitCount {{{3
+  /* _BitCount {{{4
    * ---------
    */
   static uint32_t _BitCount(uint32_t x) {
     return __builtin_popcount(x);
   }
 
-  /* _T32ExpandImm_C {{{3
+  /* _T32ExpandImm_C {{{4
    * ---------------
    */
   static std::tuple<uint32_t, bool> _T32ExpandImm_C(uint32_t imm12, bool carryIn) {
@@ -1641,6 +1658,3206 @@ private:
       uint32_t unrotatedValue = _ZeroExtend(BIT(7) | GETBITS(imm12, 0, 6), 32);
       return _ROR_C(unrotatedValue, GETBITS(imm12, 7, 11));
     }
+  }
+
+  /* _SetITSTATEAndCommit {{{4
+   * --------------------
+   */
+  void _SetITSTATEAndCommit(uint8_t it) {
+    _s.nextInstrITState = it;
+    _s.itStateChanged = true;
+    _s.xpsr = CHGBITSM(_s.xpsr, XPSR__IT_ICI_LO, it>>2);
+    _s.xpsr = CHGBITSM(_s.xpsr, XPSR__IT_ICI_HI, it&3);
+  }
+
+  /* _HaveSysTick {{{4
+   * ------------
+   */
+  int _HaveSysTick() { return 2; }
+
+  /* _NextInstrAddr {{{4
+   * --------------
+   */
+  uint32_t _NextInstrAddr() {
+    if (_s.pcChanged)
+      return _s.nextInstrAddr;
+    else
+      return _ThisInstrAddr() + _ThisInstrLength();
+  }
+
+  /* _ThisInstrLength {{{4
+   * ----------------
+   */
+  int _ThisInstrLength() { return _s.thisInstrLength; }
+
+  /* _Load8 {{{4
+   * ------
+   */
+  int _Load8(AddressDescriptor memAddrDesc, uint8_t &v) {
+    if (memAddrDesc.physAddr >= 0xE000'0000 && memAddrDesc.physAddr < 0xE010'0000)
+      // Non-32 bit accesses to SCS are UNPREDICTABLE; generate BusFault.
+      return 1;
+
+    return _dev.Load8(memAddrDesc.physAddr, v);
+  }
+
+  /* _Load16 {{{4
+   * -------
+   */
+  int _Load16(AddressDescriptor memAddrDesc, uint16_t &v) {
+    if (memAddrDesc.physAddr >= 0xE000'0000 && memAddrDesc.physAddr < 0xE010'0000)
+      // Non-32 bit accesses to SCS are UNPREDICTABLE; generate BusFault.
+      return 1;
+
+    return _dev.Load16(memAddrDesc.physAddr, v);
+  }
+
+  /* _Load32 {{{4
+   * -------
+   */
+  int _Load32(AddressDescriptor memAddrDesc, uint32_t &v) {
+    if (memAddrDesc.physAddr >= 0xE000'0000 && memAddrDesc.physAddr < 0xE010'0000)
+      return _NestLoad32(memAddrDesc.physAddr, memAddrDesc.accAttrs.isPriv, !memAddrDesc.memAttrs.ns, v);
+
+    return _dev.Load32(memAddrDesc.physAddr, v);
+  }
+
+  /* _Store8 {{{4
+   * -------
+   */
+  int _Store8(AddressDescriptor memAddrDesc, uint8_t v) {
+    if (memAddrDesc.physAddr >= 0xE000'0000 && memAddrDesc.physAddr < 0xE010'0000)
+      // Non-32 bit accesses to SCS are UNPREDICTABLE; generate BusFault.
+      return 1;
+
+    return _dev.Store8(memAddrDesc.physAddr, v);
+  }
+
+  /* _Store16 {{{4
+   * --------
+   */
+  int _Store16(AddressDescriptor memAddrDesc, uint16_t v) {
+    if (memAddrDesc.physAddr >= 0xE000'0000 && memAddrDesc.physAddr < 0xE010'0000)
+      // Non-32 bit accesses to SCS are UNPREDICTABLE; generate BusFault.
+      return 1;
+
+    return _dev.Store16(memAddrDesc.physAddr, v);
+  }
+
+  /* _Store32 {{{4
+   * --------
+   */
+  int _Store32(AddressDescriptor memAddrDesc, uint32_t v) {
+    if (memAddrDesc.physAddr >= 0xE000'0000 && memAddrDesc.physAddr < 0xE010'0000)
+      return _NestStore32(memAddrDesc.physAddr, memAddrDesc.accAttrs.isPriv, !memAddrDesc.memAttrs.ns, v);
+
+    return _dev.Store32(memAddrDesc.physAddr, v);
+  }
+
+  /* _GetMem {{{4
+   * -------
+   */
+  std::tuple<bool,uint32_t> _GetMem(AddressDescriptor memAddrDesc, int size) {
+    switch (size) {
+      case 1: {
+        uint8_t v;
+        if (_Load8(memAddrDesc, v))
+          return {true,0};
+        else
+          return {false,v};
+      }
+      case 2: {
+        uint16_t v;
+        if (_Load16(memAddrDesc, v))
+          return {true,0};
+        else
+          return {false,v};
+      }
+      case 4: {
+        uint32_t v;
+        if (_Load32(memAddrDesc, v))
+          return {true,0};
+        else
+          return {false,v};
+      }
+      default:
+        assert(false);
+        break;
+    }
+  }
+
+  /* _SetMem {{{4
+   * -------
+   */
+  bool _SetMem(AddressDescriptor memAddrDesc, int size, uint32_t v) {
+    switch (size) {
+      case 1:
+        return !!_Store8(memAddrDesc, (uint8_t)v);
+      case 2:
+        return !!_Store16(memAddrDesc, (uint16_t)v);
+      case 4:
+        return !!_Store32(memAddrDesc, (uint32_t)v);
+      default:
+        assert(false);
+    }
+  }
+
+  /* _HaveHaltingDebug {{{4
+   * -----------------
+   */
+  bool _HaveHaltingDebug() { return true; }
+
+  /* _CanHaltOnEvent {{{4
+   * ---------------
+   */
+  bool _CanHaltOnEvent(bool isSecure) {
+    if (!_HaveSecurityExt())
+      assert(!isSecure);
+    return _HaveHaltingDebug() && _HaltingDebugAllowed() && !!(InternalLoad32(REG_DHCSR) & REG_DHCSR__C_DEBUGEN)
+      && !(InternalLoad32(REG_DHCSR) & REG_DHCSR__S_HALT) && (!isSecure || !!(InternalLoad32(REG_DHCSR) & REG_DHCSR__S_SDE));
+  }
+
+  /* _CanPendMonitorOnEvent {{{4
+   * ----------------------
+   */
+  bool _CanPendMonitorOnEvent(bool isSecure, bool checkPri) {
+    if (!_HaveSecurityExt())
+      assert(!isSecure);
+    return _HaveDebugMonitor() && !_CanHaltOnEvent(isSecure)
+      && !!(InternalLoad32(REG_DEMCR) & REG_DEMCR__MON_EN)
+      && !(InternalLoad32(REG_DHCSR) & REG_DHCSR__S_HALT)
+      && (!isSecure || !!(InternalLoad32(REG_DEMCR) & REG_DEMCR__SDME))
+      && (!checkPri || _ExceptionPriority(DebugMonitor, isSecure, true) < _ExecutionPriority());
+  }
+
+  /* _ThisInstrITState {{{4
+   * -----------------
+   */
+  uint8_t _ThisInstrITState() {
+    if (_HaveMainExt())
+      return (GETBITSM(_s.xpsr, XPSR__IT_ICI_LO)<<2) | GETBITSM(_s.xpsr, XPSR__IT_ICI_HI);
+    else
+      return 0;
+  }
+
+  /* _GetITSTATE {{{4
+   * -----------
+   */
+  uint8_t _GetITSTATE() { return _ThisInstrITState(); }
+
+  /* _SetITSTATE {{{4
+   * -----------
+   */
+  void _SetITSTATE(uint8_t value) {
+    _s.nextInstrITState = value;
+    _s.itStateChanged = true;
+  }
+
+  /* _GetSP {{{4
+   * ------
+   */
+  uint32_t _GetSP(RName spreg) {
+    assert(    spreg == RNameSP_Main_NonSecure
+           || (spreg == RNameSP_Main_Secure       && _HaveSecurityExt())
+           ||  spreg == RNameSP_Process_NonSecure
+           || (spreg == RNameSP_Process_Secure    && _HaveSecurityExt()));
+    return _s.r[spreg] & ~3;
+  }
+
+  /* _SetSP {{{4
+   * ------
+   */
+  ExcInfo _SetSP(RName spreg, bool excEntry, uint32_t value) {
+    ExcInfo excInfo = _DefaultExcInfo();
+    auto [limit, applyLimit] = _LookUpSPLim(spreg);
+    if (applyLimit && value < limit) {
+      if (excEntry)
+        _s.r[spreg] = limit;
+
+      if (_HaveMainExt())
+        InternalOr32(REG_UFSR, REG_UFSR__STKOF);
+
+      excInfo = _CreateException(UsageFault, false, false/*UNKNOWN*/);
+      if (!excEntry)
+        _HandleException(excInfo);
+    } else
+      _s.r[spreg] = value & ~3;
+    return excInfo;
+  }
+
+  /* _Stack {{{4
+   * ------
+   */
+  ExcInfo _Stack(uint32_t framePtr, int offset, RName spreg, PEMode mode, uint32_t value) {
+    auto [limit, applyLimit] = _LookUpSPLim(spreg);
+    bool doAccess;
+    if (!applyLimit || framePtr >= limit)
+      doAccess = true;
+    else
+      doAccess = IMPL_DEF_PUSH_NON_VIOL_LOCATIONS;
+
+    uint32_t addr = framePtr + offset;
+    ExcInfo excInfo;
+    if (doAccess && (!applyLimit || ((addr >= limit)))) {
+      bool secure = (spreg == RNameSP_Main_Secure || spreg == RNameSP_Process_Secure);
+      bool isPriv = secure ? !GETBITSM(_s.controlS, CONTROL__NPRIV) : !GETBITSM(_s.controlNS, CONTROL__NPRIV);
+      isPriv = isPriv || mode == PEMode_Handler;
+      excInfo = _MemA_with_priv_security(addr, 4, AccType_STACK, isPriv, secure, true, value);
+    } else
+      excInfo = _DefaultExcInfo();
+
+    return excInfo;
+  }
+
+  std::tuple<ExcInfo, uint32_t> _Stack(uint32_t framePtr, int offset, RName spreg, PEMode mode) {
+    bool secure = (spreg == RNameSP_Main_Secure || spreg == RNameSP_Process_Secure);
+    bool isPriv = secure ? !(_s.controlS & CONTROL__NPRIV) : !(_s.controlNS & CONTROL__NPRIV);
+    isPriv = isPriv || mode == PEMode_Handler;
+    uint32_t addr = framePtr + offset;
+    auto [excInfo, value] = _MemA_with_priv_security(addr, 4, AccType_STACK, isPriv, secure, true);
+    return {excInfo, value};
+  }
+
+  /* _GetLR {{{4
+   * ------
+   */
+  uint32_t _GetLR() { return _GetR(14); }
+
+  /* _SetLR {{{4
+   * ------
+   */
+  void _SetLR(uint32_t v) { _SetR(14, v); }
+
+  /* _HaveDSPExt {{{4
+   * -----------
+   */
+  bool _HaveDSPExt() { return false; }
+
+  /* _GetR {{{4
+   * -----
+   */
+  uint32_t _GetR(int n) {
+    assert(n >= 0 && n <= 15);
+    switch (n) {
+      case  0: return _s.r[RName0];
+      case  1: return _s.r[RName1];
+      case  2: return _s.r[RName2];
+      case  3: return _s.r[RName3];
+      case  4: return _s.r[RName4];
+      case  5: return _s.r[RName5];
+      case  6: return _s.r[RName6];
+      case  7: return _s.r[RName7];
+      case  8: return _s.r[RName8];
+      case  9: return _s.r[RName9];
+      case 10: return _s.r[RName10];
+      case 11: return _s.r[RName11];
+      case 12: return _s.r[RName12];
+      case 13: return _s.r[_LookUpSP()] & ~3;
+      case 14: return _s.r[RName_LR];
+      case 15: return _s.r[RName_PC] + 4;
+      default: assert(false);
+    }
+  }
+
+  /* _SetR {{{4
+   * -----
+   */
+  void _SetR(int n, uint32_t v) {
+    assert(n >= 0 && n <= 14);
+    switch (n) {
+      case  0: _s.r[RName0 ] = v; break;
+      case  1: _s.r[RName1 ] = v; break;
+      case  2: _s.r[RName2 ] = v; break;
+      case  3: _s.r[RName3 ] = v; break;
+      case  4: _s.r[RName4 ] = v; break;
+      case  5: _s.r[RName5 ] = v; break;
+      case  6: _s.r[RName6 ] = v; break;
+      case  7: _s.r[RName7 ] = v; break;
+      case  8: _s.r[RName8 ] = v; break;
+      case  9: _s.r[RName9 ] = v; break;
+      case 10: _s.r[RName10] = v; break;
+      case 11: _s.r[RName11] = v; break;
+      case 12: _s.r[RName12] = v; break;
+      case 13:
+        if (IMPL_DEF_SPLIM_CHECK_UNPRED_INSTR)
+          _SetSP(_LookUpSP(), false, v);
+        else
+          _s.r[_LookUpSP()] = v & ~3;
+        break;
+      case 14:
+        _s.r[RName_LR] = v;
+        break;
+    }
+  }
+
+  /* _LookUpSP_with_security_mode {{{4
+   * ----------------------------
+   */
+  RName _LookUpSP_with_security_mode(bool isSecure, PEMode mode) {
+    bool spSel;
+
+    if (isSecure)
+      spSel = !!(_s.controlS & CONTROL__SPSEL);
+    else
+      spSel = !!(_s.controlNS & CONTROL__SPSEL);
+
+    if (spSel && mode == PEMode_Thread)
+      return isSecure ? RNameSP_Process_Secure : RNameSP_Process_NonSecure;
+    else
+      return isSecure ? RNameSP_Main_Secure : RNameSP_Main_NonSecure;
+  }
+
+  /* _LookUpSP {{{4
+   * ---------
+   */
+  RName _LookUpSP() {
+    return _LookUpSP_with_security_mode(_IsSecure(), _CurrentMode());
+  }
+
+  /* _LookUpSPLim {{{4
+   * ------------
+   */
+  std::tuple<uint32_t, bool> _LookUpSPLim(RName spreg) {
+    uint32_t limit;
+    switch (spreg) {
+      case RNameSP_Main_Secure:
+        limit = _s.msplimS & ~7;
+        break;
+      case RNameSP_Process_Secure:
+        limit = _s.psplimS & ~7;
+        break;
+      case RNameSP_Main_NonSecure:
+        limit = _HaveMainExt() ? (_s.msplimNS & ~7) : 0;
+        break;
+      case RNameSP_Process_NonSecure:
+        limit = _HaveMainExt()? (_s.psplimNS & ~7) : 0;
+        break;
+      default:
+        assert(false);
+    }
+
+    bool applyLimit;
+    bool secure = (spreg == RNameSP_Main_Secure || spreg == RNameSP_Process_Secure);
+    assert(!secure || _HaveSecurityExt());
+    if (_HaveMainExt() && _IsReqExcPriNeg(secure)) {
+      bool ignLimit = secure ? (InternalLoad32(REG_CCR_S) & REG_CCR__STKOFHFNMIGN) : (InternalLoad32(REG_CCR_NS) & REG_CCR__STKOFHFNMIGN);
+      applyLimit = !ignLimit;
+    } else
+      applyLimit = true;
+
+    return {limit, applyLimit};
+  }
+
+  /* _IsReqExcPriNeg {{{4
+   * ---------------
+   */
+  bool _IsReqExcPriNeg(bool secure) {
+    bool neg = _IsActiveForState(NMI, secure) || _IsActiveForState(HardFault, secure);
+    if (_HaveMainExt()) {
+      uint32_t faultMask = secure ? _s.faultmaskS : _s.faultmaskNS;
+      if (faultMask & 1)
+        neg = true;
+    }
+    return neg;
+  }
+
+  /* _GetSP {{{4
+   * ------
+   */
+  uint32_t _GetSP() { return _GetR(13); }
+
+  /* _SetSP {{{4
+   * ------
+   */
+  void _SetSP(uint32_t value) { _SetRSPCheck(13, value); }
+
+  /* _GetSP_Main {{{4
+   * -----------
+   */
+  uint32_t _GetSP_Main() { return _IsSecure() ? _GetSP_Main_Secure() : _GetSP_Main_NonSecure(); }
+
+  /* _SetSP_Main {{{4
+   * -----------
+   */
+  void _SetSP_Main(uint32_t value) {
+    if (_IsSecure())
+      _SetSP_Main_Secure(value);
+    else
+      _SetSP_Main_NonSecure(value);
+  }
+
+  /* _GetSP_Main_NonSecure {{{4
+   * ---------------------
+   */
+  uint32_t _GetSP_Main_NonSecure() {
+    return _GetSP(RNameSP_Main_NonSecure);
+  }
+
+  /* _SetSP_Main_NonSecure {{{4
+   * ---------------------
+   */
+  void _SetSP_Main_NonSecure(uint32_t value) {
+    _SetSP(RNameSP_Main_NonSecure, false, value);
+  }
+
+  /* _SetSP_Main_Secure {{{4
+   * ------------------
+   */
+  void _SetSP_Main_Secure(uint32_t value) {
+    _SetSP(RNameSP_Main_Secure, false, value);
+  }
+
+  /* _GetSP_Main_Secure {{{4
+   * ------------------
+   */
+  uint32_t _GetSP_Main_Secure() {
+    return _GetSP(RNameSP_Main_Secure);
+  }
+
+  /* _GetSP_Process {{{4
+   * --------------
+   */
+  uint32_t _GetSP_Process() {
+    return _IsSecure() ? _GetSP_Process_Secure() : _GetSP_Process_NonSecure();
+  }
+
+  /* _SetSP_Process {{{4
+   * --------------
+   */
+  void _SetSP_Process(uint32_t value) {
+    if (_IsSecure())
+      _SetSP_Process_Secure(value);
+    else
+      _SetSP_Process_NonSecure(value);
+  }
+
+  /* _GetSP_Process_NonSecure {{{4
+   * ------------------------
+   */
+  uint32_t _GetSP_Process_NonSecure() {
+    return _GetSP(RNameSP_Process_NonSecure);
+  }
+
+  /* _SetSP_Process_NonSecure {{{4
+   * ------------------------
+   */
+  void _SetSP_Process_NonSecure(uint32_t value) {
+    _SetSP(RNameSP_Process_NonSecure, false, value);
+  }
+
+  /* _GetSP_Process_Secure {{{4
+   * ---------------------
+   */
+  uint32_t _GetSP_Process_Secure() {
+    return _GetSP(RNameSP_Process_Secure);
+  }
+
+  /* _SetSP_Process_Secure {{{4
+   * ---------------------
+   */
+  void _SetSP_Process_Secure(uint32_t value) {
+    _SetSP(RNameSP_Process_Secure, false, value);
+  }
+  
+  /* _SetRSPCheck {{{4
+   * ------------
+   */
+  void _SetRSPCheck(int n, uint32_t v) {
+    if (n == 13)
+      _SetSP(_LookUpSP(), false, v);
+    else
+      _SetR(n, v);
+  }
+
+  /* _Lockup {{{4
+   * -------
+   */
+  void _Lockup(bool termInst) {
+    InternalOr32(REG_DHCSR, REG_DHCSR__S_LOCKUP);
+    _BranchToAndCommit(0xEFFF'FFFE);
+    if (termInst)
+      _EndOfInstruction();
+  }
+
+  /* _BranchToAndCommit {{{4
+   * ------------------
+   */
+  void _BranchToAndCommit(uint32_t addr) {
+    _s.r[RName_PC]    = addr & ~1;
+    _s.pcChanged      = true;
+    _s.nextInstrAddr  = addr & ~1;
+    _s.pendingReturnOperation = false;
+  }
+
+  /* _BranchTo {{{4
+   * ---------
+   */
+  void _BranchTo(uint32_t addr) {
+    _s.nextInstrAddr = addr;
+    _s.pcChanged     = true;
+    _s.pendingReturnOperation = false;
+  }
+
+  /* _PendReturnOperation {{{4
+   * --------------------
+   */
+  void _PendReturnOperation(uint32_t retValue) {
+    _s.nextInstrAddr          = retValue;
+    _s.pcChanged              = true;
+    _s.pendingReturnOperation = true;
+  }
+
+  /* _IsActiveForState {{{4
+   * -----------------
+   */
+  bool _IsActiveForState(int exc, bool isSecure) {
+    if (!_HaveSecurityExt())
+      isSecure = false;
+
+    bool active;
+    if (_IsExceptionTargetConfigurable(exc))
+      active = (_s.excActive[exc] && _ExceptionTargetsSecure(exc, isSecure) == isSecure);
+    else {
+      int idx = isSecure ? 0 : 1;
+      active = !!(_s.excActive[exc] & BIT(idx));
+    }
+
+    return active;
+  }
+
+  /* _IsExceptionTargetConfigurable {{{4
+   * ------------------------------
+   */
+  bool _IsExceptionTargetConfigurable(int e) {
+    if (!_HaveSecurityExt())
+      return false;
+
+    switch (e) {
+      case NMI: return true;
+      case BusFault: return true;
+      case DebugMonitor: return true;
+      case SysTick: return _HaveSysTick() == 1;
+      default: return e >= 16;
+    }
+  }
+
+  /* _GetVector {{{4
+   * ----------
+   */
+  std::tuple<ExcInfo, uint32_t> _GetVector(int excNo, bool isSecure) {
+    uint32_t vtor = isSecure ? InternalLoad32(REG_VTOR_S) : InternalLoad32(REG_VTOR_NS);
+    uint32_t addr = (vtor & ~BITS(0,6)) + 4*excNo;
+    auto [exc, vector] = _MemA_with_priv_security(addr, 4, AccType_VECTABLE, true, isSecure, true);
+    if (exc.fault != NoFault) {
+      exc.isTerminal = true;
+      exc.fault = HardFault;
+      exc.isSecure = exc.isSecure || !(InternalLoad32(REG_AIRCR) & REG_AIRCR__BFHFNMINS);
+      InternalOr32(REG_HFSR, REG_HFSR__VECTTBL);
+    }
+    return {exc, vector};
+  }
+
+  /* _ValidateAddress {{{4
+   * ----------------
+   */
+  std::tuple<ExcInfo, AddressDescriptor> _ValidateAddress(uint32_t addr, AccType accType, bool isPriv, bool secure, bool isWrite, bool aligned) {
+    AddressDescriptor result;
+    Permissions       perms;
+
+    bool    ns            = false; // UNKNOWN
+    ExcInfo excInfo       = _DefaultExcInfo();
+    bool    isInstrFetch  = (accType == AccType_IFETCH);
+
+    bool secureMpu;
+    SAttributes sAttrib;
+    if (_HaveSecurityExt()) {
+      sAttrib = _SecurityCheck(addr, isInstrFetch, secure);
+      if (isInstrFetch) {
+        ns        = sAttrib.ns;
+        secureMpu = !sAttrib.ns;
+        isPriv    = _CurrentModeIsPrivileged(secureMpu);
+      } else {
+        ns        = (!secure || sAttrib.ns);
+        secureMpu = secure;
+      }
+    } else {
+      ns        = true;
+      secureMpu = false;
+    }
+
+    std::tie(result.memAttrs, perms) = _MPUCheck(addr, accType, isPriv, secureMpu);
+    result.memAttrs.ns = ns;
+
+    if (!aligned && result.memAttrs.memType == MemType_Device && perms.apValid) {
+      InternalOr32(REG_UFSR, REG_UFSR__UNALIGNED);
+      excInfo = _CreateException(UsageFault, false, false/*UNKNOWN*/);
+    }
+
+    if (excInfo.fault == NoFault && _HaveSecurityExt()) {
+      bool raiseSecFault = false;
+      if (isInstrFetch) {
+        if (secure) {
+          if (sAttrib.ns) {
+            InternalOr32(REG_SFSR, REG_SFSR__INVTRAN);
+            raiseSecFault = true;
+          }
+        } else {
+          if (!sAttrib.ns && !sAttrib.nsc) {
+            InternalOr32(REG_SFSR, REG_SFSR__INVEP);
+            raiseSecFault = true;
+          }
+        }
+      } else {
+        if (!secure && !sAttrib.ns) {
+          if (_HaveMainExt() && accType != AccType_VECTABLE) {
+            if (accType == AccType_LAZYFP)
+              InternalOr32(REG_SFSR, REG_SFSR__LSPERR);
+            else
+              InternalOr32(REG_SFSR, REG_SFSR__AUVIOL);
+            InternalOr32(REG_SFSR, REG_SFSR__SFARVALID);
+            InternalStore32(REG_SFAR, addr);
+          }
+          raiseSecFault = true;
+        }
+      }
+      if (raiseSecFault)
+        excInfo = _CreateException(SecureFault, true, true);
+    }
+
+    result.physAddr = addr;
+    result.accAttrs.isWrite = isWrite;
+    result.accAttrs.isPriv  = isPriv;
+    result.accAttrs.accType = accType;
+
+    if (excInfo.fault == NoFault)
+      excInfo = _CheckPermission(perms, addr, accType, isWrite, isPriv, secureMpu);
+
+    return {excInfo, result};
+  }
+
+  /* _MemU {{{4
+   * -----
+   */
+  uint32_t _MemU(uint32_t addr, int size) {
+    if (_HaveMainExt())
+      return _MemU_with_priv(addr, size, _FindPriv());
+    else
+      return _MemA(addr, size);
+  }
+
+  void _MemU(uint32_t addr, int size, uint32_t value) {
+    if (_HaveMainExt())
+      _MemU_with_priv(addr, size, _FindPriv(), value);
+    else
+      _MemA(addr, size, value);
+  }
+
+  /* _MemU_with_priv {{{4
+   * ---------------
+   */
+  uint32_t _MemU_with_priv(uint32_t addr, int size, bool priv) {
+    uint32_t value;
+
+    // Do aligned access, take alignment fault, or do sequence of bytes
+    if (addr == _Align(addr, size)) {
+      value = _MemA_with_priv(addr, size, priv, true);
+    } else if (InternalLoad32(REG_CCR) & REG_CCR__UNALIGN_TRP) {
+      InternalOr32(REG_UFSR, REG_UFSR__UNALIGNED);
+      auto excInfo = _CreateException(UsageFault, false, UNKNOWN_VAL(false));
+      _HandleException(excInfo);
+    } else { // if unaligned access
+      for (int i=0; i<size; ++i)
+        value = CHGBITS(value, 8*i, 8*i+7, _MemA_with_priv(addr+i, 1, priv, false));
+      // PPB (0xE0000000 to 0xE0100000) is always little endian
+      if ((InternalLoad32(REG_AIRCR) & REG_AIRCR__ENDIANNESS) && GETBITS(addr,20,31) != 0xE00)
+        value = _BigEndianReverse(value, size);
+    }
+
+    return value;
+  }
+
+  void _MemU_with_priv(uint32_t addr, int size, bool priv, uint32_t value) {
+    // Do aligned access, take alignment fault, or do sequence of bytes
+    if (addr == _Align(addr, size))
+      _MemA_with_priv(addr, size, priv, true, value);
+    else if (InternalLoad32(REG_CCR) & REG_CCR__UNALIGN_TRP) {
+      InternalOr32(REG_UFSR, REG_UFSR__UNALIGNED);
+      auto excInfo = _CreateException(UsageFault, false, UNKNOWN_VAL(false));
+      _HandleException(excInfo);
+    } else { // if unaligned access
+      // PPB (0xE0000000 to 0xE010000) is always little endian
+      if ((InternalLoad32(REG_AIRCR) & REG_AIRCR__ENDIANNESS) && GETBITS(addr,20,31) != 0xE00)
+        value = _BigEndianReverse(value, size);
+      for (int i=0; i<size; ++i)
+        _MemA_with_priv(addr+i, 1, priv, false, GETBITS(value, 8*i, 8*i+7));
+    }
+  }
+
+  /* _MemA {{{4
+   * -----
+   */
+  uint32_t _MemA(uint32_t addr, int size) {
+    return _MemA_with_priv(addr, size, _FindPriv(), true);
+  }
+
+  void _MemA(uint32_t addr, int size, uint32_t value) {
+    _MemA_with_priv(addr, size, _FindPriv(), true, value);
+  }
+
+  /* _MemA_with_priv {{{4
+   * ---------------
+   */
+  uint32_t _MemA_with_priv(uint32_t addr, int size, bool priv, bool aligned) {
+    auto [excInfo, value] = _MemA_with_priv_security(addr, size, AccType_NORMAL, priv, _IsSecure(), aligned);
+    _HandleException(excInfo);
+    return value;
+  }
+
+  void _MemA_with_priv(uint32_t addr, int size, bool priv, bool aligned, uint32_t value) {
+    auto excInfo = _MemA_with_priv_security(addr, size, AccType_NORMAL, priv, _IsSecure(), aligned, value);
+    _HandleException(excInfo);
+  }
+
+  /* _MemA_with_priv_security {{{4
+   * ------------------------
+   */
+  std::tuple<ExcInfo, uint32_t> _MemA_with_priv_security(uint32_t addr, int size, AccType accType, bool priv, bool secure, bool aligned) {
+    ExcInfo excInfo = _DefaultExcInfo();
+    if (!_IsAligned(addr, size)) {
+      if (_HaveMainExt())
+        InternalOr32(REG_UFSR, REG_UFSR__UNALIGNED);
+      excInfo = _CreateException(UsageFault, true, secure);
+    }
+
+    uint32_t value;
+    AddressDescriptor memAddrDesc;
+    if (excInfo.fault == NoFault)
+      std::tie(excInfo, memAddrDesc) = _ValidateAddress(addr, accType, priv, secure, false, aligned);
+
+    if (excInfo.fault == NoFault) {
+      bool error;
+      std::tie(error, value) = _GetMem(memAddrDesc, size);
+
+      if (error) {
+        value = 0; // UNKNOWN
+        if (_HaveMainExt()) {
+          if (accType == AccType_STACK)
+            InternalOr32(REG_BFSR, REG_BFSR__UNSTKERR);
+          else if (accType == AccType_NORMAL || accType == AccType_ORDERED) {
+            uint32_t bfar = InternalLoad32(REG_BFAR);
+            bfar = CHGBITSM(bfar, REG_BFAR__ADDRESS, addr);
+            InternalStore32(REG_BFAR, bfar);
+            InternalOr32(REG_BFSR, REG_BFSR__BFARVALID | REG_BFSR__PRECISERR);
+          }
+        }
+
+        if (!_IsReqExcPriNeg(secure) || !(InternalLoad32(REG_CCR) & REG_CCR__BFHFNMIGN))
+          excInfo = _CreateException(BusFault, false, false/*UNKNOWN*/);
+      } else if ((InternalLoad32(REG_AIRCR) & REG_AIRCR__ENDIANNESS) && GETBITS(addr,20,31) != 0xE00)
+        value = _BigEndianReverse(value, size);
+
+      if (_IsDWTEnabled()) {
+        uint32_t dvalue = value;
+        _DWT_DataMatch(addr, size, dvalue, true, secure);
+      }
+    }
+
+    return {excInfo, value};
+  }
+
+  ExcInfo _MemA_with_priv_security(uint32_t addr, int size, AccType accType, bool priv, bool secure, bool aligned, uint32_t value) {
+    ExcInfo excInfo = _DefaultExcInfo();
+
+    if (!_IsAligned(addr, size)) {
+      if (_HaveMainExt())
+        InternalOr32(REG_UFSR, REG_UFSR__UNALIGNED);
+      excInfo = _CreateException(UsageFault, true, secure);
+    }
+
+    AddressDescriptor memAddrDesc;
+    if (excInfo.fault == NoFault)
+      std::tie(excInfo, memAddrDesc) = _ValidateAddress(addr, accType, priv, secure, true, aligned);
+
+    if (excInfo.fault == NoFault) {
+      if (memAddrDesc.memAttrs.shareable)
+        _ClearExclusiveByAddress(memAddrDesc.physAddr, _ProcessorID(), size);
+
+      if (_IsDWTEnabled()) {
+        uint32_t dvalue = value;
+        _DWT_DataMatch(addr, size, dvalue, false, secure);
+      }
+
+      if ((InternalLoad32(REG_AIRCR) & REG_AIRCR__ENDIANNESS) && GETBITS(addr,20,31) != 0xE00)
+        value = _BigEndianReverse(value, size);
+
+      if (_SetMem(memAddrDesc, size, value)) {
+        bool negativePri;
+        if (accType == AccType_LAZYFP)
+          negativePri = !(InternalLoad32(REG_FPCCR_S) & REG_FPCCR__HFRDY);
+        else
+          negativePri = _IsReqExcPriNeg(secure);
+
+        if (_HaveMainExt()) {
+          if (accType == AccType_STACK)
+            InternalOr32(REG_BFSR, REG_BFSR__STKERR);
+          else if (accType == AccType_LAZYFP)
+            InternalOr32(REG_BFSR, REG_BFSR__LSPERR);
+          else if (accType == AccType_NORMAL || accType == AccType_ORDERED) {
+            InternalStore32(REG_BFAR, addr);
+            InternalOr32(REG_BFSR, REG_BFSR__BFARVALID | REG_BFSR__PRECISERR);
+          }
+        }
+
+        if (!negativePri || !(InternalLoad32(REG_CCR) & REG_CCR__BFHFNMIGN))
+          excInfo = _CreateException(BusFault, false, false/*UNKNOWN*/);
+      }
+    }
+
+    return excInfo;
+  }
+
+  /* _ClearExclusiveByAddress {{{4
+   * ------------------------
+   */
+  void _ClearExclusiveByAddress(uint32_t addr, int exclProcID, int size) {
+    // TODO
+  }
+
+  /* _IsAligned {{{4
+   * ----------
+   */
+  bool _IsAligned(uint32_t addr, int size) {
+    assert(size == 1 || size == 2 || size == 4 || size == 8);
+    uint32_t mask = (size-1);
+    return !(addr & mask);
+  }
+
+  /* _MPUCheck {{{4
+   * ---------
+   */
+  std::tuple<MemoryAttributes, Permissions> _MPUCheck(uint32_t addr, AccType accType, bool isPriv, bool secure) {
+    assert(_HaveSecurityExt() || !secure);
+
+    MemoryAttributes  attrs       = _DefaultMemoryAttributes(addr);
+    Permissions       perms       = _DefaultPermissions(addr);
+    bool              hit         = false;
+    bool              isPPBAccess = (GETBITS(addr,20,31) == 0b111000000000);
+
+    uint32_t mpuCtrl, mpuType;
+    uint64_t mair;
+    if (secure) {
+      mpuCtrl = InternalLoad32(REG_MPU_CTRL_S);
+      mpuType = InternalLoad32(REG_MPU_TYPE_S);
+      mair    = (uint64_t(InternalLoad32(REG_MPU_MAIR1_S))<<32) | (uint64_t)InternalLoad32(REG_MPU_MAIR0_S);
+    } else {
+      mpuCtrl = InternalLoad32(REG_MPU_CTRL_NS);
+      mpuType = InternalLoad32(REG_MPU_TYPE_NS);
+      mair    = (uint64_t(InternalLoad32(REG_MPU_MAIR1_NS))<<32) | (uint64_t)InternalLoad32(REG_MPU_MAIR0_NS);
+    }
+
+    bool negativePri;
+    if (accType == AccType_LAZYFP)
+      negativePri = !(InternalLoad32(REG_FPCCR_S) & REG_FPCCR__HFRDY);
+    else
+      negativePri = _IsReqExcPriNeg(secure);
+
+    if (accType == AccType_VECTABLE || isPPBAccess)
+      hit = true;
+    else if (!(mpuCtrl & REG_MPU_CTRL__ENABLE)) {
+      if (mpuCtrl & REG_MPU_CTRL__HFNMIENA)
+        throw Exception(ExceptionType::UNPREDICTABLE);
+      else
+        hit = true;
+    } else if (!(mpuCtrl & REG_MPU_CTRL__HFNMIENA) && negativePri)
+      hit = true;
+    else {
+      if ((mpuCtrl & REG_MPU_CTRL__PRIVDEFENA) && isPriv)
+        hit = true;
+
+      bool regionMatched = false;
+      int  numRegions = GETBITSM(mpuType, REG_MPU_TYPE__DREGION);
+      for (int r=0; r<numRegions; ++r) {
+        uint32_t rbar, rlar;
+        if (secure)
+          std::tie(rbar,rlar) = _InternalLoadMpuSecureRegion(r);
+        else
+          std::tie(rbar,rlar) = _InternalLoadMpuNonSecureRegion(r);
+
+        if (rlar & REG_MPU_RLAR__EN) {
+          if (   addr >= ( GETBITSM(rbar, REG_MPU_RBAR__BASE )<<5)
+              && addr <= ((GETBITSM(rlar, REG_MPU_RLAR__LIMIT)<<5) | 0b11111)) {
+            uint32_t sh = 0;
+            if (regionMatched) {
+              perms.regionValid = false;
+              perms.region      = 0;
+              hit               = false;
+            } else {
+              regionMatched = true;
+              perms.ap      = GETBITSM(rbar, REG_MPU_RBAR__AP);
+              perms.xn      = GETBITSM(rbar, REG_MPU_RBAR__XN);
+              perms.region  = r & 0xFF;
+              perms.regionValid = true;
+              hit = true;
+              sh = GETBITSM(rbar, REG_MPU_RBAR__SH);
+            }
+
+            uint32_t idx        = GETBITSM(rlar, REG_MPU_RLAR__ATTR_IDX);
+            uint32_t attrField  = GETBITS(mair, 8*idx, 8*idx + 7);
+            attrs               = _MAIRDecode(attrField, sh);
+          }
+        }
+      }
+    }
+
+    if (GETBITS(addr,29,31) == 0b111)
+      perms.xn = true;
+
+    if (!hit)
+      perms.apValid = false;
+
+    return {attrs, perms};
+  }
+
+  /* _MAIRDecode {{{4
+   * -----------
+   */
+  MemoryAttributes _MAIRDecode(uint8_t attrField, uint8_t sh) {
+    MemoryAttributes memAttrs;
+    bool unpackInner;
+
+    if (!GETBITS(attrField, 4, 7)) {
+      unpackInner = false;
+      memAttrs.memType        = MemType_Device;
+      memAttrs.shareable      = true;
+      memAttrs.outerShareable = true;
+      memAttrs.innerAttrs     = 0; // UNKNOWN
+      memAttrs.outerAttrs     = 0; // UNKNOWN
+      memAttrs.innerHints     = 0; // UNKNOWN
+      memAttrs.outerHints     = 0; // UNKNOWN
+      memAttrs.innerTransient = false; // UNKNOWN
+      memAttrs.outerTransient = false; // UNKNOWN
+      switch (GETBITS(attrField, 0, 3)) {
+        case 0b0000: memAttrs.device = DeviceType_nGnRnE; break;
+        case 0b0100: memAttrs.device = DeviceType_nGnRE; break;
+        case 0b1000: memAttrs.device = DeviceType_nGRE; break;
+        case 0b1100: memAttrs.device = DeviceType_GRE; break;
+      }
+      if (GETBITS(attrField, 0, 1))
+        throw Exception(ExceptionType::UNPREDICTABLE);
+    } else {
+      unpackInner = true;
+      memAttrs.memType        = MemType_Normal;
+      memAttrs.device         = DeviceType_GRE; // UNKNOWN
+      memAttrs.outerHints     = GETBITS(attrField, 4, 5);
+      memAttrs.shareable      = (sh & BIT(1));
+      memAttrs.outerShareable = (sh == 0b10);
+      if (sh == 0b01)
+        throw Exception(ExceptionType::UNPREDICTABLE);
+
+      if (GETBITS(attrField, 6, 7) == 0b00) {
+        memAttrs.outerAttrs       = 0b10;
+        memAttrs.outerTransient   = true;
+      } else if (GETBITS(attrField, 6, 7) == 0b01) {
+        if (GETBITS(attrField, 4, 5) == 0b00) {
+          memAttrs.outerAttrs     = 0b00;
+          memAttrs.outerTransient = false;
+        } else {
+          memAttrs.outerAttrs     = 0b11;
+          memAttrs.outerTransient = true;
+        }
+      } else {
+        memAttrs.outerAttrs     = GETBITS(attrField, 6, 7);
+        memAttrs.outerTransient = false;
+      }
+    }
+
+    if (unpackInner) {
+      if (GETBITS(attrField, 0, 3) == 0b0000)
+        throw Exception(ExceptionType::UNPREDICTABLE);
+      else {
+        if (GETBITS(attrField, 2, 3) == 0b00) {
+          memAttrs.innerAttrs     = 0b10;
+          memAttrs.innerHints     = GETBITS(attrField, 0, 1);
+          memAttrs.innerTransient = true;
+        } else if (GETBITS(attrField, 2, 3) == 0b01) {
+          memAttrs.innerHints     = GETBITS(attrField, 0, 1);
+          if (GETBITS(attrField, 0, 1) == 0b00) {
+            memAttrs.innerAttrs     = 0b00;
+            memAttrs.innerTransient = false;
+          } else {
+            memAttrs.innerAttrs     = 0b11;
+            memAttrs.innerTransient = true;
+          }
+        } else if (GETBITS(attrField, 2, 3) == 0b10) {
+          memAttrs.innerHints     = GETBITS(attrField, 0, 1);
+          memAttrs.innerAttrs     = 0b10;
+          memAttrs.innerTransient = false;
+        } else if (GETBITS(attrField, 2, 3) == 0b11) {
+          memAttrs.innerHints     = GETBITS(attrField, 0, 1);
+          memAttrs.innerAttrs     = 0b11;
+          memAttrs.innerTransient = false;
+        } else
+          throw Exception(ExceptionType::UNPREDICTABLE);
+      }
+    }
+
+    return memAttrs;
+  }
+
+  /* _CheckPermission {{{4
+   * ----------------
+   */
+  ExcInfo _CheckPermission(const Permissions &perms, uint32_t addr, AccType accType, bool isWrite, bool isPriv, bool isSecure) {
+    bool fault = true;
+    if (!perms.apValid)
+      fault = true;
+    else if (perms.xn && accType == AccType_IFETCH)
+      fault = true;
+    else
+      switch (perms.ap) {
+        case 0b00: fault = !isPriv; break;
+        case 0b01: fault = false; break;
+        case 0b10: fault = !isPriv || isWrite; break;
+        case 0b11: fault = isWrite; break;
+        default: throw Exception(ExceptionType::UNPREDICTABLE);
+      }
+
+    if (!fault)
+      return _DefaultExcInfo();
+
+    if (_HaveMainExt()) {
+      uint8_t fsr = 0;
+      switch (accType) {
+        case AccType_IFETCH:
+          fsr |= REG_MMFSR__IACCVIOL;
+          break;
+        case AccType_STACK:
+          if (isWrite)
+            fsr |= REG_MMFSR__MSTKERR;
+          else
+            fsr |= REG_MMFSR__MUNSTKERR;
+          break;
+        case AccType_LAZYFP:
+          fsr |= REG_MMFSR__MLSPERR;
+          break;
+        case AccType_NORMAL:
+        case AccType_ORDERED:
+          fsr |= REG_MMFSR__MMARVALID;
+          fsr |= REG_MMFSR__DACCVIOL;
+          break;
+        default:
+          assert(false);
+          break;
+      }
+
+      if (isSecure) {
+        InternalOr32(REG_MMFSR_S, fsr);
+        if (fsr & REG_MMFSR__MMARVALID)
+          InternalStore32(REG_MMFAR_S, addr);
+      } else {
+        InternalOr32(REG_MMFSR_NS, fsr);
+        if (fsr & REG_MMFSR__MMARVALID)
+          InternalStore32(REG_MMFAR_NS, addr);
+      }
+    }
+
+    return _CreateException(MemManage, true, isSecure);
+  }
+
+  /* _BigEndianReverse {{{4
+   * -----------------
+   */
+  uint32_t _BigEndianReverse(uint32_t value, int N) {
+    assert(N == 1 || N == 2 || N == 4);
+    uint32_t result;
+    switch (N) {
+      case 1:
+        return value & UINT8_MAX;
+      case 2:
+        return (uint16_t(value)>>8) | (uint16_t(value)<<8);
+      default:
+      case 4:
+        return
+          (GETBITS(value,24,31)<< 0)
+        | (GETBITS(value,16,23)<< 8)
+        | (GETBITS(value, 8,15)<<16)
+        | (GETBITS(value, 0, 7)<<24)
+        ;
+    }
+  }
+
+  /* _DWT_DataMatch {{{4
+   * --------------
+   */
+  void _DWT_DataMatch(uint32_t daddr, int dsize, uint32_t dvalue, bool read, bool nsReq) {
+    bool triggerDebugEvent  = false;
+    bool debugEvent         = false;
+
+    uint32_t numComp = GETBITSM(InternalLoad32(REG_DWT_CTRL), REG_DWT_CTRL__NUMCOMP);
+    if (!_HaveDWT() || !numComp)
+      return;
+
+    for (uint32_t i=0; i<numComp; ++i) {
+      if (_IsDWTConfigUnpredictable(i))
+        throw Exception(ExceptionType::UNPREDICTABLE);
+
+      bool daddrMatch   = _DWT_DataAddressMatch(i, daddr, dsize, read, nsReq);
+      bool dvalueMatch  = _DWT_DataValueMatch(i, daddr, dvalue, dsize, read, nsReq);
+
+      if (daddrMatch && (GETBITSM(InternalLoad32(REG_DWT_FUNCTION(i)), REG_DWT_FUNCTION__MATCH) & 0b1100) == 0b0100) {
+        if (GETBITSM(InternalLoad32(REG_DWT_FUNCTION(i)), REG_DWT_FUNCTION__MATCH) != 0b0111) {
+          InternalOr32(REG_DWT_FUNCTION(i), REG_DWT_FUNCTION__MATCHED);
+          debugEvent = (GETBITSM(InternalLoad32(REG_DWT_FUNCTION(i)), REG_DWT_FUNCTION__ACTION) == 0b01);
+        } else {
+          InternalMask32(REG_DWT_FUNCTION(i), REG_DWT_FUNCTION__MATCHED); // UNKNOWN
+          InternalOr32(REG_DWT_FUNCTION(i-1), REG_DWT_FUNCTION__MATCHED);
+          debugEvent = (GETBITSM(InternalLoad32(REG_DWT_FUNCTION(i)), REG_DWT_FUNCTION__ACTION) == 0b01);
+        }
+      }
+
+      if (dvalueMatch && (GETBITSM(InternalLoad32(REG_DWT_FUNCTION(i)), REG_DWT_FUNCTION__MATCH) & 0b1100) == 0b1000) {
+        if (GETBITSM(InternalLoad32(REG_DWT_FUNCTION(i)), REG_DWT_FUNCTION__MATCH) != 0b1011) {
+          InternalOr32(REG_DWT_FUNCTION(i), REG_DWT_FUNCTION__MATCHED);
+          debugEvent = (GETBITSM(InternalLoad32(REG_DWT_FUNCTION(i)), REG_DWT_FUNCTION__ACTION) == 0b01);
+        } else {
+          InternalOr32(REG_DWT_FUNCTION(i), REG_DWT_FUNCTION__MATCHED);
+          debugEvent = (GETBITSM(InternalLoad32(REG_DWT_FUNCTION(i)), REG_DWT_FUNCTION__ACTION) == 0b01);
+        }
+      }
+
+      if (daddrMatch && (GETBITSM(InternalLoad32(REG_DWT_FUNCTION(i)), REG_DWT_FUNCTION__MATCH) & 0b1100) == 0b1100)
+        InternalOr32(REG_DWT_FUNCTION(i), REG_DWT_FUNCTION__MATCHED);
+
+      triggerDebugEvent = triggerDebugEvent || debugEvent;
+    }
+
+    if (triggerDebugEvent)
+      debugEvent = _SetDWTDebugEvent(!nsReq);
+  }
+
+  /* _DWT_DataAddressMatch {{{4
+   * ---------------------
+   */
+  bool _DWT_DataAddressMatch(int N, uint32_t daddr, int dsize, bool read, bool nsReq) {
+    // TODO
+    return false;
+  }
+
+  /* _DWT_DataValueMatch {{{4
+   * -------------------
+   */
+  bool _DWT_DataValueMatch(int N, uint32_t daddr, uint32_t dvalue, int dsize, bool read, bool nsReq) {
+    // TODO
+    return false;
+  }
+
+  /* _IsDWTConfigUnpredictable {{{4
+   * -------------------------
+   */
+  bool _IsDWTConfigUnpredictable(int N) {
+    // TODO
+    return false;
+  }
+
+  /* _SetDWTDebugEvent {{{4
+   * -----------------
+   */
+  bool _SetDWTDebugEvent(bool secureMatch) {
+    if (_CanHaltOnEvent(secureMatch)) {
+      InternalOr32(REG_DHCSR, REG_DHCSR__C_HALT);
+      InternalOr32(REG_DFSR, REG_DFSR__DWTTRAP);
+      return true;
+    }
+
+    if (_HaveMainExt() && _CanPendMonitorOnEvent(secureMatch, true)) {
+      InternalOr32(REG_DEMCR, REG_DEMCR__MON_PEND);
+      InternalOr32(REG_DFSR, REG_DFSR__DWTTRAP);
+      return true;
+    }
+
+    return false;
+  }
+
+  /* _DefaultMemoryAttributes {{{4
+   * ------------------------
+   */
+  MemoryAttributes _DefaultMemoryAttributes(uint32_t addr) {
+    MemoryAttributes attrs;
+
+    switch (GETBITS(addr,29,31)) {
+      case 0b000:
+        attrs.memType     = MemType_Normal;
+        attrs.device      = DeviceType_GRE; // UNKNOWN
+        attrs.innerAttrs  = 0b10;
+        attrs.shareable   = false;
+        break;
+      case 0b001:
+        attrs.memType     = MemType_Normal;
+        attrs.device      = DeviceType_GRE; // UNKNOWN
+        attrs.innerAttrs  = 0b01;
+        attrs.shareable   = false;
+        break;
+      case 0b010:
+        attrs.memType     = MemType_Device;
+        attrs.device      = DeviceType_nGnRE;
+        attrs.innerAttrs  = 0b00;
+        attrs.shareable   = true;
+        break;
+      case 0b011:
+        attrs.memType     = MemType_Normal;
+        attrs.device      = DeviceType_GRE; // UNKNOWN
+        attrs.innerAttrs  = 0b01;
+        attrs.shareable   = false;
+        break;
+      case 0b100:
+        attrs.memType     = MemType_Normal;
+        attrs.device      = DeviceType_GRE; // UNKNOWN
+        attrs.innerAttrs  = 0b10;
+        attrs.shareable   = false;
+        break;
+      case 0b101:
+        attrs.memType     = MemType_Device;
+        attrs.device      = DeviceType_nGnRE;
+        attrs.innerAttrs  = 0b00;
+        attrs.shareable   = true;
+        break;
+      case 0b110:
+        attrs.memType     = MemType_Device;
+        attrs.device      = DeviceType_nGnRE;
+        attrs.innerAttrs  = 0b00;
+        attrs.shareable   = true;
+        break;
+      case 0b111:
+        if (!GETBITS(addr,20,28)) {
+          attrs.memType     = MemType_Device;
+          attrs.device      = DeviceType_nGnRnE;
+          attrs.innerAttrs  = 0b00;
+          attrs.shareable   = true;
+        } else {
+          attrs.memType     = MemType_Device;
+          attrs.device      = DeviceType_nGnRE;
+          attrs.innerAttrs  = 0b00;
+          attrs.shareable   = true;
+        }
+        break;
+    }
+
+    attrs.outerAttrs      = attrs.innerAttrs;
+    attrs.outerShareable  = attrs.shareable;
+    attrs.ns              = false; // UNKNOWN
+    return attrs;
+  }
+
+  /* _DefaultPermissions {{{4
+   * -------------------
+   */
+  Permissions _DefaultPermissions(uint32_t addr) {
+    Permissions perms = {};
+    perms.ap          = 0b01;
+    perms.apValid     = true;
+    perms.region      = 0;
+    perms.regionValid = false;
+
+    switch (GETBITS(addr,29,31)) {
+      case 0b000: perms.xn = false; break;
+      case 0b001: perms.xn = false; break;
+      case 0b010: perms.xn = true;  break;
+      case 0b011: perms.xn = false; break;
+      case 0b100: perms.xn = false; break;
+      case 0b101: perms.xn = true;  break;
+      case 0b110: perms.xn = true;  break;
+      case 0b111: perms.xn = true;  break;
+    }
+
+    return perms;
+  }
+
+  /* _SetPending {{{4
+   * -----------
+   */
+  void _SetPending(int exc, bool isSecure, bool setNotClear) {
+    if (!_HaveSecurityExt())
+      isSecure = false;
+
+    if (_IsExceptionTargetConfigurable(exc))
+      _s.excPending[exc] = setNotClear ? 0b11 : 0b00;
+    else {
+      uint32_t idx = isSecure ? 0 : 1;
+      _s.excPending[exc] = CHGBITS(_s.excPending[exc], idx, idx, setNotClear);
+    }
+  }
+
+  /* _NextInstrITState {{{4
+   * -----------------
+   */
+  uint8_t _NextInstrITState() {
+    uint8_t nextState;
+    if (_HaveMainExt()) {
+      if (_s.itStateChanged)
+        nextState = _s.nextInstrITState;
+      else {
+        nextState = _ThisInstrITState();
+        if (GETBITS(nextState, 0, 2) == 0b000)
+          nextState = 0;
+        else
+          nextState = CHGBITS(nextState, 0, 4, GETBITS(nextState, 0, 4)<<1);
+      }
+    } else
+      nextState = 0;
+    return nextState;
+  }
+
+  /* _PendingExceptionDetails {{{4
+   * ------------------------
+   */
+  // XXX: Unfortunately the ARM ISA manual exceptionally does not give a definition
+  // for this function. Its definition has been estimated via reference to qemu's codebase.
+  std::tuple<bool, int, bool> _PendingExceptionDetails() {
+    // _NvicPendingPriority() has a value higher than the highest possible
+    // priority value if there is no pending interrupt so there is an interrupt
+    // to be handled iff this is true.
+    auto [pendingPrio, pendingExcNo, excIsSecure] = _PendingExceptionDetailsActual();
+    bool canTakePendingExc = (_ExecutionPriority() > pendingPrio);
+
+    if (!canTakePendingExc)
+      return {false, 0, false};
+
+    return {true, pendingExcNo, excIsSecure};
+  }
+
+  // XXX: Custom function, not found in ISA definition.
+  std::tuple<int,int,bool> _PendingExceptionDetailsActual() {
+    int  maxPrio      = 0x100; // Higher than any possible execution priority
+    int  maxPrioExc   = 0;
+    bool excIsSecure  = false;
+
+    for (int i=NMI; i<16; ++i) { // Reset is not handled here
+      for (int j=0; j<2; ++j) { // j=0: secure exception, j=1: non-secure exception
+        if (!(_s.excPending[i] & BIT(j)))
+          continue;
+
+        bool excIsSecure_ = _ExceptionTargetsSecure(i, j == 0);
+        int  excPrio      = _ExceptionPriority(i, excIsSecure_, /*applyPrigroup=*/true);
+
+        if (excPrio < maxPrio) {
+          maxPrio     = excPrio;
+          maxPrioExc  = i;
+          excIsSecure = excIsSecure_;
+        }
+      }
+    }
+
+    for (int i=0; i<16; ++i) {
+      uint32_t v = InternalLoad32(REG_NVIC_ISPRn_S(i));
+      if (!v)
+        continue;
+
+      // ARMv8-M supports exceptions in range [1,511], leaving room for 495
+      // external interrupts. We must not attempt to ask about exceptions with
+      // numbers above 511, even if the _dev implementation is buggy and
+      // returns ones for ISPRn(15) bits [16:31].
+      if (i == 15)
+        v &= 0x0000FFFF;
+
+      while (v) {
+        // Determine number of least significant bit which is set.
+        uint32_t bitNo    = CTZL(v);
+        uint32_t intrNo   = i*32 + bitNo;
+        // Calculate effective exception priority for this external interrupt,
+        // including PRIGROUP etc.
+        bool intrIsSecure = _ExceptionTargetsSecure(16 + intrNo, false/*doesn't matter*/);
+        int  intrPrio     = _ExceptionPriority(16 + intrNo, intrIsSecure, /*applyPrigroup=*/true);
+        if (intrPrio < maxPrio) {
+          maxPrio     = intrPrio;
+          maxPrioExc  = 16 + intrNo;
+          excIsSecure = intrIsSecure;
+        }
+        // Mask off this bit from our ISPR mask to see if any other interrupts
+        // are pending in this ISPR register by repeating CTZL above.
+        v &= ~BIT(bitNo);
+      }
+    }
+
+    return {maxPrio, maxPrioExc, excIsSecure};
+  }
+
+  /* _RawExecutionPriority {{{4
+   * ---------------------
+   */
+  int _RawExecutionPriority() {
+    int execPri = _HighestPri();
+    for (int i=2; i<=_MaxExceptionNum(); ++i)
+      for (int j=0; j<2; ++j) {
+        bool secure = !j;
+        if (_IsActiveForState(i, secure)) {
+          int effectivePriority = _ExceptionPriority(i, secure, true);
+          if (effectivePriority < execPri)
+            execPri = effectivePriority;
+        }
+      }
+
+    return execPri;
+  }
+
+  /* _HighestPri {{{4
+   * -----------
+   */
+  int _HighestPri() {
+    return 256;
+  }
+
+  /* _RestrictedNSPri {{{4
+   * ----------------
+   */
+  int _RestrictedNSPri() {
+    return 0x80;
+  }
+
+  /* _FindPriv {{{4
+   * ---------
+   */
+  bool _FindPriv() {
+    return _CurrentModeIsPrivileged();
+  }
+
+  /* _ExceptionEntry {{{4
+   * ---------------
+   */
+  ExcInfo _ExceptionEntry(int excType, bool toSecure, bool instExecOk) {
+    ExcInfo exc = _PushStack(toSecure, instExecOk);
+    if (exc.fault == NoFault)
+      exc = _ExceptionTaken(excType, false, toSecure, false);
+    return exc;
+  }
+
+  /* _PushStack {{{4
+   * ----------
+   */
+  ExcInfo _PushStack(bool secureExc, bool instExecOk) {
+    auto &control = _IsSecure() ? _s.controlS : _s.controlNS;
+
+    uint32_t frameSize;
+    if (_HaveFPExt() && GETBITSM(control, CONTROL__FPCA) && (_IsSecure() || GETBITSM(InternalLoad32(REG_NSACR), REG_NSACR__CP(10)))) {
+      if (_IsSecure() && GETBITSM(InternalLoad32(REG_FPCCR_S), REG_FPCCR__TS))
+        frameSize = 0xA8;
+      else
+        frameSize = 0x68;
+    } else
+      frameSize = 0x20;
+
+    bool framePtrAlign = GETBIT(_GetSP(), 2);
+    uint32_t framePtr = (_GetSP() - frameSize) & ~BIT(2);
+    RName spName = _LookUpSP();
+
+    auto [retAddr, itState] = _ReturnState(instExecOk);
+    uint32_t retpsr = _s.xpsr;
+    retpsr = CHGBITSM(retpsr, RETPSR__IT_ICI_LO, itState>>2);
+    retpsr = CHGBITSM(retpsr, RETPSR__IT_ICI_HI, itState);
+    retpsr = CHGBITSM(retpsr, RETPSR__SPREALIGN, framePtrAlign);
+    retpsr = CHGBITSM(retpsr, RETPSR__SFPA, _IsSecure() ? GETBITSM(_s.controlS, CONTROL__SFPA) : 0);
+
+    PEMode mode = _CurrentMode();
+    ExcInfo exc;
+    if (1)                    exc = _Stack(framePtr, 0x00, spName, mode, _GetR( 0));
+    if (exc.fault == NoFault) exc = _Stack(framePtr, 0x04, spName, mode, _GetR( 1));
+    if (exc.fault == NoFault) exc = _Stack(framePtr, 0x08, spName, mode, _GetR( 2));
+    if (exc.fault == NoFault) exc = _Stack(framePtr, 0x0C, spName, mode, _GetR( 3));
+    if (exc.fault == NoFault) exc = _Stack(framePtr, 0x10, spName, mode, _GetR(12));
+    if (exc.fault == NoFault) exc = _Stack(framePtr, 0x14, spName, mode, _GetLR());
+    if (exc.fault == NoFault) exc = _Stack(framePtr, 0x18, spName, mode, retAddr);
+    if (exc.fault == NoFault) exc = _Stack(framePtr, 0x1C, spName, mode, retpsr);
+
+    if (_HaveFPExt() && GETBITSM(control, CONTROL__FPCA)) {
+
+    }
+
+    ExcInfo spExc = _SetSP(spName, true, framePtr);
+    exc = _MergeExcInfo(exc, spExc);
+
+    bool isSecure = _IsSecure();
+    bool isThread = (mode == PEMode_Thread);
+    if (_HaveFPExt())
+      _SetLR(BITS(7,31) | (uint32_t(isSecure)<<6) | (uint32_t(isThread)<<3) | 0b100000 | ((GETBITSM(control, CONTROL__FPCA)^1)<<4));
+    else
+      _SetLR(BITS(7,31) | (uint32_t(isSecure)<<6) | (uint32_t(isThread)<<3) | 0b110000);
+
+    return exc;
+  }
+
+  /* _MergeExcInfo {{{4
+   * -------------
+   */
+  ExcInfo _MergeExcInfo(const ExcInfo &a, const ExcInfo &b) {
+    ExcInfo exc, pend;
+
+    if (b.fault == NoFault || (a.isTerminal && !b.isTerminal))
+      exc = a;
+    else if (a.fault == NoFault || (b.isTerminal && !a.isTerminal))
+      exc = b;
+    else if (a.fault == b.fault && a.isSecure == b.isSecure)
+      exc = a;
+    else {
+      int aPri = _ExceptionPriority(a.fault, a.isSecure, false);
+      int bPri = _ExceptionPriority(b.fault, b.isSecure, false);
+
+      if (aPri < bPri) {
+        exc  = a;
+        pend = b;
+      } else {
+        exc  = b;
+        pend = a;
+      }
+
+      if (IMPL_DEF_OVERRIDDEN_EXCEPTIONS_PENDED)
+        _SetPending(pend.fault, pend.isSecure, true);
+    }
+
+    return exc;
+  }
+
+  /* _ReturnState {{{4
+   * ------------
+   */
+  std::tuple<uint32_t, uint8_t> _ReturnState(bool instExecOk) {
+    if (instExecOk)
+      return {_NextInstrAddr(), _NextInstrITState()};
+    else
+      return {_ThisInstrAddr(), _ThisInstrITState()};
+  }
+
+  /* _DerivedLateArrival {{{4
+   * -------------------
+   */
+  void _DerivedLateArrival(int pePriority, int peNumber, bool peIsSecure, const ExcInfo &deInfo, int oeNumber, bool oeIsSecure) {
+    int oePriority = _ExceptionPriority(oeNumber, oeIsSecure, false);
+
+    bool deIsDbgMonFault = _HaveMainExt() ? deInfo.origFault == DebugMonitor : false;
+
+    bool targetIsSecure;
+    int targetFault;
+    if (deInfo.isTerminal) {
+      targetIsSecure  = deInfo.isSecure;
+      targetFault     = deInfo.fault;
+      if (!_ComparePriorities(deInfo, false, oePriority, oeNumber, oeIsSecure)) {
+        _ActivateException(oeNumber, oeIsSecure);
+        _Lockup(true);
+      }
+    } else if (deIsDbgMonFault && !_ComparePriorities(deInfo, true, pePriority, peNumber, peIsSecure)) {
+      _SetPending(DebugMonitor, deInfo.isSecure, false);
+      targetFault = oeNumber;
+      targetIsSecure = oeIsSecure;
+    } else if (_ComparePriorities(deInfo, false, oePriority, oeNumber, oeIsSecure)) {
+      targetFault = deInfo.fault;
+      targetIsSecure = deInfo.isSecure;
+    } else {
+      if (deInfo.lockup) {
+        _ActivateException(oeNumber, oeIsSecure);
+        _Lockup(true);
+      } else {
+        targetFault = oeNumber;
+        targetIsSecure = oeIsSecure;
+      }
+    }
+
+    if (_HaveMainExt() && deInfo.fault == HardFault && deInfo.origFault != HardFault)
+      InternalOr32(REG_HFSR, REG_HFSR__FORCED);
+
+    _SetPending(deInfo.fault, deInfo.isSecure, true);
+    ExcInfo excInfo = _ExceptionTaken(targetFault, deInfo.inExcTaken, targetIsSecure, true);
+    if (excInfo.fault != NoFault)
+      _DerivedLateArrival(pePriority, peNumber, peIsSecure, excInfo, targetFault, targetIsSecure);
+  }
+
+  /* _ComparePriorities {{{4
+   * ------------------
+   */
+  bool _ComparePriorities(int exc0Pri, int exc0Number, bool exc0IsSecure,
+                          int exc1Pri, int exc1Number, bool exc1IsSecure) {
+    bool takeE0;
+    if (exc0Pri != exc1Pri)
+      takeE0 = (exc0Pri < exc1Pri);
+    else if (exc0Number != exc1Number)
+      takeE0 = (exc0Number < exc1Number);
+    else if (exc0IsSecure != exc1IsSecure)
+      takeE0 = exc0IsSecure;
+    else
+      takeE0 = false;
+    return takeE0;
+  }
+
+  bool _ComparePriorities(const ExcInfo &exc0Info, bool groupPri, int exc1Pri, int exc1Number, bool exc1IsSecure) {
+    int exc0Pri = _ExceptionPriority(exc0Info.fault, exc0Info.isSecure, groupPri);
+    return _ComparePriorities(exc0Pri, exc0Info.fault, exc0Info.isSecure, exc1Pri, exc1Number, exc1IsSecure);
+  }
+
+  /* _ActivateException {{{4
+   * ------------------
+   */
+  void _ActivateException(int excNo, bool excIsSecure) {
+    _s.curState = excIsSecure ? SecurityState_Secure : SecurityState_NonSecure;
+    _s.xpsr = CHGBITSM(_s.xpsr, XPSR__EXCEPTION, excNo);
+    if (_HaveMainExt())
+      _SetITSTATE(0);
+    uint32_t &control = _IsSecure() ? _s.controlS : _s.controlNS;
+    if (_HaveFPExt()) {
+      control = CHGBITSM(control, CONTROL__FPCA, 0);
+      _s.controlS = CHGBITSM(_s.controlS, CONTROL__SFPA, 0);
+    }
+    control = CHGBITSM(control, CONTROL__SPSEL, 0);
+
+    _SetPending(excNo, excIsSecure, false);
+    _SetActive(excNo, excIsSecure, true);
+  }
+
+  /* _SetActive {{{4
+   * ----------
+   */
+  void _SetActive(int exc, bool isSecure, bool setNotClear) {
+    if (!_HaveSecurityExt())
+      isSecure = false;
+
+    if (_IsExceptionTargetConfigurable(exc)) {
+      if (_ExceptionTargetsSecure(exc, false/*UNKNOWN*/) == isSecure)
+        _s.excActive[exc] = setNotClear ? 0b11 : 0b00;
+    } else {
+      uint32_t idx = isSecure ? 0 : 1;
+      _s.excActive[exc] = CHGBITS(_s.excActive[exc], idx, idx, setNotClear ? 1 : 0);
+    }
+  }
+
+  /* _TailChain {{{4
+   * ----------
+   */
+  ExcInfo _TailChain(int excNo, bool excIsSecure, uint32_t excReturn) {
+    if (!_HaveFPExt())
+      excReturn = CHGBITSM(excReturn, EXC_RETURN__FTYPE, 1);
+    excReturn = CHGBITSM(excReturn, EXC_RETURN__PREFIX, 0xFF);
+    _SetLR(excReturn);
+
+    return _ExceptionTaken(excNo, true, excIsSecure, false);
+  }
+
+  /* _ConsumeExcStackFrame {{{4
+   * ---------------------
+   */
+  void _ConsumeExcStackFrame(uint32_t excReturn, bool fourByteAlign) {
+    bool toSecure = _HaveSecurityExt() && !!(excReturn & BIT(6));
+    uint32_t frameSize;
+    if (toSecure && (!GETBITSM(excReturn, EXC_RETURN__ES) || !GETBITSM(excReturn, EXC_RETURN__DCRS)))
+      frameSize = 0x48;
+    else
+      frameSize = 0x20;
+
+    if (_HaveFPExt() && !GETBITSM(excReturn, EXC_RETURN__FTYPE)) {
+      if (toSecure && (InternalLoad32(REG_FPCCR_S) & REG_FPCCR__TS))
+        frameSize = frameSize + 0x88;
+      else
+        frameSize = frameSize + 0x48;
+    }
+
+    PEMode mode = GETBITSM(excReturn, EXC_RETURN__MODE) == 1 ? PEMode_Thread : PEMode_Handler;
+    RName spName = _LookUpSP_with_security_mode(toSecure, mode);
+    _s.r[spName] = (_GetSP(spName) + frameSize) | (fourByteAlign ? 0b100 : 0);
+  }
+
+  /* _ExceptionReturn {{{4
+   * ----------------
+   */
+  std::tuple<ExcInfo, uint32_t> _ExceptionReturn(uint32_t excReturn) {
+    int returningExcNo = GETBITSM(_s.xpsr, XPSR__EXCEPTION);
+
+    ExcInfo exc;
+    std::tie(exc, excReturn) = _ValidateExceptionReturn(excReturn, returningExcNo);
+    if (exc.fault != NoFault)
+      return {exc, excReturn};
+
+    bool excSecure, retToSecure;
+    if (_HaveSecurityExt()) {
+      excSecure   = !!GETBITSM(excReturn, EXC_RETURN__ES);
+      retToSecure = !!GETBITSM(excReturn, EXC_RETURN__S);
+    } else {
+      excSecure   = false;
+      retToSecure = false;
+    }
+
+    if (excSecure)
+      _s.controlS = CHGBITSM(_s.controlS, CONTROL__SPSEL, GETBITSM(excReturn, EXC_RETURN__SPSEL));
+    else
+      _s.controlNS = CHGBITSM(_s.controlNS, CONTROL__SPSEL, GETBITSM(excReturn, EXC_RETURN__SPSEL));
+
+    bool targetDomainSecure = !!GETBITSM(excReturn, EXC_RETURN__ES);
+    _DeActivate(returningExcNo, targetDomainSecure);
+
+    auto &control = _IsSecure() ? _s.controlS : _s.controlNS;
+    if (_HaveFPExt() && (InternalLoad32(REG_FPCCR) & REG_FPCCR__CLRONRET) && (control & CONTROL__FPCA)) {
+      if (InternalLoad32(REG_FPCCR_S) & REG_FPCCR__LSPACT) {
+        InternalOr32(REG_SFSR, REG_SFSR__LSERR);
+        exc = _CreateException(SecureFault, true, true);
+        return {exc, excReturn};
+      } else {
+        for (int i=0; i<16; ++i)
+          _SetS(i,0);
+        _s.fpscr = 0;
+      }
+    }
+
+    if (IMPL_DEF_TAIL_CHAINING_SUPPORTED) {
+      auto [takeException, exc2, excIsSecure] = _PendingExceptionDetails();
+      if (takeException) {
+        exc = _TailChain(exc2, excIsSecure, excReturn);
+        return {exc, excReturn};
+      }
+    }
+
+    if (_HaveSecurityExt())
+      _s.curState = retToSecure ? SecurityState_Secure : SecurityState_NonSecure;
+
+    if (GETBITSM(excReturn, EXC_RETURN__MODE) && (InternalLoad32(REG_SCR) & REG_SCR__SLEEPONEXIT) && !_ExceptionActiveBitCount())
+      _SleepOnExit();
+
+    exc = _PopStack(excReturn);
+    if (exc.fault == NoFault) {
+      _ClearExclusiveLocal(_ProcessorID());
+      _SetEventRegister();
+      _InstructionSynchronizationBarrier(0b1111);
+    }
+
+    return {exc, excReturn};
+  }
+
+  /* _ExceptionActiveBitCount {{{4
+   * ------------------------
+   */
+  int _ExceptionActiveBitCount() {
+    int count = 0;
+    for (int i=0; i<=_MaxExceptionNum(); ++i)
+      for (int j=0; j<2; ++j)
+        if (_IsActiveForState(i, !j))
+          ++count;
+    return count;
+  }
+
+  /* _DeActivate {{{4
+   * -----------
+   */
+  void _DeActivate(int returningExcNo, bool targetDomainSecure) {
+    int rawPri = _RawExecutionPriority();
+    if (rawPri == -1)
+      _SetActive(HardFault, !(InternalLoad32(REG_AIRCR) & REG_AIRCR__BFHFNMINS), false);
+    else if (rawPri == -2)
+      _SetActive(NMI,       !(InternalLoad32(REG_AIRCR) & REG_AIRCR__BFHFNMINS), false);
+    else if (rawPri == -3)
+      _SetActive(HardFault,  true, false);
+    else {
+      bool secure = _HaveSecurityExt() && targetDomainSecure;
+      _SetActive(returningExcNo, secure, false);
+    }
+
+    if (_HaveMainExt() && rawPri >= 0) {
+      if (_HaveSecurityExt() && targetDomainSecure)
+        _s.faultmaskS &= ~1;
+      else
+        _s.faultmaskNS &= ~1;
+    }
+  }
+
+  /* _SleepOnExit {{{4
+   * ------------
+   */
+  void _SleepOnExit() {
+    // TODO
+  }
+
+  /* _IsIrqValid {{{4
+   * -----------
+   */
+  bool _IsIrqValid(int e) {
+    return true; // TODO
+  }
+
+  /* _PopStack {{{4
+   * ---------
+   */
+  ExcInfo _PopStack(uint32_t excReturn) {
+    PEMode    mode      = (GETBITSM(excReturn, EXC_RETURN__MODE) ? PEMode_Thread : PEMode_Handler);
+    bool      toSecure  = _HaveSecurityExt() && GETBITSM(excReturn, EXC_RETURN__S);
+    RName     spName    = _LookUpSP_with_security_mode(toSecure, mode);
+    uint32_t  framePtr  = _GetSP(spName);
+    if (!_IsAligned(framePtr, 8))
+      throw Exception(ExceptionType::UNPREDICTABLE);
+
+    uint32_t tmp;
+    ExcInfo exc = _DefaultExcInfo();
+    if (toSecure && (!GETBITSM(excReturn, EXC_RETURN__ES) || !GETBITSM(excReturn, EXC_RETURN__DCRS))) {
+      uint32_t expectedSig = 0xFEFA'125B;
+      if (_HaveFPExt())
+        expectedSig = CHGBITS(expectedSig, 0, 0, GETBITSM(excReturn, EXC_RETURN__FTYPE));
+      uint32_t integritySig;
+      std::tie(exc, integritySig) = _Stack(framePtr, 0, spName, mode);
+      if (exc.fault == NoFault && integritySig != expectedSig) {
+        if (_HaveMainExt())
+          InternalOr32(REG_SFSR, REG_SFSR__INVIS);
+        return _CreateException(SecureFault, true, true);
+      }
+
+      if (exc.fault == NoFault) { std::tie(exc, tmp) = _Stack(framePtr, 0x08, spName, mode); _SetR( 4, tmp); }
+      if (exc.fault == NoFault) { std::tie(exc, tmp) = _Stack(framePtr, 0x0C, spName, mode); _SetR( 5, tmp); }
+      if (exc.fault == NoFault) { std::tie(exc, tmp) = _Stack(framePtr, 0x10, spName, mode); _SetR( 6, tmp); }
+      if (exc.fault == NoFault) { std::tie(exc, tmp) = _Stack(framePtr, 0x14, spName, mode); _SetR( 7, tmp); }
+      if (exc.fault == NoFault) { std::tie(exc, tmp) = _Stack(framePtr, 0x18, spName, mode); _SetR( 8, tmp); }
+      if (exc.fault == NoFault) { std::tie(exc, tmp) = _Stack(framePtr, 0x1C, spName, mode); _SetR( 9, tmp); }
+      if (exc.fault == NoFault) { std::tie(exc, tmp) = _Stack(framePtr, 0x20, spName, mode); _SetR(10, tmp); }
+      if (exc.fault == NoFault) { std::tie(exc, tmp) = _Stack(framePtr, 0x24, spName, mode); _SetR(11, tmp); }
+      framePtr += 0x28;
+    }
+
+    uint32_t pc, psr;
+    if (exc.fault == NoFault) { std::tie(exc, tmp) = _Stack(framePtr, 0x00, spName, mode); _SetR( 0, tmp); }
+    if (exc.fault == NoFault) { std::tie(exc, tmp) = _Stack(framePtr, 0x04, spName, mode); _SetR( 1, tmp); }
+    if (exc.fault == NoFault) { std::tie(exc, tmp) = _Stack(framePtr, 0x08, spName, mode); _SetR( 2, tmp); }
+    if (exc.fault == NoFault) { std::tie(exc, tmp) = _Stack(framePtr, 0x0C, spName, mode); _SetR( 3, tmp); }
+    if (exc.fault == NoFault) { std::tie(exc, tmp) = _Stack(framePtr, 0x10, spName, mode); _SetR(12, tmp); }
+    if (exc.fault == NoFault) { std::tie(exc, tmp) = _Stack(framePtr, 0x14, spName, mode); _SetLR(tmp); }
+    if (exc.fault == NoFault) { std::tie(exc, pc ) = _Stack(framePtr, 0x18, spName, mode); }
+    if (exc.fault == NoFault) { std::tie(exc, psr) = _Stack(framePtr, 0x1C, spName, mode); }
+    _BranchToAndCommit(pc);
+
+    uint32_t excNo = GETBITSM(psr, XPSR__EXCEPTION);
+    if (exc.fault == NoFault && (mode == PEMode_Handler) == !excNo) {
+      if (_HaveMainExt())
+        InternalOr32(REG_UFSR, REG_UFSR__INVPC);
+      return _CreateException(UsageFault, false, false/*UNKNOWN*/);
+    }
+
+    bool validIPSR = (excNo == 0 || excNo == 1 || excNo == NMI || excNo == HardFault || excNo == SVCall || excNo == PendSV || excNo == SysTick);
+    if (!validIPSR && _HaveMainExt())
+      validIPSR = (excNo == MemManage || excNo == BusFault || excNo == UsageFault || excNo == SecureFault || excNo == DebugMonitor);
+
+    if (!validIPSR && !_IsIrqValid(excNo))
+      psr = CHGBITSM(psr, XPSR__EXCEPTION, 0); // UNKNOWN
+
+    if (_HaveFPExt()) {
+      if (!GETBITSM(excReturn, EXC_RETURN__FTYPE)) {
+        if (!toSecure && (InternalLoad32(REG_FPCCR_S) & REG_FPCCR__LSPACT)) {
+          InternalOr32(REG_SFSR, REG_SFSR__LSERR);
+          ExcInfo newExc = _CreateException(SecureFault, true, true);
+          if (IMPL_DEF_DROP_PREV_GEN_EXC)
+            exc = newExc;
+          else
+            exc = _MergeExcInfo(exc, newExc);
+        } else {
+          bool lspAct = !!(toSecure ? InternalLoad32(REG_FPCCR_S) & REG_FPCCR__LSPACT : InternalLoad32(REG_FPCCR_NS) & REG_FPCCR__LSPACT);
+          if (lspAct) {
+            if (exc.fault == NoFault) {
+              if (toSecure)
+                InternalMask32(REG_FPCCR_S, REG_FPCCR__LSPACT);
+              else
+                InternalMask32(REG_FPCCR_NS, REG_FPCCR__LSPACT);
+            }
+          } else {
+            if (exc.fault == NoFault) {
+              bool nPriv  = toSecure ? GETBITSM(_s.controlS, CONTROL__NPRIV) : GETBITSM(_s.controlNS, CONTROL__NPRIV);
+              bool isPriv = (mode == PEMode_Handler || !nPriv);
+              exc = _CheckCPEnabled(10, isPriv, toSecure);
+            }
+
+            if (exc.fault == NoFault) {
+              for (int i=0; i<16; ++i)
+                if (exc.fault == NoFault) {
+                  uint32_t offset = 0x20+(4*i);
+                  uint32_t tmp;
+                  std::tie(exc, tmp) = _Stack(framePtr, offset, spName, mode);
+                  _SetS(i, tmp);
+                }
+              if (exc.fault == NoFault) {
+                uint32_t tmp;
+                std::tie(exc, tmp) = _Stack(framePtr, 0x60, spName, mode);
+                _s.fpscr = tmp;
+              }
+              if (toSecure && (InternalLoad32(REG_FPCCR_S) & REG_FPCCR__TS)) {
+                for (int i=0; i<16; ++i)
+                  if (exc.fault == NoFault) {
+                    uint32_t offset = 0x68+(4*i);
+                    uint32_t tmp;
+                    std::tie(exc, tmp) = _Stack(framePtr, offset, spName, mode);
+                    _SetS(i+16, tmp);
+                  }
+
+                if (exc.fault != NoFault)
+                  for (int i=16; i<32; ++i)
+                    _SetS(i, _HaveSecurityExt() ? 0 : 0 /* UNKNOWN */);
+              }
+              if (exc.fault != NoFault) {
+                for (int i=0; i<16; ++i)
+                  _SetS(i, _HaveSecurityExt() ? 0 : 0 /* UNKNOWN */);
+                _s.fpscr = (_HaveSecurityExt() ? 0 : 0 /* UNKNOWN */);
+              }
+            }
+          }
+        }
+      }
+
+      auto &control = _IsSecure() ? _s.controlS : _s.controlNS;
+      control = CHGBITSM(control, CONTROL__FPCA, GETBITSM(excReturn, EXC_RETURN__FTYPE) ^ 1);
+    }
+
+    if (exc.fault == NoFault)
+      _ConsumeExcStackFrame(excReturn, GETBITSM(psr, RETPSR__SPREALIGN));
+
+    if (_HaveDSPExt())
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__GE, GETBITSM(psr, XPSR__GE));
+
+    if (_IsSecure())
+      _s.controlS = CHGBITSM(_s.controlS, CONTROL__SFPA, GETBITSM(psr, RETPSR__SFPA));
+
+    _s.xpsr = CHGBITSM(_s.xpsr, XPSR__EXCEPTION, GETBITSM(psr, XPSR__EXCEPTION));
+    _s.xpsr = CHGBITSM(_s.xpsr, XPSR__T,         GETBITSM(psr, XPSR__T));
+    if (_HaveMainExt()) {
+      _s.xpsr = CHGBITS(_s.xpsr,27,31,GETBITS(psr,27,31));
+
+      uint32_t it = (GETBITSM(psr, XPSR__IT_ICI_LO)<<2) | GETBITSM(psr, XPSR__IT_ICI_HI);
+      _SetITSTATEAndCommit(it);
+    } else
+      _s.xpsr = CHGBITS(_s.xpsr,28,31,GETBITS(psr,28,31));
+
+    return exc;
+  }
+
+  /* _CheckCPEnabled {{{4
+   * ---------------
+   */
+  ExcInfo _CheckCPEnabled(int cp) {
+    return _CheckCPEnabled(cp, _CurrentModeIsPrivileged(), _IsSecure());
+  }
+
+  ExcInfo _CheckCPEnabled(int cp, bool priv, bool secure) {
+    auto [enabled, toSecure] = _IsCPEnabled(cp, priv, secure);
+    ExcInfo excInfo;
+    if (!enabled) {
+      if (toSecure)
+        InternalOr32(REG_UFSR_S, REG_UFSR__NOCP);
+      else
+        InternalOr32(REG_UFSR_NS, REG_UFSR__NOCP);
+      excInfo = _CreateException(UsageFault, true, toSecure);
+    } else
+      excInfo = _DefaultExcInfo();
+    return excInfo;
+  }
+
+  /* _ValidateExceptionReturn {{{4
+   * ------------------------
+   */
+  std::tuple<ExcInfo, uint32_t> _ValidateExceptionReturn(uint32_t excReturn, int retExcNo) {
+    bool error = false;
+    assert(_CurrentMode() == PEMode_Handler);
+    if (GETBITS(excReturn, 7,23) != BITS(0,16) || GETBITS(excReturn, 1, 1))
+      throw Exception(ExceptionType::UNPREDICTABLE);
+    if (!_HaveFPExt() && !GETBITSM(excReturn, EXC_RETURN__FTYPE))
+      throw Exception(ExceptionType::UNPREDICTABLE);
+
+    bool targetDomainSecure = !!GETBITSM(excReturn, EXC_RETURN__ES);
+    bool excStateNonSecure;
+    int excNo;
+    if (_HaveSecurityExt()) {
+      excStateNonSecure = (_s.curState == SecurityState_NonSecure || !targetDomainSecure);
+      if (excStateNonSecure && (!GETBITSM(excReturn, EXC_RETURN__DCRS) || targetDomainSecure)) {
+        if (_HaveMainExt())
+          InternalOr32(REG_SFSR, REG_SFSR__INVER);
+
+        if (excStateNonSecure && targetDomainSecure)
+          excReturn = CHGBITSM(excReturn, EXC_RETURN__ES, 0);
+
+        targetDomainSecure = false;
+        error = true;
+        excNo = SecureFault;
+      }
+    } else
+      excStateNonSecure = true;
+
+    if (!error)
+      if (!_IsActiveForState(retExcNo, targetDomainSecure)) {
+        error = true;
+        if (_HaveMainExt()) {
+          InternalOr32(REG_UFSR, REG_UFSR__INVPC);
+          excNo = UsageFault;
+        } else
+          excNo = HardFault;
+      }
+
+    ExcInfo excInfo;
+    if (error) {
+      _DeActivate(retExcNo, targetDomainSecure);
+      if (_HaveSecurityExt() && targetDomainSecure)
+        _s.controlS = CHGBITSM(_s.controlS, CONTROL__SPSEL, GETBITSM(excReturn, EXC_RETURN__SPSEL));
+      else
+        _s.controlNS = CHGBITSM(_s.controlNS, CONTROL__SPSEL, GETBITSM(excReturn, EXC_RETURN__SPSEL));
+      excInfo = _CreateException(excNo, false, false /*UNKNOWN*/);
+    } else
+      excInfo = _DefaultExcInfo();
+
+    return {excInfo, excReturn};
+  }
+
+  /* _ExceptionTaken {{{4
+   * ---------------
+   */
+  ExcInfo _ExceptionTaken(int excNo, bool doTailChain, bool excIsSecure, bool ignStackFaults) {
+    assert(_HaveSecurityExt() || !excIsSecure);
+
+    ExcInfo exc = _DefaultExcInfo();
+    if (_HaveSecurityExt() && GETBIT(_GetLR(), 6)) {
+      if (excIsSecure) {
+        if (doTailChain && !GETBIT(_GetLR(), 0))
+          _SetLR(CHGBITS(_GetLR(), 5, 5, 0));
+      } else {
+        if (GETBIT(_GetLR(), 5) && !(doTailChain && !GETBIT(_GetLR(),0)))
+          exc = _PushCalleeStack(doTailChain);
+        _SetLR(CHGBITS(_GetLR(), 5, 5, 1));
+      }
+    }
+
+    if (excIsSecure)
+      _SetLR(CHGBITS(CHGBITS(_GetLR(), 2, 2, GETBITSM(_s.controlS, CONTROL__SPSEL)), 0, 0, 1));
+    else
+      _SetLR(CHGBITS(CHGBITS(_GetLR(), 2, 2, GETBITSM(_s.controlNS, CONTROL__SPSEL)), 0, 0, 0));
+
+    uint32_t callerRegValue = (!_HaveSecurityExt() || excIsSecure) ? 0 /*UNKNOWN*/ : 0;
+    for (int n=0; n<4; ++n)
+      _SetR(n, callerRegValue);
+    _SetR(12, callerRegValue);
+    _s.xpsr = (callerRegValue & ~XPSR__EXCEPTION) | (_s.xpsr & XPSR__EXCEPTION);
+
+    if (_HaveSecurityExt() && GETBIT(_GetLR(), 6)) {
+      if (excIsSecure) {
+        if (!GETBIT(_GetLR(),5))
+          for (int n=4; n<12; ++n)
+            _SetR(n, 0/*UNKNOWN*/);
+      } else
+        for (int n=4; n<12; ++n)
+          _SetR(n, 0);
+    }
+
+    uint32_t start;
+    if (exc.fault == NoFault || ignStackFaults)
+      std::tie(exc, start) = _GetVector(excNo, excIsSecure);
+
+    if (exc.fault == NoFault) {
+      _ActivateException(excNo, excIsSecure);
+      _SCS_UpdateStatusRegs();
+      _ClearExclusiveLocal(_ProcessorID());
+      _SetEventRegister();
+      _InstructionSynchronizationBarrier(0b1111);
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__T, start & 1);
+      _BranchTo(start & ~1);
+    } else
+      exc.inExcTaken = true;
+
+    return exc;
+  }
+
+  /* _PushCalleeStack {{{4
+   * ----------------
+   */
+  ExcInfo _PushCalleeStack(bool doTailChain) {
+    PEMode mode;
+    RName spName;
+    if (doTailChain) {
+      if (!GETBIT(_GetLR(), 3)) {
+        mode = PEMode_Handler;
+        spName = RNameSP_Main_Secure;
+      } else {
+        mode = PEMode_Thread;
+        spName = (GETBIT(_GetLR(), 2) ? RNameSP_Process_Secure : RNameSP_Main_Secure);
+      }
+    } else {
+      spName = _LookUpSP();
+      mode = _CurrentMode();
+    }
+
+    uint32_t framePtr = _GetSP(spName) - 0x28;
+
+    uint32_t integritySig = _HaveFPExt() ? CHGBITS(0xFEFA125A,0,0,GETBIT(_GetLR(),4)) : 0xFEFA125B;
+    ExcInfo exc = _Stack(framePtr, 0x00, spName, mode, integritySig);
+
+    if (exc.fault == NoFault) exc = _Stack(framePtr, 0x08, spName, mode, _GetR( 4));
+    if (exc.fault == NoFault) exc = _Stack(framePtr, 0x0C, spName, mode, _GetR( 5));
+    if (exc.fault == NoFault) exc = _Stack(framePtr, 0x10, spName, mode, _GetR( 6));
+    if (exc.fault == NoFault) exc = _Stack(framePtr, 0x14, spName, mode, _GetR( 7));
+    if (exc.fault == NoFault) exc = _Stack(framePtr, 0x18, spName, mode, _GetR( 8));
+    if (exc.fault == NoFault) exc = _Stack(framePtr, 0x1C, spName, mode, _GetR( 9));
+    if (exc.fault == NoFault) exc = _Stack(framePtr, 0x20, spName, mode, _GetR(10));
+    if (exc.fault == NoFault) exc = _Stack(framePtr, 0x24, spName, mode, _GetR(11));
+
+    ExcInfo spExc = _SetSP(spName, true, framePtr);
+    return _MergeExcInfo(exc, spExc);
+  }
+
+  /* _SCS_UpdateStatusRegs {{{4
+   * ---------------------
+   */
+  void _SCS_UpdateStatusRegs() {
+    // TODO
+  }
+
+  /* _ConstrainUnpredictableBool {{{4
+   * ---------------------------
+   */
+  bool _ConstrainUnpredictableBool(bool x) { return x; }
+
+  /* _ExceptionPriority {{{4
+   * ------------------
+   */
+  int _ExceptionPriority(int n, bool isSecure, bool groupPri) {
+    if (_HaveMainExt())
+      assert(n >= 1 && n <= 511);
+    else
+      assert(n >= 1 && n <= 48);
+
+    int result;
+    if (n == Reset)
+      result = -4;
+    else if (n == NMI)
+      result = -2;
+    else if (n == HardFault) {
+      if (isSecure && (InternalLoad32(REG_AIRCR) & REG_AIRCR__BFHFNMINS))
+        result = -3;
+      else
+        result = -1;
+    } else if (_HaveMainExt() && n == MemManage)
+      result = isSecure ? GETBITSM(InternalLoad32(REG_SHPR1_S), REG_SHPR1__PRI_4) : GETBITSM(InternalLoad32(REG_SHPR1_NS), REG_SHPR1__PRI_4);
+    else if (_HaveMainExt() && n == BusFault)
+      result = GETBITSM(InternalLoad32(REG_SHPR1_S), REG_SHPR1__PRI_5);
+    else if (_HaveMainExt() && n == UsageFault)
+      result = isSecure ? GETBITSM(InternalLoad32(REG_SHPR1_S), REG_SHPR1__PRI_6) : GETBITSM(InternalLoad32(REG_SHPR1_NS), REG_SHPR1__PRI_6);
+    else if (_HaveMainExt() && n == SecureFault)
+      result = GETBITSM(InternalLoad32(REG_SHPR1_S), REG_SHPR1__PRI_7);
+    else if (n == SVCall)
+      result = isSecure ? GETBITSM(InternalLoad32(REG_SHPR2_S), REG_SHPR2__PRI_11) : GETBITSM(InternalLoad32(REG_SHPR2_NS), REG_SHPR2__PRI_11);
+    else if (_HaveMainExt() && n == DebugMonitor)
+      result = GETBITSM(InternalLoad32(REG_SHPR3_S), REG_SHPR3__PRI_12);
+    else if (n == PendSV)
+      result = isSecure ? GETBITSM(InternalLoad32(REG_SHPR3_S), REG_SHPR3__PRI_14) : GETBITSM(InternalLoad32(REG_SHPR3_NS), REG_SHPR3__PRI_14);
+    else if (   n == SysTick
+             && (   (_HaveSysTick() == 2)
+                 || (_HaveSysTick() == 1 && (!(InternalLoad32(REG_ICSR_S) & REG_ICSR__STTNS)) == isSecure)))
+      result = isSecure ? GETBITSM(InternalLoad32(REG_SHPR3_S), REG_SHPR3__PRI_15) : GETBITSM(InternalLoad32(REG_SHPR3_NS), REG_SHPR3__PRI_15);
+    else if (n >= 16) {
+      int r = (n-16)/4;
+      int v = n%4;
+      result = GETBITS(InternalLoad32(_IsSecure() ? REG_NVIC_IPRn_S(r) : REG_NVIC_IPRn_NS(r)), v*8, v*8+7);
+    } else
+      result = 256;
+
+    if (result >= 0) {
+      if (_HaveMainExt() && groupPri) {
+        int subGroupShift;
+        if (isSecure)
+          subGroupShift = GETBITSM(InternalLoad32(REG_AIRCR_S), REG_AIRCR__PRIGROUP);
+        else
+          subGroupShift = GETBITSM(InternalLoad32(REG_AIRCR_NS), REG_AIRCR__PRIGROUP);
+        int groupValue    = 2<<subGroupShift;
+        int subGroupValue = result % groupValue;
+        result = result - subGroupValue;
+      }
+
+      int priSNsPri = _RestrictedNSPri();
+      if ((InternalLoad32(REG_AIRCR_S) & REG_AIRCR__PRIS) && !isSecure)
+        result = (result>>1) + priSNsPri;
+    }
+
+    return result;
+  }
+
+  /* _TopLevel {{{4
+   * ---------
+   * Called once for each tick the PE is not in a sleep state. Handles all
+   * instruction processing, including fetching the opcode, decode and execute.
+   * It also handles pausing execution when in the lockup state.
+   */
+  void _TopLevel() {
+    // If the PE has locked up then abort execution of this instruction. Set
+    // the length of the current instruction to 0 so NextInstrAddr() reports
+    // the correct lockup address.
+    TRACE("top-level begin\n");
+    TRACE_BLOCK();
+    bool ok = !GETBITSM(InternalLoad32(REG_DHCSR), REG_DHCSR__S_LOCKUP);
+    if (!ok) {
+      TRACE("locked up\n");
+      _SetThisInstrDetails(0, 0, 0b1111);
+    } else {
+      ASSERT(!_s.pcChanged);
+
+      // Check for stepping debug for current insn fetch.
+      bool monStepActive = _SteppingDebug();
+      _UpdateSecureDebugEnable();
+      uint32_t pc = _ThisInstrAddr();
+
+      uint32_t instr;
+      bool is16bit;
+      try {
+        // Not locked up, so attempt to fetch the instruction.
+        std::tie(instr, is16bit) = _FetchInstr(pc);
+        TRACE("fetched %d-bit insn: 0x%08x\n", is16bit ? 16 : 32, instr);
+
+        // Setup the details of the instruction. NOTE: The default condition
+        // is based on the ITSTATE, however this is overridden in the decode
+        // stage by instructions that have explicit condition codes.
+        uint32_t len = is16bit ? 2 : 4;
+
+        uint32_t defaultCond = !GETBITS(_GetITSTATE(),0,3) ? 0b1110 : GETBITS(_GetITSTATE(),4,7);
+        _SetThisInstrDetails(instr, len, defaultCond);
+
+        // Checking for FPB Breakpoint on instructions
+        if (_HaveFPB() && _FPB_CheckBreakPoint(pc, len, true, _IsSecure()))
+          _FPB_BreakpointMatch();
+
+        // Finally try and execute the instruction.
+        _DecodeExecute(instr, pc, is16bit);
+
+        // Check for Monitor Step
+        if (_HaveDebugMonitor())
+          _SetMonStep(monStepActive);
+
+        // Check for DWT match
+        if (_IsDWTEnabled())
+          _DWT_InstructionMatch(pc);
+
+      } catch (Exception e) {
+        if (_IsSEE(e) || _IsUNDEFINED(e)) {
+          TRACE("top-level SEE/UD exception\n");
+          // Unallocated instructions in the NOP hint space and instructions that
+          // fail their condition tests are treated like NOPs.
+          bool nopHint =
+               (instr & 0b11111111111111111111111100001111U) == 0b00000000000000001011111100000000U
+            || (instr & 0b11111111111111111111111100000000U) == 0b11110011101011111000000000000000U;
+          if (_ConditionHolds(_CurrentCond()) && !nopHint) {
+            ok = false;
+            bool toSecure = _IsSecure();
+            // Unallocated instructions in the coprocessor space behave as NOCP if the
+            // coprocessor is disabled.
+            auto [isCp, cpNum] = _IsCPInstruction(instr);
+            if (isCp) {
+              auto [cpEnabled, cpFaultState] = _IsCPEnabled(cpNum);
+              if (!cpEnabled) {
+                // A PE is permitted to decode the coprocessor space and raise
+                // UNDEFINSTR UsageFaults for unallocated encodings even if the
+                // coprocessor is disabled.
+                if (IMPL_DEF_DECODE_CP_SPACE)
+                  InternalOr32(REG_UFSR, REG_UFSR__UNDEFINSTR);
+                else {
+                  InternalOr32(REG_UFSR, REG_UFSR__NOCP);
+                  toSecure = cpFaultState;
+                }
+              }
+            } else
+              InternalOr32(REG_UFSR, REG_UFSR__UNDEFINSTR);
+
+            // If Main Extension is not implemented the fault will escalate to a HardFault.
+            ExcInfo excInfo = _CreateException(UsageFault, true, toSecure);
+
+            // Prevent EndOfInstruction() being called in HandleInstruction() as the
+            // instruction has already been terminated so there is no need to throw
+            // the exception again.
+            excInfo.termInst = false;
+            _HandleException(excInfo);
+          }
+        } else if (_IsExceptionTaken(e)) { // XXX guessing this is EndOfInstruction
+          TRACE("top-level EOI exception\n");
+          ok = false;
+        } else
+          // Do not catch UNPREDICTABLE or internal errors
+          throw;
+      }
+    }
+
+    // SEE
+    // UNDEFINED
+    // Taken
+    // UNPREDICTABLE
+    // internal
+
+    // If there is a reset pending do that, otherwise process the normal
+    // instruction advance.
+    try {
+      if (_s.excPending[Reset]) {
+        TRACE("top-level handling pending reset\n");
+        _s.excPending[Reset] = 0;
+        _TakeReset();
+        TRACE("top-level done handling pending reset\n");
+      } else {
+        // Call instruction advance for exception handling and PC/ITSTATE
+        // advance.
+        TRACE("top-level advancing\n");
+        _InstructionAdvance(ok);
+        TRACE("top-level advance done\n");
+      }
+
+    } catch (Exception e) {
+      TRACE("top-level reset/advance exception\n");
+
+      // Do not catch UNPREDICTABLE or internal errors
+      if (!_IsExceptionTaken(e))
+        throw;
+
+      // The correct architectural behaviour for any exceptions is performed
+      // inside TakeReset() and InstructionAdvance(). So no additional actions
+      // are required in this catch block.
+    }
+  }
+
+  /* _EndOfInstruction {{{4
+   * -----------------
+   */
+  void _EndOfInstruction() {
+    throw Exception(ExceptionType::EndOfInstruction);
+  }
+
+  /* _CreateException {{{4
+   * ----------------
+   */
+  ExcInfo _CreateException(int exc, bool forceSecurity, bool isSecure, bool isSync=true) {
+    // Work out the effective target state of the exception.
+    if (_HaveSecurityExt()) {
+      if (!forceSecurity)
+        isSecure = _ExceptionTargetsSecure(exc, _IsSecure());
+      else
+        isSecure = false;
+    }
+
+    // An implementation without Security Extensions cannot cause a fault targeting
+    // Secure state.
+    assert(_HaveSecurityExt() || !isSecure);
+
+    // Get the remaining exception details.
+    auto [escalateToHf, termInst] = _ExceptionDetails(exc, isSecure, isSync);
+
+    // Fill in the default exception info.
+    ExcInfo info            = _DefaultExcInfo();
+    info.fault              = exc;
+    info.termInst           = termInst;
+    info.origFault          = exc;
+    info.origFaultIsSecure  = isSecure;
+
+    // Check for HardFault escalation.
+    // NOTE: In some cases (for example faults during lazy floating-point state
+    // preservation) the decision to escalate below is ignored and instead
+    // based on the info.origFaults fields and other factors.
+    if (escalateToHf && info.fault != HardFault) {
+      // Update the exception info with the escalation details, including
+      // whether there's a change in destination Security state.
+      info.fault    = HardFault;
+      isSecure      = _ExceptionTargetsSecure(HardFault, isSecure);
+      bool dummy;
+      std::tie(escalateToHf, dummy) = _ExceptionDetails(HardFault, isSecure, isSync);
+    }
+
+    // If the requested exception was already a HardFault then we can't
+    // escalate to a HardFault, so lockup. NOTE: Async BusFaults never cause
+    // lockups, if the BusFault is disabled it escalates to a HardFault that is
+    // pended.
+    if (escalateToHf && isSync && info.fault == HardFault)
+      info.lockup = true;
+
+    // Fill in the remaining exception info.
+    info.isSecure = isSecure;
+    return info;
+  }
+
+  /* _UpdateSecureDebugEnable {{{4
+   * ------------------------
+   */
+  void _UpdateSecureDebugEnable() {
+    /// DHCSR.S_SDE is frozen if the PE is in Debug state
+    uint32_t dhcsr = InternalLoad32(REG_DHCSR);
+    if (!GETBITSM(dhcsr, REG_DHCSR__S_HALT)) {
+      dhcsr = CHGBITSM(dhcsr, REG_DHCSR__S_SDE, _SecureHaltingDebugAllowed());
+      InternalStore32(REG_DHCSR, dhcsr);
+    }
+
+    uint32_t demcr = InternalLoad32(REG_DEMCR);
+    if (_HaveDebugMonitor() && !_s.excActive[DebugMonitor] && !GETBITSM(demcr, REG_DEMCR__MON_PEND)) {
+      demcr = CHGBITSM(demcr, REG_DEMCR__SDME, _SecureDebugMonitorAllowed());
+      InternalStore32(REG_DEMCR, demcr);
+    }
+  }
+
+  /* _TakeReset {{{4
+   * ----------
+   */
+  void _TakeReset() {
+    _s.curState = _HaveSecurityExt() ? SecurityState_Secure : SecurityState_NonSecure;
+
+    _ResetSCSRegs(); // Catch-all function for System Control Space reset
+    _s.xpsr = 0; // APSR is UNKNOWN UNPREDICTABLE, IPSR exception number is 0
+    if (_HaveMainExt()) {
+      _s.lr = 0xFFFF'FFFF;      // Preset to an illegal exception return value
+      _SetITSTATEAndCommit(0);  // IT/ICI bits cleared
+    } else
+      _s.lr = 0xFFFF'FFFF;      // UNKNOWN
+
+    // Reset priority boosting
+    _s.primaskNS &= ~1;
+    if (_HaveSecurityExt())
+      _s.primaskS &= ~1;
+    if (_HaveMainExt()) {
+      _s.faultmaskNS &= ~1;
+      _s.basepriNS = CHGBITS(_s.basepriNS,0,7,0);
+      if (_HaveSecurityExt()) {
+        _s.faultmaskS &= ~1;
+        _s.basepriS = CHGBITS(_s.basepriS,0,7,0);
+      }
+    }
+
+    // Initialize the Floating Point Extn
+    if (_HaveFPExt()) {
+      _s.controlS = CHGBITSM(_s.controlS, CONTROL__FPCA, 0); // FP inactive
+      uint32_t fpdscrNS = InternalLoad32(REG_FPDSCR_NS);
+      fpdscrNS = CHGBITSM(fpdscrNS, REG_FPDSCR__AHP,    0);
+      fpdscrNS = CHGBITSM(fpdscrNS, REG_FPDSCR__DN,     0);
+      fpdscrNS = CHGBITSM(fpdscrNS, REG_FPDSCR__FZ,     0);
+      fpdscrNS = CHGBITSM(fpdscrNS, REG_FPDSCR__RMODE,  0);
+      InternalStore32(REG_FPDSCR_NS, fpdscrNS);
+      uint32_t fpccr = InternalLoad32(REG_FPCCR_S);
+      fpccr = CHGBITSM(fpccr, REG_FPCCR__LSPEN, 1);
+      InternalStore32(REG_FPCCR_S, fpccr);
+      uint32_t fpccrNS = InternalLoad32(REG_FPCCR_NS);
+      fpccrNS = CHGBITSM(fpccrNS, REG_FPCCR__ASPEN, 1);
+      fpccrNS = CHGBITSM(fpccrNS, REG_FPCCR__LSPACT, 0);
+      InternalStore32(REG_FPCCR_NS, fpccrNS);
+      InternalStore32(REG_FPCAR_NS, 0); // UNKNOWN
+      if (_HaveSecurityExt()) {
+        _s.controlS = CHGBITSM(_s.controlS, CONTROL__SFPA, 0);
+        uint32_t fpdscrS = InternalLoad32(REG_FPDSCR_S);
+        fpdscrS = CHGBITSM(fpdscrS, REG_FPDSCR__AHP, 0);
+        fpdscrS = CHGBITSM(fpdscrS, REG_FPDSCR__DN, 0);
+        fpdscrS = CHGBITSM(fpdscrS, REG_FPDSCR__FZ, 0);
+        fpdscrS = CHGBITSM(fpdscrS, REG_FPDSCR__RMODE, 0);
+        InternalStore32(REG_FPDSCR_S, fpdscrS);
+        uint32_t fpccr = InternalLoad32(REG_FPCCR_S);
+        fpccr = CHGBITSM(fpccr, REG_FPCCR__LSPENS, 0);
+        InternalStore32(REG_FPCCR_S, fpccr);
+        uint32_t fpccrS = InternalLoad32(REG_FPCCR_S);
+        fpccrS = CHGBITSM(fpccrS, REG_FPCCR__ASPEN, 1);
+        fpccrS = CHGBITSM(fpccrS, REG_FPCCR__LSPACT, 0);
+        InternalStore32(REG_FPCCR_S, fpccrS);
+        InternalStore32(REG_FPCAR_S, 0); // UNKNOWN
+      }
+      for (int i=0; i<32; ++i)
+        _SetS(i, 0); // UNKNOWN
+    }
+
+    for (int i=0; i<_MaxExceptionNum(); ++i) // All exceptions Inactive
+      _s.excActive[i] = 0;
+    _ClearExclusiveLocal(_ProcessorID());
+    _ClearEventRegister();
+    for (int i=0; i<13; ++i)
+      _s.r[i] = 0; // UNKNOWN
+
+    // Stack limit registers. It is IMPLEMENTATIOND EFINED how many bits
+    // of these registers are writable. The following writes only affect the bits
+    // that an implementation defines as writable.
+    if (_HaveMainExt()) {
+      _s.msplimNS = 0;
+      _s.psplimNS = 0;
+    }
+    if (_HaveSecurityExt()) {
+      _s.msplimS = 0;
+      _s.psplimS = 0;
+    }
+
+    // Load the initial value of the stack pointer and the reset value from the
+    // vector table. The order of the loads is IMPLEMENTATION DEFINED.
+    auto [excSp, sp]      = _GetVector(0,     _HaveSecurityExt());
+    auto [excRst, start]  = _GetVector(Reset, _HaveSecurityExt());
+    if (excSp.fault != NoFault || excRst.fault != NoFault)
+      _Lockup(true);
+
+    // Initialize the stack pointers and start execution at the reset vector
+    if (_HaveSecurityExt()) {
+      _SetSP_Main_Secure(sp);
+      _SetSP_Main_NonSecure(0); // UNKNOWN
+      _SetSP_Process_Secure(0); // UNKNOWN
+    } else
+      _SetSP_Main_NonSecure(sp);
+
+    // Begin Implementation-Specific Resets
+    _NestReset(); // Implementation-Specific
+    _s.curCondOverride = -1;
+    // End Implementation-Specific Resets
+
+    _SetSP_Process_NonSecure(0); // UNKNOWN
+    _s.xpsr = CHGBITSM(_s.xpsr, XPSR__T, start & 1);
+    _BranchToAndCommit(start & ~1);
+
+    // This is not included in the psuedocode but is required else the first
+    // instruction will be executed twice.
+    _s.pcChanged       = false;
+  }
+
+  /* _SteppingDebug {{{4
+   * --------------
+   */
+  bool _SteppingDebug() {
+    // If halting debug is allowed and C_STEP is set, set C_HALT for the next instruction.
+    uint32_t dhcsr = InternalLoad32(REG_DHCSR);
+    if (_CanHaltOnEvent(_IsSecure()) && !!(dhcsr & REG_DHCSR__C_STEP)) {
+      dhcsr |= REG_DHCSR__C_HALT;
+      InternalStore32(REG_DHCSR, dhcsr);
+
+      uint32_t dfsr = InternalLoad32(REG_DFSR);
+      dfsr |= REG_DFSR__HALTED;
+      InternalStore32(REG_DFSR, dfsr);
+    }
+
+    uint32_t demcr = InternalLoad32(REG_DEMCR);
+    bool monStepEnabled = _HaveDebugMonitor() && _CanPendMonitorOnEvent(_IsSecure(), false);
+    return monStepEnabled && !!(demcr & REG_DEMCR__MON_STEP);
+  }
+
+  /* _FetchInstr {{{4
+   * -----------
+   */
+  std::tuple<uint32_t,bool> _FetchInstr(uint32_t addr) {
+    uint32_t sgOpcode = 0xE97F'E97F;
+
+    SAttributes hw1Attr = _SecurityCheck(addr, true, _IsSecure());
+    // Fetch the T16 instruction, or the first half of a T32.
+    uint16_t hw1Instr = _GetMemI(addr);
+
+    // If the T bit is clear then the instruction can't be decoded
+    if (!GETBITSM(_s.xpsr, XPSR__T)) {
+      // Attempted NS->S domain crossing with the T bit clear raise an INVEP
+      // SecureFault
+      ExcInfo excInfo;
+      if (!_IsSecure() && !hw1Attr.ns) {
+        uint32_t sfsr = InternalLoad32(REG_SFSR);
+        sfsr |= REG_SFSR__INVEP;
+        InternalStore32(REG_SFSR, sfsr);
+        excInfo = _CreateException(SecureFault, true, true);
+      } else {
+        uint32_t ufsr = InternalLoad32(REG_UFSR);
+        ufsr |= REG_UFSR__INVSTATE;
+        InternalStore32(REG_UFSR, ufsr);
+        excInfo = _CreateException(UsageFault, false, false/*unknown*/);
+      }
+      _HandleException(excInfo);
+    }
+
+    // Implementations are permitted to terminate the fetch process early if a
+    // domain crossing is being attempted and the first 16bits of the opcode
+    // isn't the first part of the SG instruction.
+    if (IMPL_DEF_EARLY_SG_CHECK) {
+      if (!_IsSecure() && !hw1Attr.ns && (hw1Instr != sgOpcode>>16)) {
+        uint32_t sfsr = InternalLoad32(REG_SFSR);
+        sfsr |= REG_SFSR__INVEP;
+        InternalStore32(REG_SFSR, sfsr);
+        ExcInfo excInfo = _CreateException(SecureFault, true, true);
+        _HandleException(excInfo);
+      }
+    }
+
+    // NOTE: Implementations are also permitted to terminate the fetch process
+    // at this point with an UNDEFINSTR UsageFault if the first 16 bits are an
+    // undefined T32 prefix.
+
+    // If the data fetched is the top half of a T32 instruction, fetch the bottom
+    // 16 bits.
+    uint32_t instr;
+    SAttributes hw2Attr;
+    bool isT16 = GETBITS(hw1Instr,11,15) < 0b11101;
+    if (isT16)
+      instr = hw1Instr;
+    else {
+      hw2Attr = _SecurityCheck(addr+2, true, _IsSecure());
+      // The following test covers 2 possible fault conditions:
+      // 1) NS code branching to a T32 instruction where the first half is in
+      //    NS memory, and the second half is in S memory
+      // 2) NS code branching to a T32 instruction in S & NSC memory, but
+      //    where the second half of the instruction is in NS memory
+      if (!_IsSecure() && hw1Attr.ns != hw2Attr.ns) {
+        uint32_t sfsr = InternalLoad32(REG_SFSR);
+        sfsr |= REG_SFSR__INVEP;
+        InternalStore32(REG_SFSR, sfsr);
+        ExcInfo excInfo = _CreateException(SecureFault, true, true);
+        _HandleException(excInfo);
+      }
+
+      // Fetch the second half of the TE2 instruction.
+      instr = (uint32_t(hw1Instr)<<16) | _GetMemI(addr+2);
+    }
+
+    // Raise a fault if an otherwise valid NS->S transition that doesn't land on
+    // an SG instruction.
+    if (!_IsSecure() && !hw1Attr.ns && instr != sgOpcode) {
+      uint32_t sfsr = InternalLoad32(REG_SFSR);
+      sfsr |= REG_SFSR__INVEP;
+      InternalStore32(REG_SFSR, sfsr);
+      ExcInfo excInfo = _CreateException(SecureFault, true, true);
+      _HandleException(excInfo);
+    }
+
+    return {instr, isT16};
+  }
+
+  /* _GenerateDebugEventResponse {{{4
+   * ---------------------------
+   */
+  bool _GenerateDebugEventResponse() {
+    if (_CanHaltOnEvent(_IsSecure())) {
+      InternalOr32(REG_DFSR, REG_DFSR__BKPT);
+      InternalOr32(REG_DHCSR, REG_DHCSR__C_HALT);
+      return true;
+    } else if (_HaveMainExt() && _CanPendMonitorOnEvent(_IsSecure(), true)) {
+      InternalOr32(REG_DFSR, REG_DFSR__BKPT);
+      InternalOr32(REG_DEMCR, REG_DEMCR__MON_PEND);
+      ExcInfo excInfo = _CreateException(DebugMonitor, false, false/*UNKNOWN*/);
+      _HandleException(excInfo);
+      return true;
+    } else
+      return false;
+  }
+
+  /* _FPB_CheckBreakPoint {{{4
+   * --------------------
+   */
+  bool _FPB_CheckBreakPoint(uint32_t iaddr, int size, bool isIFetch, bool isSecure) {
+    bool match = _FPB_CheckMatchAddress(iaddr);
+    if (!match && size == 4 && _FPB_CheckMatchAddress(iaddr+2))
+      match = _ConstrainUnpredictableBool(false/*Unpredictable_FPBreakpoint*/);
+    return match;
+  }
+
+  /* _FPB_CheckMatchAddress {{{4
+   * ----------------------
+   */
+  bool _FPB_CheckMatchAddress(uint32_t iaddr) {
+    if (!(InternalLoad32(REG_FP_CTRL) & REG_FP_CTRL__ENABLE))
+      return false; // FPB not enabled
+
+    // Instruction Comparator.
+    uint32_t fpCtrl = InternalLoad32(REG_FP_CTRL);
+    uint32_t numAddrCmp = GETBITSM(fpCtrl, REG_FP_CTRL__NUM_CODE_LO) | (GETBITSM(fpCtrl, REG_FP_CTRL__NUM_CODE_HI)<<4);
+    if (!numAddrCmp)
+      return false; // No comparator support
+
+    for (int N=0; N<numAddrCmp; ++N) {
+      uint32_t x = InternalLoad32(REG_FP_COMP(N));
+      if (x & REG_FP_COMPn__BE) // Breakpoint enabled
+        if ((iaddr>>1) == GETBITSM(x, REG_FP_COMPn__BPADDR))
+          return true;
+    }
+
+    return false;
+  }
+
+  /* _ExceptionDetails {{{4
+   * -----------------
+   */
+  std::tuple<bool,bool> _ExceptionDetails(int exc, bool isSecure, bool isSync) {
+    bool escalateToHf, termInst, enabled, canEscalate;
+
+    switch (exc) {
+      case HardFault:
+        termInst = true;
+        enabled = true;
+        canEscalate = true;
+        break;
+      case MemManage:
+        termInst = true;
+        if (_HaveMainExt()) {
+          uint32_t val = isSecure ? InternalLoad32(REG_SHCSR_S) : InternalLoad32(REG_SHCSR_NS);
+          enabled = !!(val & REG_SHCSR__MEMFAULTENA);
+        } else
+          enabled = false;
+        canEscalate = true;
+        break;
+      case BusFault:
+        termInst = isSync;
+        enabled = _HaveMainExt() ? !!(InternalLoad32(REG_SHCSR_S) & REG_SHCSR__BUSFAULTENA) : false;
+        canEscalate = termInst || !enabled; // Async BusFaults only escalate if they are disabled
+        break;
+      case UsageFault:
+        termInst = true;
+        if (_HaveMainExt()) {
+          uint32_t val = isSecure ? InternalLoad32(REG_SHCSR_S) : InternalLoad32(REG_SHCSR_NS);
+          enabled = !!(val & REG_SHCSR__USGFAULTENA);
+        } else
+          enabled = false;
+        canEscalate = true;
+        break;
+      case SecureFault:
+        termInst = true;
+        enabled = _HaveMainExt() ? !!(InternalLoad32(REG_SHCSR_S) & REG_SHCSR__SECUREFAULTENA) : false;
+        canEscalate = true;
+        break;
+      case SVCall:
+        termInst = false;
+        enabled  = true;
+        canEscalate = true;
+        break;
+      case DebugMonitor:
+        termInst = true;
+        enabled = _HaveMainExt() ? !!(InternalLoad32(REG_DEMCR) & REG_DEMCR__MON_EN) : false;
+        canEscalate = false; // true if fault caused by BKPT instruction
+        break;
+      default:
+        termInst = false;
+        canEscalate = false;
+        break;
+    }
+
+    // If the fault can escalate then check if exception can be taken
+    // immediately, or whether it should escalate.
+    escalateToHf = false;
+    if (canEscalate) {
+      int execPri = _ExecutionPriority();
+      int excePri = _ExceptionPriority(exc, isSecure, true);
+      if (excePri >= execPri || !enabled)
+        escalateToHf = true;
+    }
+
+    return {escalateToHf, termInst};
+  }
+
+  /* _HandleException {{{4
+   * ----------------
+   */
+  void _HandleException(const ExcInfo &excInfo) {
+    if (excInfo.fault == NoFault)
+      return;
+
+    TRACE("handling exception %d\n", excInfo.fault);
+
+    if (excInfo.lockup) {
+      TRACE("commencing lockup\n");
+      _Lockup(excInfo.termInst);
+      return;
+    }
+
+    // If the fault escalated to a HardFault update the syndrome info
+    if (_HaveMainExt() && excInfo.fault == HardFault && excInfo.origFault != HardFault)
+      InternalOr32(REG_HFSR, REG_HFSR__FORCED);
+
+    // If the exception does not cause a lockup set the exception pending and
+    // potentially terminate execution of the current instruction
+    _SetPending(excInfo.fault, excInfo.isSecure, true);
+    if (excInfo.termInst)
+      _EndOfInstruction();
+  }
+
+  /* _InstructionAdvance {{{4
+   * -------------------
+   */
+  void _InstructionAdvance(bool instExecOk) {
+    // Check for, and process any exception returns that were requested. This
+    // must be done after the instruction has completed so any exceptions raised
+    // during the exception return do not interfere with the execution of the
+    // instruction that causes the exception return (e.g. a POP causing an
+    // excReturn value to be written to the PC must adjust SP even if the
+    // exception return caused by the POP raises a fault).
+    bool excRetFault = false;
+    uint32_t excReturn = _NextInstrAddr();
+    if (_s.pendingReturnOperation) {
+      _s.pendingReturnOperation = false;
+      ExcInfo excInfo;
+      std::tie(excInfo, excReturn) = _ExceptionReturn(excReturn);
+      // Handle any faults raised during exception return
+      if (excInfo.fault != NoFault) {
+        excRetFault = true;
+        // Either lockup, or pend the fault if it can be taken
+        if (excInfo.lockup) {
+          // Check if the fault occured on an exception return, or whether it
+          // occured during a tail chained exception entry. This is because
+          // Lockups on exception return have to be handled differently.
+          if (!excInfo.inExcTaken) {
+            // If the fault occured during exception return, then the register
+            // state is UNKNOWN. This is due to the fact that an unknown amount
+            // of the exception stack frame might have been restored.
+            for (int n=0; n<13; ++n)
+              _s.r[n] = 0; // UNKNOWN
+            _s.lr = 0; // UNKNOWN
+            _s.xpsr = 0; // UNKNOWN
+            if (_HaveFPExt())
+              for (int n=0; n<32; ++n)
+                _SetS(n, 0); // UNKNOWN
+            _s.fpscr = 0; // UNKNOWN
+            // If lockup is entered as a result of an exception return fault the
+            // original exception is deactivated. Therefore the stack pointer
+            // must be updated to consume the exception stack frame to keep the
+            // stack depth consistent with the number of active exceptions. NOTE:
+            // The XPSR SP alignment flag is UNKNOWN, assume is was zero.
+            _ConsumeExcStackFrame(excReturn, false);
+            // IPSR from stack is UNKNOWN, set IPSR bsased on mode specified in
+            // EXC_RETURN.
+            _s.xpsr = CHGBITSM(_s.xpsr, XPSR__EXCEPTION, (excReturn & EXC_RETURN__MODE) ? NoFault : HardFault);
+            if (_HaveFPExt()) {
+              uint32_t &control = _IsSecure() ? _s.controlS : _s.controlNS;
+              control = CHGBITSM(control,  CONTROL__FPCA, ~GETBITSM(excReturn, EXC_RETURN__FTYPE));
+              _s.controlS = CHGBITSM(_s.controlS, CONTROL__SFPA, 0); // UNKNOWN
+            }
+          }
+          _Lockup(false);
+        } else {
+          // Set syndrome if fault escalated to a hardfault
+          if (_HaveMainExt() && excInfo.fault == HardFault && excInfo.origFault != HardFault)
+            InternalOr32(REG_HFSR, REG_HFSR__FORCED);
+          _SetPending(excInfo.fault, excInfo.isSecure, true);
+        }
+      }
+    }
+
+      TRACE("NIA Y ch=%d thisAddr=0x%x thisLen=%d ovr=0x%x\n", _s.pcChanged, _ThisInstrAddr(), _ThisInstrLength(), _s.nextInstrAddr);
+    // If there is a pending exception with sufficient priority take it now. This
+    // is done before committing PC and ITSTATE changes caused by the previous
+    // instruction so that calls to ThisInstrAddr(), NextInstrAddr(),
+    // ThisInstrITState(), NextInstrITState() represent the context the
+    // instruction was executed in. IE so the correct context is pushed to the
+    // stack.
+    auto [takeException, exception, excIsSecure] = _PendingExceptionDetails();
+    if (takeException) {
+      TRACE("TAKE EXC %d\n", exception);
+      // If a fault occurred during an exception return then the exception
+      // stack frame will already be on the stack, as a resut entry to the
+      // next exception is treated as if it were a tail chain.
+      int pePriority = _ExecutionPriority();
+      uint32_t peException = GETBITSM(_s.xpsr, XPSR__EXCEPTION);
+      bool peIsSecure = _IsSecure();
+      ExcInfo excInfo;
+      if (excRetFault) {
+        // If the fault occurred during ExceptionTaken() then LR will have been
+        // updated with the new exception return value. To excReturn consistent
+        // with the state of the exception stack frame we need to use the updated
+        // version in this case. If no updates have occurred then the excReturn
+        // value from the previous exception return is used.
+        uint32_t nextExcReturn = excInfo.inExcTaken ? _s.lr : excReturn;
+        excInfo = _TailChain(exception, excIsSecure, nextExcReturn);
+      } else
+        excInfo = _ExceptionEntry(exception, excIsSecure, instExecOk);
+      // Handle any derived faults that have occurred
+      if (excInfo.fault != NoFault)
+        _DerivedLateArrival(pePriority, peException, peIsSecure, excInfo, exception, excIsSecure);
+    }
+
+    // If the PC has moved away from the lockup address (eg because an NMI has
+    // been taken) leave the lockup state.
+    if (InternalLoad32(REG_DHCSR) & REG_DHCSR__S_LOCKUP && _NextInstrAddr() != 0xEFFF'FFFE)
+      InternalMask32(REG_DHCSR, REG_DHCSR__S_LOCKUP);
+
+    // Only advance the PC and ISTATE if not locked up.
+    if (!(InternalLoad32(REG_DHCSR) & REG_DHCSR__S_LOCKUP)) {
+      // Commit PC and ITSTATE changes ready for the next instruction.
+      TRACE("NIA Z ch=%d thisAddr=0x%x thisLen=%d ovr=0x%x\n", _s.pcChanged, _ThisInstrAddr(), _ThisInstrLength(), _s.nextInstrAddr);
+      _s.pc = _NextInstrAddr();
+      _s.pcChanged = false;
+      if (_HaveMainExt()) {
+        uint32_t next = _NextInstrITState();
+        _s.xpsr = CHGBITSM(_s.xpsr, XPSR__IT_ICI_LO, next>>2);
+        _s.xpsr = CHGBITSM(_s.xpsr, XPSR__IT_ICI_HI, next);
+        _s.itStateChanged = false;
+      }
+    }
+  }
+
+  /* _ConditionHolds {{{4
+   * ---------------
+   */
+  bool _ConditionHolds(uint32_t cond) {
+    bool result;
+    switch ((cond>>1) & 0b111) {
+      case 0b000: result = GETBITSM(_s.xpsr, XPSR__Z); break;
+      case 0b001: result = GETBITSM(_s.xpsr, XPSR__C); break;
+      case 0b010: result = GETBITSM(_s.xpsr, XPSR__N); break;
+      case 0b011: result = GETBITSM(_s.xpsr, XPSR__V); break;
+      case 0b100: result = GETBITSM(_s.xpsr, XPSR__C) && !GETBITSM(_s.xpsr, XPSR__Z); break;
+      case 0b101: result = GETBITSM(_s.xpsr, XPSR__Z) == GETBITSM(_s.xpsr, XPSR__V); break;
+      case 0b110: result = GETBITSM(_s.xpsr, XPSR__Z) == GETBITSM(_s.xpsr, XPSR__V) && !GETBITSM(_s.xpsr, XPSR__Z); break;
+      case 0b111: result = true; break;
+    }
+
+    if ((cond & 1) && cond != 0b111)
+      result = !result;
+
+    return result;
+  }
+
+  /* _SetMonStep {{{4
+   * -----------
+   */
+  void _SetMonStep(bool monStepActive) {
+    if (!monStepActive)
+      return;
+
+    if (!(InternalLoad32(REG_DEMCR) & REG_DEMCR__MON_STEP))
+      throw Exception(ExceptionType::UNPREDICTABLE);
+
+    if (_ExceptionPriority(DebugMonitor, _IsSecure(), true) < _ExecutionPriority()) {
+      InternalOr32(REG_DEMCR, REG_DEMCR__MON_PEND);
+      InternalOr32(REG_DFSR, REG_DFSR__HALTED);
+    }
+  }
+
+  /* _ExceptionTargetsSecure {{{4
+   * -----------------------
+   */
+  bool _ExceptionTargetsSecure(int excNo, bool isSecure) {
+    if (!_HaveSecurityExt())
+      return false;
+
+    bool targetSecure = false;
+    switch (excNo) {
+      case NMI:
+        targetSecure = !(InternalLoad32(REG_AIRCR) & REG_AIRCR__BFHFNMINS);
+        break;
+      case HardFault:
+        targetSecure = !(InternalLoad32(REG_AIRCR) & REG_AIRCR__BFHFNMINS) || isSecure;
+        break;
+      case MemManage:
+        targetSecure = isSecure;
+        break;
+      case BusFault:
+        targetSecure = !(InternalLoad32(REG_AIRCR) & REG_AIRCR__BFHFNMINS);
+        break;
+      case UsageFault:
+        targetSecure = isSecure;
+        break;
+      case SecureFault:
+        targetSecure = true;
+        break;
+      case SVCall:
+        targetSecure = isSecure;
+        break;
+      case DebugMonitor:
+        targetSecure = !!(InternalLoad32(REG_DEMCR) & REG_DEMCR__SDME);
+        break;
+      case PendSV:
+        targetSecure = isSecure;
+        break;
+      case SysTick:
+        if (_HaveSysTick() == 2) {
+        } else if (_HaveSysTick() == 1)
+          // SysTick target state is configurable
+          targetSecure = !(InternalLoad32(REG_ICSR_S) & REG_ICSR__STTNS);
+        break;
+
+      default:
+        if (excNo >= 16)
+          targetSecure = !(InternalLoad32(REG_NVIC_ITNSn((excNo-16)/32)) & BIT((excNo-16)%32));
+        break;
+    }
+
+    return targetSecure;
+  }
+
+  /* _IsCPInstruction {{{4
+   * ----------------
+   */
+  std::tuple<bool, int> _IsCPInstruction(uint32_t instr) {
+    bool isCp = false;
+    if ((instr & 0b11101111000000000000000000000000) == 0b11101110000000000000000000000000)
+      isCp = true;
+    if ((instr & 0b11101110000000000000000000000000) == 0b11101100000000000000000000000000)
+      isCp = true;
+    int cpNum = isCp ? GETBITS(instr, 8,11) : 0 /* UNKNOWN */;
+    if (cpNum == 11)
+      cpNum = 10;
+    return {isCp, cpNum};
+  }
+
+  /* _DWT_InstructionMatch {{{4
+   * ---------------------
+   */
+  void _DWT_InstructionMatch(uint32_t iaddr) {
+    bool triggerDebugEvent = false;
+    bool debugEvent = false;
+
+    if (!_HaveDWT() || !(InternalLoad32(REG_DWT_CTRL) & REG_DWT_CTRL__NUMCOMP))
+      return;
+
+    assert(false); // TODO
+  }
+
+  /* _IsCPEnabled {{{4
+   * ------------
+   */
+  std::tuple<bool, bool> _IsCPEnabled(int cp, bool priv, bool secure) {
+    bool enabled, forceToSecure = false;
+
+    uint32_t cpacr = secure ? InternalLoad32(REG_CPACR_S) : InternalLoad32(REG_CPACR_NS);
+    switch (GETBITS(cpacr,cp*2,cp*2+1)) {
+      case 0b00:
+        enabled = false;
+        break;
+      case 0b01:
+        enabled = priv;
+        break;
+      case 0b10:
+        throw Exception(ExceptionType::UNPREDICTABLE);
+        break;
+      case 0b11:
+        enabled = true;
+        break;
+    }
+
+    if (enabled && _HaveSecurityExt()) {
+      if (!secure && !(InternalLoad32(REG_NSACR) & BIT(cp))) {
+        enabled = false;
+        forceToSecure = true;
+      }
+    }
+
+    if (enabled && !!(InternalLoad32(REG_CPPWR) & BIT(cp*2))) {
+      enabled = false;
+      forceToSecure = !!(InternalLoad32(REG_CPPWR) & BIT(cp*2+1));
+    }
+
+    return {enabled, secure || forceToSecure};
+  }
+
+  /* _GetMemI {{{4
+   * --------
+   */
+  uint16_t _GetMemI(uint32_t addr) {
+    uint16_t value;
+    auto [excInfo, memAddrDesc] = _ValidateAddress(addr, AccType_IFETCH, _FindPriv(), _IsSecure(), false, true);
+    if (excInfo.fault == NoFault) {
+      bool error;
+      std::tie(error, value) = _GetMem(memAddrDesc, 2);
+      if (error) {
+        value = UINT16_MAX; // UNKNOWN
+        InternalOr32(REG_BFSR, REG_BFSR__IBUSERR);
+        excInfo = _CreateException(BusFault, false, false/*UNKNOWN*/);
+        TRACE("fetch failed\n");
+      }
+    } else TRACE("fetch addr validate failed\n");
+
+    _HandleException(excInfo);
+    if (_IsDWTEnabled())
+      _DWT_InstructionMatch(addr);
+    return value;
+  }
+
+  /* _ExecutionPriority {{{4
+   * ------------------
+   */
+  int _ExecutionPriority() {
+    int boostedPri = _HighestPri();
+
+    int priSNsPri = _RestrictedNSPri();
+    if (_HaveMainExt()) {
+      if (GETBITS(_s.basepriNS, 0, 7)) {
+        uint32_t basepri        = GETBITS(_s.basepriNS, 0, 7);
+        uint32_t subGroupShift  = GETBITSM(InternalLoad32(REG_AIRCR_NS), REG_AIRCR__PRIGROUP);
+        uint32_t groupValue     = 2U<<subGroupShift;
+        uint32_t subGroupValue  = basepri % groupValue;
+        boostedPri              = basepri - subGroupValue;
+        if (InternalLoad32(REG_AIRCR_S) & REG_AIRCR__PRIS)
+          boostedPri = (boostedPri>>1) + priSNsPri;
+      }
+
+      if (GETBITS(_s.basepriS, 0, 7)) {
+        uint32_t basepri        = GETBITS(_s.basepriS, 0, 7);
+        uint32_t subGroupShift  = GETBITSM(InternalLoad32(REG_AIRCR_S), REG_AIRCR__PRIGROUP);
+        uint32_t groupValue     = 2U<<subGroupShift;
+        uint32_t subGroupValue  = basepri % groupValue;
+        basepri                 = basepri - subGroupValue;
+        if (boostedPri > basepri)
+          boostedPri = basepri;
+      }
+    }
+
+    if (_s.primaskNS & 1) {
+      if (!(InternalLoad32(REG_AIRCR_S) & REG_AIRCR__PRIS))
+        boostedPri = 0;
+      else if (boostedPri > priSNsPri)
+        boostedPri = priSNsPri;
+    }
+
+    if (_s.primaskS & 1)
+      boostedPri = 0;
+
+    if (_HaveMainExt()) {
+      if (_s.faultmaskNS & 1) {
+        if (!(InternalLoad32(REG_AIRCR) & REG_AIRCR__BFHFNMINS)) {
+          if (!(InternalLoad32(REG_AIRCR_S) & REG_AIRCR__PRIS))
+            boostedPri = 0;
+          else if (boostedPri > priSNsPri)
+            boostedPri = priSNsPri;
+        } else
+          boostedPri = -1;
+      }
+
+      if (_s.faultmaskS & 1)
+        boostedPri = !(InternalLoad32(REG_AIRCR) & REG_AIRCR__BFHFNMINS) ? -1 : -3;
+    }
+
+    int rawExecPri = _RawExecutionPriority();
+    return boostedPri < rawExecPri ? boostedPri : rawExecPri;
+  }
+
+  /* _SecurityCheck {{{4
+   * --------------
+   */
+  SAttributes _SecurityCheck(uint32_t addr, bool isInstrFetch, bool isSecure) {
+    SAttributes result = {};
+
+    bool idauExempt = false;
+    bool idauNs = true;
+    bool idauNsc = true;
+
+    if (IMPL_DEF_IDAU_PRESENT) {
+      //TODO
+    }
+
+    if (isInstrFetch && GETBITS(addr,28,31) == 0b1111) {
+      // Use default attributes defined above.
+    } else if (   idauExempt
+               || (isInstrFetch && GETBITS(addr,28,31) == 0b1110)
+               || (addr >= 0xE000'0000 && addr <= 0xE000'2FFF)
+               || (addr >= 0xE000'E000 && addr <= 0xE000'EFFF)
+               || (addr >= 0xE002'E000 && addr <= 0xE002'EFFF)
+               || (addr >= 0xE004'0000 && addr <= 0xE004'1FFF)
+               || (addr >= 0xE00F'F000 && addr <= 0xE00F'FFFF)) {
+      result.ns       = !isSecure;
+      result.irvalid  = false;
+    } else {
+      if (InternalLoad32(REG_SAU_CTRL) & REG_SAU_CTRL__ENABLE) {
+        bool multiRegionHit = false;
+        uint32_t numRegion = GETBITSM(InternalLoad32(REG_SAU_TYPE), REG_SAU_TYPE__SREGION);
+        for (int r=0; r<numRegion; ++r) {
+          auto [rbar,rlar] = _InternalLoadSauRegion(r);
+          if (rlar & REG_SAU_RLAR__ENABLE) {
+            uint32_t baseAddr   = (GETBITSM(rbar, REG_SAU_RBAR__BADDR) << 5) | 0b00000;
+            uint32_t limitAddr  = (GETBITSM(rlar, REG_SAU_RLAR__LADDR) << 5) | 0b11111;
+            if (baseAddr <= addr && limitAddr >= addr) {
+              if (result.srvalid)
+                multiRegionHit = true;
+              else {
+                result.ns       =  !(rlar & REG_SAU_RLAR__NSC);
+                result.nsc      = !!(rlar & REG_SAU_RLAR__NSC);
+                result.srvalid  = true;
+                result.sregion  = r & 0xFF;
+              }
+            }
+          }
+        }
+        if (multiRegionHit) {
+          result.ns       = false;
+          result.nsc      = false;
+          result.sregion  = 0;
+          result.srvalid  = false;
+        }
+      } else if (InternalLoad32(REG_SAU_CTRL) & REG_SAU_CTRL__ALLNS)
+        result.ns = true;
+
+      if (!idauNs) {
+        if (result.ns || (!idauNsc && result.nsc)) {
+          result.ns   = false;
+          result.nsc  = idauNsc;
+        }
+      }
+    }
+
+    return result;
   }
 
   /* _DecodeExecute {{{3
@@ -3020,3205 +6237,7 @@ private:
       _SetR(d, UNKNOWN_VAL(0));
   }
 
-  /* _SetITSTATEAndCommit {{{3
-   * --------------------
-   */
-  void _SetITSTATEAndCommit(uint8_t it) {
-    _s.nextInstrITState = it;
-    _s.itStateChanged = true;
-    _s.xpsr = CHGBITSM(_s.xpsr, XPSR__IT_ICI_LO, it>>2);
-    _s.xpsr = CHGBITSM(_s.xpsr, XPSR__IT_ICI_HI, it&3);
-  }
-
-  /* _HaveSysTick {{{3
-   * ------------
-   */
-  int _HaveSysTick() { return 2; }
-
-  /* _NextInstrAddr {{{3
-   * --------------
-   */
-  uint32_t _NextInstrAddr() {
-    if (_s.pcChanged)
-      return _s.nextInstrAddr;
-    else
-      return _ThisInstrAddr() + _ThisInstrLength();
-  }
-
-  /* _ThisInstrLength {{{3
-   * ----------------
-   */
-  int _ThisInstrLength() { return _s.thisInstrLength; }
-
-  /* _Load8 {{{3
-   * ------
-   */
-  int _Load8(AddressDescriptor memAddrDesc, uint8_t &v) {
-    if (memAddrDesc.physAddr >= 0xE000'0000 && memAddrDesc.physAddr < 0xE010'0000)
-      // Non-32 bit accesses to SCS are UNPREDICTABLE; generate BusFault.
-      return 1;
-
-    return _dev.Load8(memAddrDesc.physAddr, v);
-  }
-
-  /* _Load16 {{{3
-   * -------
-   */
-  int _Load16(AddressDescriptor memAddrDesc, uint16_t &v) {
-    if (memAddrDesc.physAddr >= 0xE000'0000 && memAddrDesc.physAddr < 0xE010'0000)
-      // Non-32 bit accesses to SCS are UNPREDICTABLE; generate BusFault.
-      return 1;
-
-    return _dev.Load16(memAddrDesc.physAddr, v);
-  }
-
-  /* _Load32 {{{3
-   * -------
-   */
-  int _Load32(AddressDescriptor memAddrDesc, uint32_t &v) {
-    if (memAddrDesc.physAddr >= 0xE000'0000 && memAddrDesc.physAddr < 0xE010'0000)
-      return _NestLoad32(memAddrDesc.physAddr, memAddrDesc.accAttrs.isPriv, !memAddrDesc.memAttrs.ns, v);
-
-    return _dev.Load32(memAddrDesc.physAddr, v);
-  }
-
-  /* _Store8 {{{3
-   * -------
-   */
-  int _Store8(AddressDescriptor memAddrDesc, uint8_t v) {
-    if (memAddrDesc.physAddr >= 0xE000'0000 && memAddrDesc.physAddr < 0xE010'0000)
-      // Non-32 bit accesses to SCS are UNPREDICTABLE; generate BusFault.
-      return 1;
-
-    return _dev.Store8(memAddrDesc.physAddr, v);
-  }
-
-  /* _Store16 {{{3
-   * --------
-   */
-  int _Store16(AddressDescriptor memAddrDesc, uint16_t v) {
-    if (memAddrDesc.physAddr >= 0xE000'0000 && memAddrDesc.physAddr < 0xE010'0000)
-      // Non-32 bit accesses to SCS are UNPREDICTABLE; generate BusFault.
-      return 1;
-
-    return _dev.Store16(memAddrDesc.physAddr, v);
-  }
-
-  /* _Store32 {{{3
-   * --------
-   */
-  int _Store32(AddressDescriptor memAddrDesc, uint32_t v) {
-    if (memAddrDesc.physAddr >= 0xE000'0000 && memAddrDesc.physAddr < 0xE010'0000)
-      return _NestStore32(memAddrDesc.physAddr, memAddrDesc.accAttrs.isPriv, !memAddrDesc.memAttrs.ns, v);
-
-    return _dev.Store32(memAddrDesc.physAddr, v);
-  }
-
-  /* _GetMem {{{3
-   * -------
-   */
-  std::tuple<bool,uint32_t> _GetMem(AddressDescriptor memAddrDesc, int size) {
-    switch (size) {
-      case 1: {
-        uint8_t v;
-        if (_Load8(memAddrDesc, v))
-          return {true,0};
-        else
-          return {false,v};
-      }
-      case 2: {
-        uint16_t v;
-        if (_Load16(memAddrDesc, v))
-          return {true,0};
-        else
-          return {false,v};
-      }
-      case 4: {
-        uint32_t v;
-        if (_Load32(memAddrDesc, v))
-          return {true,0};
-        else
-          return {false,v};
-      }
-      default:
-        assert(false);
-        break;
-    }
-  }
-
-  /* _SetMem {{{3
-   * -------
-   */
-  bool _SetMem(AddressDescriptor memAddrDesc, int size, uint32_t v) {
-    switch (size) {
-      case 1:
-        return !!_Store8(memAddrDesc, (uint8_t)v);
-      case 2:
-        return !!_Store16(memAddrDesc, (uint16_t)v);
-      case 4:
-        return !!_Store32(memAddrDesc, (uint32_t)v);
-      default:
-        assert(false);
-    }
-  }
-
-  /* _HaveHaltingDebug {{{3
-   * -----------------
-   */
-  bool _HaveHaltingDebug() { return true; }
-
-  /* _CanHaltOnEvent {{{3
-   * ---------------
-   */
-  bool _CanHaltOnEvent(bool isSecure) {
-    if (!_HaveSecurityExt())
-      assert(!isSecure);
-    return _HaveHaltingDebug() && _HaltingDebugAllowed() && !!(InternalLoad32(REG_DHCSR) & REG_DHCSR__C_DEBUGEN)
-      && !(InternalLoad32(REG_DHCSR) & REG_DHCSR__S_HALT) && (!isSecure || !!(InternalLoad32(REG_DHCSR) & REG_DHCSR__S_SDE));
-  }
-
-  /* _CanPendMonitorOnEvent {{{3
-   * ----------------------
-   */
-  bool _CanPendMonitorOnEvent(bool isSecure, bool checkPri) {
-    if (!_HaveSecurityExt())
-      assert(!isSecure);
-    return _HaveDebugMonitor() && !_CanHaltOnEvent(isSecure)
-      && !!(InternalLoad32(REG_DEMCR) & REG_DEMCR__MON_EN)
-      && !(InternalLoad32(REG_DHCSR) & REG_DHCSR__S_HALT)
-      && (!isSecure || !!(InternalLoad32(REG_DEMCR) & REG_DEMCR__SDME))
-      && (!checkPri || _ExceptionPriority(DebugMonitor, isSecure, true) < _ExecutionPriority());
-  }
-
-  /* _ThisInstrITState {{{3
-   * -----------------
-   */
-  uint8_t _ThisInstrITState() {
-    if (_HaveMainExt())
-      return (GETBITSM(_s.xpsr, XPSR__IT_ICI_LO)<<2) | GETBITSM(_s.xpsr, XPSR__IT_ICI_HI);
-    else
-      return 0;
-  }
-
-  /* _GetITSTATE {{{3
-   * -----------
-   */
-  uint8_t _GetITSTATE() { return _ThisInstrITState(); }
-
-  /* _SetITSTATE {{{3
-   * -----------
-   */
-  void _SetITSTATE(uint8_t value) {
-    _s.nextInstrITState = value;
-    _s.itStateChanged = true;
-  }
-
-  /* _GetSP {{{3
-   * ------
-   */
-  uint32_t _GetSP(RName spreg) {
-    assert(    spreg == RNameSP_Main_NonSecure
-           || (spreg == RNameSP_Main_Secure       && _HaveSecurityExt())
-           ||  spreg == RNameSP_Process_NonSecure
-           || (spreg == RNameSP_Process_Secure    && _HaveSecurityExt()));
-    return _s.r[spreg] & ~3;
-  }
-
-  /* _SetSP {{{3
-   * ------
-   */
-  ExcInfo _SetSP(RName spreg, bool excEntry, uint32_t value) {
-    ExcInfo excInfo = _DefaultExcInfo();
-    auto [limit, applyLimit] = _LookUpSPLim(spreg);
-    if (applyLimit && value < limit) {
-      if (excEntry)
-        _s.r[spreg] = limit;
-
-      if (_HaveMainExt())
-        InternalOr32(REG_UFSR, REG_UFSR__STKOF);
-
-      excInfo = _CreateException(UsageFault, false, false/*UNKNOWN*/);
-      if (!excEntry)
-        _HandleException(excInfo);
-    } else
-      _s.r[spreg] = value & ~3;
-    return excInfo;
-  }
-
-  /* _Stack {{{3
-   * ------
-   */
-  ExcInfo _Stack(uint32_t framePtr, int offset, RName spreg, PEMode mode, uint32_t value) {
-    auto [limit, applyLimit] = _LookUpSPLim(spreg);
-    bool doAccess;
-    if (!applyLimit || framePtr >= limit)
-      doAccess = true;
-    else
-      doAccess = IMPL_DEF_PUSH_NON_VIOL_LOCATIONS;
-
-    uint32_t addr = framePtr + offset;
-    ExcInfo excInfo;
-    if (doAccess && (!applyLimit || ((addr >= limit)))) {
-      bool secure = (spreg == RNameSP_Main_Secure || spreg == RNameSP_Process_Secure);
-      bool isPriv = secure ? !GETBITSM(_s.controlS, CONTROL__NPRIV) : !GETBITSM(_s.controlNS, CONTROL__NPRIV);
-      isPriv = isPriv || mode == PEMode_Handler;
-      excInfo = _MemA_with_priv_security(addr, 4, AccType_STACK, isPriv, secure, true, value);
-    } else
-      excInfo = _DefaultExcInfo();
-
-    return excInfo;
-  }
-
-  std::tuple<ExcInfo, uint32_t> _Stack(uint32_t framePtr, int offset, RName spreg, PEMode mode) {
-    bool secure = (spreg == RNameSP_Main_Secure || spreg == RNameSP_Process_Secure);
-    bool isPriv = secure ? !(_s.controlS & CONTROL__NPRIV) : !(_s.controlNS & CONTROL__NPRIV);
-    isPriv = isPriv || mode == PEMode_Handler;
-    uint32_t addr = framePtr + offset;
-    auto [excInfo, value] = _MemA_with_priv_security(addr, 4, AccType_STACK, isPriv, secure, true);
-    return {excInfo, value};
-  }
-
-  /* _GetLR {{{3
-   * ------
-   */
-  uint32_t _GetLR() { return _GetR(14); }
-
-  /* _SetLR {{{3
-   * ------
-   */
-  void _SetLR(uint32_t v) { _SetR(14, v); }
-
-  /* _HaveDSPExt {{{3
-   * -----------
-   */
-  bool _HaveDSPExt() { return false; }
-
-  /* _GetR {{{3
-   * -----
-   */
-  uint32_t _GetR(int n) {
-    assert(n >= 0 && n <= 15);
-    switch (n) {
-      case  0: return _s.r[RName0];
-      case  1: return _s.r[RName1];
-      case  2: return _s.r[RName2];
-      case  3: return _s.r[RName3];
-      case  4: return _s.r[RName4];
-      case  5: return _s.r[RName5];
-      case  6: return _s.r[RName6];
-      case  7: return _s.r[RName7];
-      case  8: return _s.r[RName8];
-      case  9: return _s.r[RName9];
-      case 10: return _s.r[RName10];
-      case 11: return _s.r[RName11];
-      case 12: return _s.r[RName12];
-      case 13: return _s.r[_LookUpSP()] & ~3;
-      case 14: return _s.r[RName_LR];
-      case 15: return _s.r[RName_PC] + 4;
-      default: assert(false);
-    }
-  }
-
-  /* _SetR {{{3
-   * -----
-   */
-  void _SetR(int n, uint32_t v) {
-    assert(n >= 0 && n <= 14);
-    switch (n) {
-      case  0: _s.r[RName0 ] = v; break;
-      case  1: _s.r[RName1 ] = v; break;
-      case  2: _s.r[RName2 ] = v; break;
-      case  3: _s.r[RName3 ] = v; break;
-      case  4: _s.r[RName4 ] = v; break;
-      case  5: _s.r[RName5 ] = v; break;
-      case  6: _s.r[RName6 ] = v; break;
-      case  7: _s.r[RName7 ] = v; break;
-      case  8: _s.r[RName8 ] = v; break;
-      case  9: _s.r[RName9 ] = v; break;
-      case 10: _s.r[RName10] = v; break;
-      case 11: _s.r[RName11] = v; break;
-      case 12: _s.r[RName12] = v; break;
-      case 13:
-        if (IMPL_DEF_SPLIM_CHECK_UNPRED_INSTR)
-          _SetSP(_LookUpSP(), false, v);
-        else
-          _s.r[_LookUpSP()] = v & ~3;
-        break;
-      case 14:
-        _s.r[RName_LR] = v;
-        break;
-    }
-  }
-
-  /* _LookUpSP_with_security_mode {{{3
-   * ----------------------------
-   */
-  RName _LookUpSP_with_security_mode(bool isSecure, PEMode mode) {
-    bool spSel;
-
-    if (isSecure)
-      spSel = !!(_s.controlS & CONTROL__SPSEL);
-    else
-      spSel = !!(_s.controlNS & CONTROL__SPSEL);
-
-    if (spSel && mode == PEMode_Thread)
-      return isSecure ? RNameSP_Process_Secure : RNameSP_Process_NonSecure;
-    else
-      return isSecure ? RNameSP_Main_Secure : RNameSP_Main_NonSecure;
-  }
-
-  /* _LookUpSP {{{3
-   * ---------
-   */
-  RName _LookUpSP() {
-    return _LookUpSP_with_security_mode(_IsSecure(), _CurrentMode());
-  }
-
-  /* _LookUpSPLim {{{3
-   * ------------
-   */
-  std::tuple<uint32_t, bool> _LookUpSPLim(RName spreg) {
-    uint32_t limit;
-    switch (spreg) {
-      case RNameSP_Main_Secure:
-        limit = _s.msplimS & ~7;
-        break;
-      case RNameSP_Process_Secure:
-        limit = _s.psplimS & ~7;
-        break;
-      case RNameSP_Main_NonSecure:
-        limit = _HaveMainExt() ? (_s.msplimNS & ~7) : 0;
-        break;
-      case RNameSP_Process_NonSecure:
-        limit = _HaveMainExt()? (_s.psplimNS & ~7) : 0;
-        break;
-      default:
-        assert(false);
-    }
-
-    bool applyLimit;
-    bool secure = (spreg == RNameSP_Main_Secure || spreg == RNameSP_Process_Secure);
-    assert(!secure || _HaveSecurityExt());
-    if (_HaveMainExt() && _IsReqExcPriNeg(secure)) {
-      bool ignLimit = secure ? (InternalLoad32(REG_CCR_S) & REG_CCR__STKOFHFNMIGN) : (InternalLoad32(REG_CCR_NS) & REG_CCR__STKOFHFNMIGN);
-      applyLimit = !ignLimit;
-    } else
-      applyLimit = true;
-
-    return {limit, applyLimit};
-  }
-
-  /* _IsReqExcPriNeg {{{3
-   * ---------------
-   */
-  bool _IsReqExcPriNeg(bool secure) {
-    bool neg = _IsActiveForState(NMI, secure) || _IsActiveForState(HardFault, secure);
-    if (_HaveMainExt()) {
-      uint32_t faultMask = secure ? _s.faultmaskS : _s.faultmaskNS;
-      if (faultMask & 1)
-        neg = true;
-    }
-    return neg;
-  }
-
-  /* _GetSP {{{3
-   * ------
-   */
-  uint32_t _GetSP() { return _GetR(13); }
-
-  /* _SetSP {{{3
-   * ------
-   */
-  void _SetSP(uint32_t value) { _SetRSPCheck(13, value); }
-
-  /* _GetSP_Main {{{3
-   * -----------
-   */
-  uint32_t _GetSP_Main() { return _IsSecure() ? _GetSP_Main_Secure() : _GetSP_Main_NonSecure(); }
-
-  /* _SetSP_Main {{{3
-   * -----------
-   */
-  void _SetSP_Main(uint32_t value) {
-    if (_IsSecure())
-      _SetSP_Main_Secure(value);
-    else
-      _SetSP_Main_NonSecure(value);
-  }
-
-  /* _GetSP_Main_NonSecure {{{3
-   * ---------------------
-   */
-  uint32_t _GetSP_Main_NonSecure() {
-    return _GetSP(RNameSP_Main_NonSecure);
-  }
-
-  /* _SetSP_Main_NonSecure {{{3
-   * ---------------------
-   */
-  void _SetSP_Main_NonSecure(uint32_t value) {
-    _SetSP(RNameSP_Main_NonSecure, false, value);
-  }
-
-  /* _SetSP_Main_Secure {{{3
-   * ------------------
-   */
-  void _SetSP_Main_Secure(uint32_t value) {
-    _SetSP(RNameSP_Main_Secure, false, value);
-  }
-
-  /* _GetSP_Main_Secure {{{3
-   * ------------------
-   */
-  uint32_t _GetSP_Main_Secure() {
-    return _GetSP(RNameSP_Main_Secure);
-  }
-
-  /* _GetSP_Process {{{3
-   * --------------
-   */
-  uint32_t _GetSP_Process() {
-    return _IsSecure() ? _GetSP_Process_Secure() : _GetSP_Process_NonSecure();
-  }
-
-  /* _SetSP_Process {{{3
-   * --------------
-   */
-  void _SetSP_Process(uint32_t value) {
-    if (_IsSecure())
-      _SetSP_Process_Secure(value);
-    else
-      _SetSP_Process_NonSecure(value);
-  }
-
-  /* _GetSP_Process_NonSecure {{{3
-   * ------------------------
-   */
-  uint32_t _GetSP_Process_NonSecure() {
-    return _GetSP(RNameSP_Process_NonSecure);
-  }
-
-  /* _SetSP_Process_NonSecure {{{3
-   * ------------------------
-   */
-  void _SetSP_Process_NonSecure(uint32_t value) {
-    _SetSP(RNameSP_Process_NonSecure, false, value);
-  }
-
-  /* _GetSP_Process_Secure {{{3
-   * ---------------------
-   */
-  uint32_t _GetSP_Process_Secure() {
-    return _GetSP(RNameSP_Process_Secure);
-  }
-
-  /* _SetSP_Process_Secure {{{3
-   * ---------------------
-   */
-  void _SetSP_Process_Secure(uint32_t value) {
-    _SetSP(RNameSP_Process_Secure, false, value);
-  }
-  
-  /* _SetRSPCheck {{{3
-   * ------------
-   */
-  void _SetRSPCheck(int n, uint32_t v) {
-    if (n == 13)
-      _SetSP(_LookUpSP(), false, v);
-    else
-      _SetR(n, v);
-  }
-
-  /* _Lockup {{{3
-   * -------
-   */
-  void _Lockup(bool termInst) {
-    InternalOr32(REG_DHCSR, REG_DHCSR__S_LOCKUP);
-    _BranchToAndCommit(0xEFFF'FFFE);
-    if (termInst)
-      _EndOfInstruction();
-  }
-
-  /* _BranchToAndCommit {{{3
-   * ------------------
-   */
-  void _BranchToAndCommit(uint32_t addr) {
-    _s.r[RName_PC]    = addr & ~1;
-    _s.pcChanged      = true;
-    _s.nextInstrAddr  = addr & ~1;
-    _s.pendingReturnOperation = false;
-  }
-
-  /* _BranchTo {{{3
-   * ---------
-   */
-  void _BranchTo(uint32_t addr) {
-    _s.nextInstrAddr = addr;
-    _s.pcChanged     = true;
-    _s.pendingReturnOperation = false;
-  }
-
-  /* _PendReturnOperation {{{3
-   * --------------------
-   */
-  void _PendReturnOperation(uint32_t retValue) {
-    _s.nextInstrAddr          = retValue;
-    _s.pcChanged              = true;
-    _s.pendingReturnOperation = true;
-  }
-
-  /* _IsActiveForState {{{3
-   * -----------------
-   */
-  bool _IsActiveForState(int exc, bool isSecure) {
-    if (!_HaveSecurityExt())
-      isSecure = false;
-
-    bool active;
-    if (_IsExceptionTargetConfigurable(exc))
-      active = (_s.excActive[exc] && _ExceptionTargetsSecure(exc, isSecure) == isSecure);
-    else {
-      int idx = isSecure ? 0 : 1;
-      active = !!(_s.excActive[exc] & BIT(idx));
-    }
-
-    return active;
-  }
-
-  /* _IsExceptionTargetConfigurable {{{3
-   * ------------------------------
-   */
-  bool _IsExceptionTargetConfigurable(int e) {
-    if (!_HaveSecurityExt())
-      return false;
-
-    switch (e) {
-      case NMI: return true;
-      case BusFault: return true;
-      case DebugMonitor: return true;
-      case SysTick: return _HaveSysTick() == 1;
-      default: return e >= 16;
-    }
-  }
-
-  /* _GetVector {{{3
-   * ----------
-   */
-  std::tuple<ExcInfo, uint32_t> _GetVector(int excNo, bool isSecure) {
-    uint32_t vtor = isSecure ? InternalLoad32(REG_VTOR_S) : InternalLoad32(REG_VTOR_NS);
-    uint32_t addr = (vtor & ~BITS(0,6)) + 4*excNo;
-    auto [exc, vector] = _MemA_with_priv_security(addr, 4, AccType_VECTABLE, true, isSecure, true);
-    if (exc.fault != NoFault) {
-      exc.isTerminal = true;
-      exc.fault = HardFault;
-      exc.isSecure = exc.isSecure || !(InternalLoad32(REG_AIRCR) & REG_AIRCR__BFHFNMINS);
-      InternalOr32(REG_HFSR, REG_HFSR__VECTTBL);
-    }
-    return {exc, vector};
-  }
-
-  /* _ValidateAddress {{{3
-   * ----------------
-   */
-  std::tuple<ExcInfo, AddressDescriptor> _ValidateAddress(uint32_t addr, AccType accType, bool isPriv, bool secure, bool isWrite, bool aligned) {
-    AddressDescriptor result;
-    Permissions       perms;
-
-    bool    ns            = false; // UNKNOWN
-    ExcInfo excInfo       = _DefaultExcInfo();
-    bool    isInstrFetch  = (accType == AccType_IFETCH);
-
-    bool secureMpu;
-    SAttributes sAttrib;
-    if (_HaveSecurityExt()) {
-      sAttrib = _SecurityCheck(addr, isInstrFetch, secure);
-      if (isInstrFetch) {
-        ns        = sAttrib.ns;
-        secureMpu = !sAttrib.ns;
-        isPriv    = _CurrentModeIsPrivileged(secureMpu);
-      } else {
-        ns        = (!secure || sAttrib.ns);
-        secureMpu = secure;
-      }
-    } else {
-      ns        = true;
-      secureMpu = false;
-    }
-
-    std::tie(result.memAttrs, perms) = _MPUCheck(addr, accType, isPriv, secureMpu);
-    result.memAttrs.ns = ns;
-
-    if (!aligned && result.memAttrs.memType == MemType_Device && perms.apValid) {
-      InternalOr32(REG_UFSR, REG_UFSR__UNALIGNED);
-      excInfo = _CreateException(UsageFault, false, false/*UNKNOWN*/);
-    }
-
-    if (excInfo.fault == NoFault && _HaveSecurityExt()) {
-      bool raiseSecFault = false;
-      if (isInstrFetch) {
-        if (secure) {
-          if (sAttrib.ns) {
-            InternalOr32(REG_SFSR, REG_SFSR__INVTRAN);
-            raiseSecFault = true;
-          }
-        } else {
-          if (!sAttrib.ns && !sAttrib.nsc) {
-            InternalOr32(REG_SFSR, REG_SFSR__INVEP);
-            raiseSecFault = true;
-          }
-        }
-      } else {
-        if (!secure && !sAttrib.ns) {
-          if (_HaveMainExt() && accType != AccType_VECTABLE) {
-            if (accType == AccType_LAZYFP)
-              InternalOr32(REG_SFSR, REG_SFSR__LSPERR);
-            else
-              InternalOr32(REG_SFSR, REG_SFSR__AUVIOL);
-            InternalOr32(REG_SFSR, REG_SFSR__SFARVALID);
-            InternalStore32(REG_SFAR, addr);
-          }
-          raiseSecFault = true;
-        }
-      }
-      if (raiseSecFault)
-        excInfo = _CreateException(SecureFault, true, true);
-    }
-
-    result.physAddr = addr;
-    result.accAttrs.isWrite = isWrite;
-    result.accAttrs.isPriv  = isPriv;
-    result.accAttrs.accType = accType;
-
-    if (excInfo.fault == NoFault)
-      excInfo = _CheckPermission(perms, addr, accType, isWrite, isPriv, secureMpu);
-
-    return {excInfo, result};
-  }
-
-  /* _MemU {{{3
-   * -----
-   */
-  uint32_t _MemU(uint32_t addr, int size) {
-    if (_HaveMainExt())
-      return _MemU_with_priv(addr, size, _FindPriv());
-    else
-      return _MemA(addr, size);
-  }
-
-  void _MemU(uint32_t addr, int size, uint32_t value) {
-    if (_HaveMainExt())
-      _MemU_with_priv(addr, size, _FindPriv(), value);
-    else
-      _MemA(addr, size, value);
-  }
-
-  /* _MemU_with_priv {{{3
-   * ---------------
-   */
-  uint32_t _MemU_with_priv(uint32_t addr, int size, bool priv) {
-    uint32_t value;
-
-    // Do aligned access, take alignment fault, or do sequence of bytes
-    if (addr == _Align(addr, size)) {
-      value = _MemA_with_priv(addr, size, priv, true);
-    } else if (InternalLoad32(REG_CCR) & REG_CCR__UNALIGN_TRP) {
-      InternalOr32(REG_UFSR, REG_UFSR__UNALIGNED);
-      auto excInfo = _CreateException(UsageFault, false, UNKNOWN_VAL(false));
-      _HandleException(excInfo);
-    } else { // if unaligned access
-      for (int i=0; i<size; ++i)
-        value = CHGBITS(value, 8*i, 8*i+7, _MemA_with_priv(addr+i, 1, priv, false));
-      // PPB (0xE0000000 to 0xE0100000) is always little endian
-      if ((InternalLoad32(REG_AIRCR) & REG_AIRCR__ENDIANNESS) && GETBITS(addr,20,31) != 0xE00)
-        value = _BigEndianReverse(value, size);
-    }
-
-    return value;
-  }
-
-  void _MemU_with_priv(uint32_t addr, int size, bool priv, uint32_t value) {
-    // Do aligned access, take alignment fault, or do sequence of bytes
-    if (addr == _Align(addr, size))
-      _MemA_with_priv(addr, size, priv, true, value);
-    else if (InternalLoad32(REG_CCR) & REG_CCR__UNALIGN_TRP) {
-      InternalOr32(REG_UFSR, REG_UFSR__UNALIGNED);
-      auto excInfo = _CreateException(UsageFault, false, UNKNOWN_VAL(false));
-      _HandleException(excInfo);
-    } else { // if unaligned access
-      // PPB (0xE0000000 to 0xE010000) is always little endian
-      if ((InternalLoad32(REG_AIRCR) & REG_AIRCR__ENDIANNESS) && GETBITS(addr,20,31) != 0xE00)
-        value = _BigEndianReverse(value, size);
-      for (int i=0; i<size; ++i)
-        _MemA_with_priv(addr+i, 1, priv, false, GETBITS(value, 8*i, 8*i+7));
-    }
-  }
-
-  /* _MemA {{{3
-   * -----
-   */
-  uint32_t _MemA(uint32_t addr, int size) {
-    return _MemA_with_priv(addr, size, _FindPriv(), true);
-  }
-
-  void _MemA(uint32_t addr, int size, uint32_t value) {
-    _MemA_with_priv(addr, size, _FindPriv(), true, value);
-  }
-
-  /* _MemA_with_priv {{{3
-   * ---------------
-   */
-  uint32_t _MemA_with_priv(uint32_t addr, int size, bool priv, bool aligned) {
-    auto [excInfo, value] = _MemA_with_priv_security(addr, size, AccType_NORMAL, priv, _IsSecure(), aligned);
-    _HandleException(excInfo);
-    return value;
-  }
-
-  void _MemA_with_priv(uint32_t addr, int size, bool priv, bool aligned, uint32_t value) {
-    auto excInfo = _MemA_with_priv_security(addr, size, AccType_NORMAL, priv, _IsSecure(), aligned, value);
-    _HandleException(excInfo);
-  }
-
-  /* _MemA_with_priv_security {{{3
-   * ------------------------
-   */
-  std::tuple<ExcInfo, uint32_t> _MemA_with_priv_security(uint32_t addr, int size, AccType accType, bool priv, bool secure, bool aligned) {
-    ExcInfo excInfo = _DefaultExcInfo();
-    if (!_IsAligned(addr, size)) {
-      if (_HaveMainExt())
-        InternalOr32(REG_UFSR, REG_UFSR__UNALIGNED);
-      excInfo = _CreateException(UsageFault, true, secure);
-    }
-
-    uint32_t value;
-    AddressDescriptor memAddrDesc;
-    if (excInfo.fault == NoFault)
-      std::tie(excInfo, memAddrDesc) = _ValidateAddress(addr, accType, priv, secure, false, aligned);
-
-    if (excInfo.fault == NoFault) {
-      bool error;
-      std::tie(error, value) = _GetMem(memAddrDesc, size);
-
-      if (error) {
-        value = 0; // UNKNOWN
-        if (_HaveMainExt()) {
-          if (accType == AccType_STACK)
-            InternalOr32(REG_BFSR, REG_BFSR__UNSTKERR);
-          else if (accType == AccType_NORMAL || accType == AccType_ORDERED) {
-            uint32_t bfar = InternalLoad32(REG_BFAR);
-            bfar = CHGBITSM(bfar, REG_BFAR__ADDRESS, addr);
-            InternalStore32(REG_BFAR, bfar);
-            InternalOr32(REG_BFSR, REG_BFSR__BFARVALID | REG_BFSR__PRECISERR);
-          }
-        }
-
-        if (!_IsReqExcPriNeg(secure) || !(InternalLoad32(REG_CCR) & REG_CCR__BFHFNMIGN))
-          excInfo = _CreateException(BusFault, false, false/*UNKNOWN*/);
-      } else if ((InternalLoad32(REG_AIRCR) & REG_AIRCR__ENDIANNESS) && GETBITS(addr,20,31) != 0xE00)
-        value = _BigEndianReverse(value, size);
-
-      if (_IsDWTEnabled()) {
-        uint32_t dvalue = value;
-        _DWT_DataMatch(addr, size, dvalue, true, secure);
-      }
-    }
-
-    return {excInfo, value};
-  }
-
-  ExcInfo _MemA_with_priv_security(uint32_t addr, int size, AccType accType, bool priv, bool secure, bool aligned, uint32_t value) {
-    ExcInfo excInfo = _DefaultExcInfo();
-
-    if (!_IsAligned(addr, size)) {
-      if (_HaveMainExt())
-        InternalOr32(REG_UFSR, REG_UFSR__UNALIGNED);
-      excInfo = _CreateException(UsageFault, true, secure);
-    }
-
-    AddressDescriptor memAddrDesc;
-    if (excInfo.fault == NoFault)
-      std::tie(excInfo, memAddrDesc) = _ValidateAddress(addr, accType, priv, secure, true, aligned);
-
-    if (excInfo.fault == NoFault) {
-      if (memAddrDesc.memAttrs.shareable)
-        _ClearExclusiveByAddress(memAddrDesc.physAddr, _ProcessorID(), size);
-
-      if (_IsDWTEnabled()) {
-        uint32_t dvalue = value;
-        _DWT_DataMatch(addr, size, dvalue, false, secure);
-      }
-
-      if ((InternalLoad32(REG_AIRCR) & REG_AIRCR__ENDIANNESS) && GETBITS(addr,20,31) != 0xE00)
-        value = _BigEndianReverse(value, size);
-
-      if (_SetMem(memAddrDesc, size, value)) {
-        bool negativePri;
-        if (accType == AccType_LAZYFP)
-          negativePri = !(InternalLoad32(REG_FPCCR_S) & REG_FPCCR__HFRDY);
-        else
-          negativePri = _IsReqExcPriNeg(secure);
-
-        if (_HaveMainExt()) {
-          if (accType == AccType_STACK)
-            InternalOr32(REG_BFSR, REG_BFSR__STKERR);
-          else if (accType == AccType_LAZYFP)
-            InternalOr32(REG_BFSR, REG_BFSR__LSPERR);
-          else if (accType == AccType_NORMAL || accType == AccType_ORDERED) {
-            InternalStore32(REG_BFAR, addr);
-            InternalOr32(REG_BFSR, REG_BFSR__BFARVALID | REG_BFSR__PRECISERR);
-          }
-        }
-
-        if (!negativePri || !(InternalLoad32(REG_CCR) & REG_CCR__BFHFNMIGN))
-          excInfo = _CreateException(BusFault, false, false/*UNKNOWN*/);
-      }
-    }
-
-    return excInfo;
-  }
-
-  /* _ClearExclusiveByAddress {{{3
-   * ------------------------
-   */
-  void _ClearExclusiveByAddress(uint32_t addr, int exclProcID, int size) {
-    // TODO
-  }
-
-  /* _IsAligned {{{3
-   * ----------
-   */
-  bool _IsAligned(uint32_t addr, int size) {
-    assert(size == 1 || size == 2 || size == 4 || size == 8);
-    uint32_t mask = (size-1);
-    return !(addr & mask);
-  }
-
-  /* _MPUCheck {{{3
-   * ---------
-   */
-  std::tuple<MemoryAttributes, Permissions> _MPUCheck(uint32_t addr, AccType accType, bool isPriv, bool secure) {
-    assert(_HaveSecurityExt() || !secure);
-
-    MemoryAttributes  attrs       = _DefaultMemoryAttributes(addr);
-    Permissions       perms       = _DefaultPermissions(addr);
-    bool              hit         = false;
-    bool              isPPBAccess = (GETBITS(addr,20,31) == 0b111000000000);
-
-    uint32_t mpuCtrl, mpuType;
-    uint64_t mair;
-    if (secure) {
-      mpuCtrl = InternalLoad32(REG_MPU_CTRL_S);
-      mpuType = InternalLoad32(REG_MPU_TYPE_S);
-      mair    = (uint64_t(InternalLoad32(REG_MPU_MAIR1_S))<<32) | (uint64_t)InternalLoad32(REG_MPU_MAIR0_S);
-    } else {
-      mpuCtrl = InternalLoad32(REG_MPU_CTRL_NS);
-      mpuType = InternalLoad32(REG_MPU_TYPE_NS);
-      mair    = (uint64_t(InternalLoad32(REG_MPU_MAIR1_NS))<<32) | (uint64_t)InternalLoad32(REG_MPU_MAIR0_NS);
-    }
-
-    bool negativePri;
-    if (accType == AccType_LAZYFP)
-      negativePri = !(InternalLoad32(REG_FPCCR_S) & REG_FPCCR__HFRDY);
-    else
-      negativePri = _IsReqExcPriNeg(secure);
-
-    if (accType == AccType_VECTABLE || isPPBAccess)
-      hit = true;
-    else if (!(mpuCtrl & REG_MPU_CTRL__ENABLE)) {
-      if (mpuCtrl & REG_MPU_CTRL__HFNMIENA)
-        throw Exception(ExceptionType::UNPREDICTABLE);
-      else
-        hit = true;
-    } else if (!(mpuCtrl & REG_MPU_CTRL__HFNMIENA) && negativePri)
-      hit = true;
-    else {
-      if ((mpuCtrl & REG_MPU_CTRL__PRIVDEFENA) && isPriv)
-        hit = true;
-
-      bool regionMatched = false;
-      int  numRegions = GETBITSM(mpuType, REG_MPU_TYPE__DREGION);
-      for (int r=0; r<numRegions; ++r) {
-        uint32_t rbar, rlar;
-        if (secure)
-          std::tie(rbar,rlar) = _InternalLoadMpuSecureRegion(r);
-        else
-          std::tie(rbar,rlar) = _InternalLoadMpuNonSecureRegion(r);
-
-        if (rlar & REG_MPU_RLAR__EN) {
-          if (   addr >= ( GETBITSM(rbar, REG_MPU_RBAR__BASE )<<5)
-              && addr <= ((GETBITSM(rlar, REG_MPU_RLAR__LIMIT)<<5) | 0b11111)) {
-            uint32_t sh = 0;
-            if (regionMatched) {
-              perms.regionValid = false;
-              perms.region      = 0;
-              hit               = false;
-            } else {
-              regionMatched = true;
-              perms.ap      = GETBITSM(rbar, REG_MPU_RBAR__AP);
-              perms.xn      = GETBITSM(rbar, REG_MPU_RBAR__XN);
-              perms.region  = r & 0xFF;
-              perms.regionValid = true;
-              hit = true;
-              sh = GETBITSM(rbar, REG_MPU_RBAR__SH);
-            }
-
-            uint32_t idx        = GETBITSM(rlar, REG_MPU_RLAR__ATTR_IDX);
-            uint32_t attrField  = GETBITS(mair, 8*idx, 8*idx + 7);
-            attrs               = _MAIRDecode(attrField, sh);
-          }
-        }
-      }
-    }
-
-    if (GETBITS(addr,29,31) == 0b111)
-      perms.xn = true;
-
-    if (!hit)
-      perms.apValid = false;
-
-    return {attrs, perms};
-  }
-
-  /* _MAIRDecode {{{3
-   * -----------
-   */
-  MemoryAttributes _MAIRDecode(uint8_t attrField, uint8_t sh) {
-    MemoryAttributes memAttrs;
-    bool unpackInner;
-
-    if (!GETBITS(attrField, 4, 7)) {
-      unpackInner = false;
-      memAttrs.memType        = MemType_Device;
-      memAttrs.shareable      = true;
-      memAttrs.outerShareable = true;
-      memAttrs.innerAttrs     = 0; // UNKNOWN
-      memAttrs.outerAttrs     = 0; // UNKNOWN
-      memAttrs.innerHints     = 0; // UNKNOWN
-      memAttrs.outerHints     = 0; // UNKNOWN
-      memAttrs.innerTransient = false; // UNKNOWN
-      memAttrs.outerTransient = false; // UNKNOWN
-      switch (GETBITS(attrField, 0, 3)) {
-        case 0b0000: memAttrs.device = DeviceType_nGnRnE; break;
-        case 0b0100: memAttrs.device = DeviceType_nGnRE; break;
-        case 0b1000: memAttrs.device = DeviceType_nGRE; break;
-        case 0b1100: memAttrs.device = DeviceType_GRE; break;
-      }
-      if (GETBITS(attrField, 0, 1))
-        throw Exception(ExceptionType::UNPREDICTABLE);
-    } else {
-      unpackInner = true;
-      memAttrs.memType        = MemType_Normal;
-      memAttrs.device         = DeviceType_GRE; // UNKNOWN
-      memAttrs.outerHints     = GETBITS(attrField, 4, 5);
-      memAttrs.shareable      = (sh & BIT(1));
-      memAttrs.outerShareable = (sh == 0b10);
-      if (sh == 0b01)
-        throw Exception(ExceptionType::UNPREDICTABLE);
-
-      if (GETBITS(attrField, 6, 7) == 0b00) {
-        memAttrs.outerAttrs       = 0b10;
-        memAttrs.outerTransient   = true;
-      } else if (GETBITS(attrField, 6, 7) == 0b01) {
-        if (GETBITS(attrField, 4, 5) == 0b00) {
-          memAttrs.outerAttrs     = 0b00;
-          memAttrs.outerTransient = false;
-        } else {
-          memAttrs.outerAttrs     = 0b11;
-          memAttrs.outerTransient = true;
-        }
-      } else {
-        memAttrs.outerAttrs     = GETBITS(attrField, 6, 7);
-        memAttrs.outerTransient = false;
-      }
-    }
-
-    if (unpackInner) {
-      if (GETBITS(attrField, 0, 3) == 0b0000)
-        throw Exception(ExceptionType::UNPREDICTABLE);
-      else {
-        if (GETBITS(attrField, 2, 3) == 0b00) {
-          memAttrs.innerAttrs     = 0b10;
-          memAttrs.innerHints     = GETBITS(attrField, 0, 1);
-          memAttrs.innerTransient = true;
-        } else if (GETBITS(attrField, 2, 3) == 0b01) {
-          memAttrs.innerHints     = GETBITS(attrField, 0, 1);
-          if (GETBITS(attrField, 0, 1) == 0b00) {
-            memAttrs.innerAttrs     = 0b00;
-            memAttrs.innerTransient = false;
-          } else {
-            memAttrs.innerAttrs     = 0b11;
-            memAttrs.innerTransient = true;
-          }
-        } else if (GETBITS(attrField, 2, 3) == 0b10) {
-          memAttrs.innerHints     = GETBITS(attrField, 0, 1);
-          memAttrs.innerAttrs     = 0b10;
-          memAttrs.innerTransient = false;
-        } else if (GETBITS(attrField, 2, 3) == 0b11) {
-          memAttrs.innerHints     = GETBITS(attrField, 0, 1);
-          memAttrs.innerAttrs     = 0b11;
-          memAttrs.innerTransient = false;
-        } else
-          throw Exception(ExceptionType::UNPREDICTABLE);
-      }
-    }
-
-    return memAttrs;
-  }
-
-  /* _CheckPermission {{{3
-   * ----------------
-   */
-  ExcInfo _CheckPermission(const Permissions &perms, uint32_t addr, AccType accType, bool isWrite, bool isPriv, bool isSecure) {
-    bool fault = true;
-    if (!perms.apValid)
-      fault = true;
-    else if (perms.xn && accType == AccType_IFETCH)
-      fault = true;
-    else
-      switch (perms.ap) {
-        case 0b00: fault = !isPriv; break;
-        case 0b01: fault = false; break;
-        case 0b10: fault = !isPriv || isWrite; break;
-        case 0b11: fault = isWrite; break;
-        default: throw Exception(ExceptionType::UNPREDICTABLE);
-      }
-
-    if (!fault)
-      return _DefaultExcInfo();
-
-    if (_HaveMainExt()) {
-      uint8_t fsr = 0;
-      switch (accType) {
-        case AccType_IFETCH:
-          fsr |= REG_MMFSR__IACCVIOL;
-          break;
-        case AccType_STACK:
-          if (isWrite)
-            fsr |= REG_MMFSR__MSTKERR;
-          else
-            fsr |= REG_MMFSR__MUNSTKERR;
-          break;
-        case AccType_LAZYFP:
-          fsr |= REG_MMFSR__MLSPERR;
-          break;
-        case AccType_NORMAL:
-        case AccType_ORDERED:
-          fsr |= REG_MMFSR__MMARVALID;
-          fsr |= REG_MMFSR__DACCVIOL;
-          break;
-        default:
-          assert(false);
-          break;
-      }
-
-      if (isSecure) {
-        InternalOr32(REG_MMFSR_S, fsr);
-        if (fsr & REG_MMFSR__MMARVALID)
-          InternalStore32(REG_MMFAR_S, addr);
-      } else {
-        InternalOr32(REG_MMFSR_NS, fsr);
-        if (fsr & REG_MMFSR__MMARVALID)
-          InternalStore32(REG_MMFAR_NS, addr);
-      }
-    }
-
-    return _CreateException(MemManage, true, isSecure);
-  }
-
-  /* _BigEndianReverse {{{3
-   * -----------------
-   */
-  uint32_t _BigEndianReverse(uint32_t value, int N) {
-    assert(N == 1 || N == 2 || N == 4);
-    uint32_t result;
-    switch (N) {
-      case 1:
-        return value & UINT8_MAX;
-      case 2:
-        return (uint16_t(value)>>8) | (uint16_t(value)<<8);
-      default:
-      case 4:
-        return
-          (GETBITS(value,24,31)<< 0)
-        | (GETBITS(value,16,23)<< 8)
-        | (GETBITS(value, 8,15)<<16)
-        | (GETBITS(value, 0, 7)<<24)
-        ;
-    }
-  }
-
-  /* _DWT_DataMatch {{{3
-   * --------------
-   */
-  void _DWT_DataMatch(uint32_t daddr, int dsize, uint32_t dvalue, bool read, bool nsReq) {
-    bool triggerDebugEvent  = false;
-    bool debugEvent         = false;
-
-    uint32_t numComp = GETBITSM(InternalLoad32(REG_DWT_CTRL), REG_DWT_CTRL__NUMCOMP);
-    if (!_HaveDWT() || !numComp)
-      return;
-
-    for (uint32_t i=0; i<numComp; ++i) {
-      if (_IsDWTConfigUnpredictable(i))
-        throw Exception(ExceptionType::UNPREDICTABLE);
-
-      bool daddrMatch   = _DWT_DataAddressMatch(i, daddr, dsize, read, nsReq);
-      bool dvalueMatch  = _DWT_DataValueMatch(i, daddr, dvalue, dsize, read, nsReq);
-
-      if (daddrMatch && (GETBITSM(InternalLoad32(REG_DWT_FUNCTION(i)), REG_DWT_FUNCTION__MATCH) & 0b1100) == 0b0100) {
-        if (GETBITSM(InternalLoad32(REG_DWT_FUNCTION(i)), REG_DWT_FUNCTION__MATCH) != 0b0111) {
-          InternalOr32(REG_DWT_FUNCTION(i), REG_DWT_FUNCTION__MATCHED);
-          debugEvent = (GETBITSM(InternalLoad32(REG_DWT_FUNCTION(i)), REG_DWT_FUNCTION__ACTION) == 0b01);
-        } else {
-          InternalMask32(REG_DWT_FUNCTION(i), REG_DWT_FUNCTION__MATCHED); // UNKNOWN
-          InternalOr32(REG_DWT_FUNCTION(i-1), REG_DWT_FUNCTION__MATCHED);
-          debugEvent = (GETBITSM(InternalLoad32(REG_DWT_FUNCTION(i)), REG_DWT_FUNCTION__ACTION) == 0b01);
-        }
-      }
-
-      if (dvalueMatch && (GETBITSM(InternalLoad32(REG_DWT_FUNCTION(i)), REG_DWT_FUNCTION__MATCH) & 0b1100) == 0b1000) {
-        if (GETBITSM(InternalLoad32(REG_DWT_FUNCTION(i)), REG_DWT_FUNCTION__MATCH) != 0b1011) {
-          InternalOr32(REG_DWT_FUNCTION(i), REG_DWT_FUNCTION__MATCHED);
-          debugEvent = (GETBITSM(InternalLoad32(REG_DWT_FUNCTION(i)), REG_DWT_FUNCTION__ACTION) == 0b01);
-        } else {
-          InternalOr32(REG_DWT_FUNCTION(i), REG_DWT_FUNCTION__MATCHED);
-          debugEvent = (GETBITSM(InternalLoad32(REG_DWT_FUNCTION(i)), REG_DWT_FUNCTION__ACTION) == 0b01);
-        }
-      }
-
-      if (daddrMatch && (GETBITSM(InternalLoad32(REG_DWT_FUNCTION(i)), REG_DWT_FUNCTION__MATCH) & 0b1100) == 0b1100)
-        InternalOr32(REG_DWT_FUNCTION(i), REG_DWT_FUNCTION__MATCHED);
-
-      triggerDebugEvent = triggerDebugEvent || debugEvent;
-    }
-
-    if (triggerDebugEvent)
-      debugEvent = _SetDWTDebugEvent(!nsReq);
-  }
-
-  /* _DWT_DataAddressMatch {{{3
-   * ---------------------
-   */
-  bool _DWT_DataAddressMatch(int N, uint32_t daddr, int dsize, bool read, bool nsReq) {
-    // TODO
-    return false;
-  }
-
-  /* _DWT_DataValueMatch {{{3
-   * -------------------
-   */
-  bool _DWT_DataValueMatch(int N, uint32_t daddr, uint32_t dvalue, int dsize, bool read, bool nsReq) {
-    // TODO
-    return false;
-  }
-
-  /* _IsDWTConfigUnpredictable {{{3
-   * -------------------------
-   */
-  bool _IsDWTConfigUnpredictable(int N) {
-    // TODO
-    return false;
-  }
-
-  /* _SetDWTDebugEvent {{{3
-   * -----------------
-   */
-  bool _SetDWTDebugEvent(bool secureMatch) {
-    if (_CanHaltOnEvent(secureMatch)) {
-      InternalOr32(REG_DHCSR, REG_DHCSR__C_HALT);
-      InternalOr32(REG_DFSR, REG_DFSR__DWTTRAP);
-      return true;
-    }
-
-    if (_HaveMainExt() && _CanPendMonitorOnEvent(secureMatch, true)) {
-      InternalOr32(REG_DEMCR, REG_DEMCR__MON_PEND);
-      InternalOr32(REG_DFSR, REG_DFSR__DWTTRAP);
-      return true;
-    }
-
-    return false;
-  }
-
-  /* _DefaultMemoryAttributes {{{3
-   * ------------------------
-   */
-  MemoryAttributes _DefaultMemoryAttributes(uint32_t addr) {
-    MemoryAttributes attrs;
-
-    switch (GETBITS(addr,29,31)) {
-      case 0b000:
-        attrs.memType     = MemType_Normal;
-        attrs.device      = DeviceType_GRE; // UNKNOWN
-        attrs.innerAttrs  = 0b10;
-        attrs.shareable   = false;
-        break;
-      case 0b001:
-        attrs.memType     = MemType_Normal;
-        attrs.device      = DeviceType_GRE; // UNKNOWN
-        attrs.innerAttrs  = 0b01;
-        attrs.shareable   = false;
-        break;
-      case 0b010:
-        attrs.memType     = MemType_Device;
-        attrs.device      = DeviceType_nGnRE;
-        attrs.innerAttrs  = 0b00;
-        attrs.shareable   = true;
-        break;
-      case 0b011:
-        attrs.memType     = MemType_Normal;
-        attrs.device      = DeviceType_GRE; // UNKNOWN
-        attrs.innerAttrs  = 0b01;
-        attrs.shareable   = false;
-        break;
-      case 0b100:
-        attrs.memType     = MemType_Normal;
-        attrs.device      = DeviceType_GRE; // UNKNOWN
-        attrs.innerAttrs  = 0b10;
-        attrs.shareable   = false;
-        break;
-      case 0b101:
-        attrs.memType     = MemType_Device;
-        attrs.device      = DeviceType_nGnRE;
-        attrs.innerAttrs  = 0b00;
-        attrs.shareable   = true;
-        break;
-      case 0b110:
-        attrs.memType     = MemType_Device;
-        attrs.device      = DeviceType_nGnRE;
-        attrs.innerAttrs  = 0b00;
-        attrs.shareable   = true;
-        break;
-      case 0b111:
-        if (!GETBITS(addr,20,28)) {
-          attrs.memType     = MemType_Device;
-          attrs.device      = DeviceType_nGnRnE;
-          attrs.innerAttrs  = 0b00;
-          attrs.shareable   = true;
-        } else {
-          attrs.memType     = MemType_Device;
-          attrs.device      = DeviceType_nGnRE;
-          attrs.innerAttrs  = 0b00;
-          attrs.shareable   = true;
-        }
-        break;
-    }
-
-    attrs.outerAttrs      = attrs.innerAttrs;
-    attrs.outerShareable  = attrs.shareable;
-    attrs.ns              = false; // UNKNOWN
-    return attrs;
-  }
-
-  /* _DefaultPermissions {{{3
-   * -------------------
-   */
-  Permissions _DefaultPermissions(uint32_t addr) {
-    Permissions perms = {};
-    perms.ap          = 0b01;
-    perms.apValid     = true;
-    perms.region      = 0;
-    perms.regionValid = false;
-
-    switch (GETBITS(addr,29,31)) {
-      case 0b000: perms.xn = false; break;
-      case 0b001: perms.xn = false; break;
-      case 0b010: perms.xn = true;  break;
-      case 0b011: perms.xn = false; break;
-      case 0b100: perms.xn = false; break;
-      case 0b101: perms.xn = true;  break;
-      case 0b110: perms.xn = true;  break;
-      case 0b111: perms.xn = true;  break;
-    }
-
-    return perms;
-  }
-
-  /* _SetPending {{{3
-   * -----------
-   */
-  void _SetPending(int exc, bool isSecure, bool setNotClear) {
-    if (!_HaveSecurityExt())
-      isSecure = false;
-
-    if (_IsExceptionTargetConfigurable(exc))
-      _s.excPending[exc] = setNotClear ? 0b11 : 0b00;
-    else {
-      uint32_t idx = isSecure ? 0 : 1;
-      _s.excPending[exc] = CHGBITS(_s.excPending[exc], idx, idx, setNotClear);
-    }
-  }
-
-  /* _NextInstrITState {{{3
-   * -----------------
-   */
-  uint8_t _NextInstrITState() {
-    uint8_t nextState;
-    if (_HaveMainExt()) {
-      if (_s.itStateChanged)
-        nextState = _s.nextInstrITState;
-      else {
-        nextState = _ThisInstrITState();
-        if (GETBITS(nextState, 0, 2) == 0b000)
-          nextState = 0;
-        else
-          nextState = CHGBITS(nextState, 0, 4, GETBITS(nextState, 0, 4)<<1);
-      }
-    } else
-      nextState = 0;
-    return nextState;
-  }
-
-  /* _PendingExceptionDetails {{{3
-   * ------------------------
-   */
-  // XXX: Unfortunately the ARM ISA manual exceptionally does not give a definition
-  // for this function. Its definition has been estimated via reference to qemu's codebase.
-  std::tuple<bool, int, bool> _PendingExceptionDetails() {
-    // _NvicPendingPriority() has a value higher than the highest possible
-    // priority value if there is no pending interrupt so there is an interrupt
-    // to be handled iff this is true.
-    auto [pendingPrio, pendingExcNo, excIsSecure] = _PendingExceptionDetailsActual();
-    bool canTakePendingExc = (_ExecutionPriority() > pendingPrio);
-
-    if (!canTakePendingExc)
-      return {false, 0, false};
-
-    return {true, pendingExcNo, excIsSecure};
-  }
-
-  // XXX: Custom function, not found in ISA definition.
-  std::tuple<int,int,bool> _PendingExceptionDetailsActual() {
-    int  maxPrio      = 0x100; // Higher than any possible execution priority
-    int  maxPrioExc   = 0;
-    bool excIsSecure  = false;
-
-    for (int i=NMI; i<16; ++i) { // Reset is not handled here
-      for (int j=0; j<2; ++j) { // j=0: secure exception, j=1: non-secure exception
-        if (!(_s.excPending[i] & BIT(j)))
-          continue;
-
-        bool excIsSecure_ = _ExceptionTargetsSecure(i, j == 0);
-        int  excPrio      = _ExceptionPriority(i, excIsSecure_, /*applyPrigroup=*/true);
-
-        if (excPrio < maxPrio) {
-          maxPrio     = excPrio;
-          maxPrioExc  = i;
-          excIsSecure = excIsSecure_;
-        }
-      }
-    }
-
-    for (int i=0; i<16; ++i) {
-      uint32_t v = InternalLoad32(REG_NVIC_ISPRn_S(i));
-      if (!v)
-        continue;
-
-      // ARMv8-M supports exceptions in range [1,511], leaving room for 495
-      // external interrupts. We must not attempt to ask about exceptions with
-      // numbers above 511, even if the _dev implementation is buggy and
-      // returns ones for ISPRn(15) bits [16:31].
-      if (i == 15)
-        v &= 0x0000FFFF;
-
-      while (v) {
-        // Determine number of least significant bit which is set.
-        uint32_t bitNo    = CTZL(v);
-        uint32_t intrNo   = i*32 + bitNo;
-        // Calculate effective exception priority for this external interrupt,
-        // including PRIGROUP etc.
-        bool intrIsSecure = _ExceptionTargetsSecure(16 + intrNo, false/*doesn't matter*/);
-        int  intrPrio     = _ExceptionPriority(16 + intrNo, intrIsSecure, /*applyPrigroup=*/true);
-        if (intrPrio < maxPrio) {
-          maxPrio     = intrPrio;
-          maxPrioExc  = 16 + intrNo;
-          excIsSecure = intrIsSecure;
-        }
-        // Mask off this bit from our ISPR mask to see if any other interrupts
-        // are pending in this ISPR register by repeating CTZL above.
-        v &= ~BIT(bitNo);
-      }
-    }
-
-    return {maxPrio, maxPrioExc, excIsSecure};
-  }
-
-  /* _RawExecutionPriority {{{3
-   * ---------------------
-   */
-  int _RawExecutionPriority() {
-    int execPri = _HighestPri();
-    for (int i=2; i<=_MaxExceptionNum(); ++i)
-      for (int j=0; j<2; ++j) {
-        bool secure = !j;
-        if (_IsActiveForState(i, secure)) {
-          int effectivePriority = _ExceptionPriority(i, secure, true);
-          if (effectivePriority < execPri)
-            execPri = effectivePriority;
-        }
-      }
-
-    return execPri;
-  }
-
-  /* _HighestPri {{{3
-   * -----------
-   */
-  int _HighestPri() {
-    return 256;
-  }
-
-  /* _RestrictedNSPri {{{3
-   * ----------------
-   */
-  int _RestrictedNSPri() {
-    return 0x80;
-  }
-
-  /* _FindPriv {{{3
-   * ---------
-   */
-  bool _FindPriv() {
-    return _CurrentModeIsPrivileged();
-  }
-
-  /* _ExceptionEntry {{{3
-   * ---------------
-   */
-  ExcInfo _ExceptionEntry(int excType, bool toSecure, bool instExecOk) {
-    ExcInfo exc = _PushStack(toSecure, instExecOk);
-    if (exc.fault == NoFault)
-      exc = _ExceptionTaken(excType, false, toSecure, false);
-    return exc;
-  }
-
-  /* _PushStack {{{3
-   * ----------
-   */
-  ExcInfo _PushStack(bool secureExc, bool instExecOk) {
-    auto &control = _IsSecure() ? _s.controlS : _s.controlNS;
-
-    uint32_t frameSize;
-    if (_HaveFPExt() && GETBITSM(control, CONTROL__FPCA) && (_IsSecure() || GETBITSM(InternalLoad32(REG_NSACR), REG_NSACR__CP(10)))) {
-      if (_IsSecure() && GETBITSM(InternalLoad32(REG_FPCCR_S), REG_FPCCR__TS))
-        frameSize = 0xA8;
-      else
-        frameSize = 0x68;
-    } else
-      frameSize = 0x20;
-
-    bool framePtrAlign = GETBIT(_GetSP(), 2);
-    uint32_t framePtr = (_GetSP() - frameSize) & ~BIT(2);
-    RName spName = _LookUpSP();
-
-    auto [retAddr, itState] = _ReturnState(instExecOk);
-    uint32_t retpsr = _s.xpsr;
-    retpsr = CHGBITSM(retpsr, RETPSR__IT_ICI_LO, itState>>2);
-    retpsr = CHGBITSM(retpsr, RETPSR__IT_ICI_HI, itState);
-    retpsr = CHGBITSM(retpsr, RETPSR__SPREALIGN, framePtrAlign);
-    retpsr = CHGBITSM(retpsr, RETPSR__SFPA, _IsSecure() ? GETBITSM(_s.controlS, CONTROL__SFPA) : 0);
-
-    PEMode mode = _CurrentMode();
-    ExcInfo exc;
-    if (1)                    exc = _Stack(framePtr, 0x00, spName, mode, _GetR( 0));
-    if (exc.fault == NoFault) exc = _Stack(framePtr, 0x04, spName, mode, _GetR( 1));
-    if (exc.fault == NoFault) exc = _Stack(framePtr, 0x08, spName, mode, _GetR( 2));
-    if (exc.fault == NoFault) exc = _Stack(framePtr, 0x0C, spName, mode, _GetR( 3));
-    if (exc.fault == NoFault) exc = _Stack(framePtr, 0x10, spName, mode, _GetR(12));
-    if (exc.fault == NoFault) exc = _Stack(framePtr, 0x14, spName, mode, _GetLR());
-    if (exc.fault == NoFault) exc = _Stack(framePtr, 0x18, spName, mode, retAddr);
-    if (exc.fault == NoFault) exc = _Stack(framePtr, 0x1C, spName, mode, retpsr);
-
-    if (_HaveFPExt() && GETBITSM(control, CONTROL__FPCA)) {
-
-    }
-
-    ExcInfo spExc = _SetSP(spName, true, framePtr);
-    exc = _MergeExcInfo(exc, spExc);
-
-    bool isSecure = _IsSecure();
-    bool isThread = (mode == PEMode_Thread);
-    if (_HaveFPExt())
-      _SetLR(BITS(7,31) | (uint32_t(isSecure)<<6) | (uint32_t(isThread)<<3) | 0b100000 | ((GETBITSM(control, CONTROL__FPCA)^1)<<4));
-    else
-      _SetLR(BITS(7,31) | (uint32_t(isSecure)<<6) | (uint32_t(isThread)<<3) | 0b110000);
-
-    return exc;
-  }
-
-  /* _MergeExcInfo {{{3
-   * -------------
-   */
-  ExcInfo _MergeExcInfo(const ExcInfo &a, const ExcInfo &b) {
-    ExcInfo exc, pend;
-
-    if (b.fault == NoFault || (a.isTerminal && !b.isTerminal))
-      exc = a;
-    else if (a.fault == NoFault || (b.isTerminal && !a.isTerminal))
-      exc = b;
-    else if (a.fault == b.fault && a.isSecure == b.isSecure)
-      exc = a;
-    else {
-      int aPri = _ExceptionPriority(a.fault, a.isSecure, false);
-      int bPri = _ExceptionPriority(b.fault, b.isSecure, false);
-
-      if (aPri < bPri) {
-        exc  = a;
-        pend = b;
-      } else {
-        exc  = b;
-        pend = a;
-      }
-
-      if (IMPL_DEF_OVERRIDDEN_EXCEPTIONS_PENDED)
-        _SetPending(pend.fault, pend.isSecure, true);
-    }
-
-    return exc;
-  }
-
-  /* _ReturnState {{{3
-   * ------------
-   */
-  std::tuple<uint32_t, uint8_t> _ReturnState(bool instExecOk) {
-    if (instExecOk)
-      return {_NextInstrAddr(), _NextInstrITState()};
-    else
-      return {_ThisInstrAddr(), _ThisInstrITState()};
-  }
-
-  /* _DerivedLateArrival {{{3
-   * -------------------
-   */
-  void _DerivedLateArrival(int pePriority, int peNumber, bool peIsSecure, const ExcInfo &deInfo, int oeNumber, bool oeIsSecure) {
-    int oePriority = _ExceptionPriority(oeNumber, oeIsSecure, false);
-
-    bool deIsDbgMonFault = _HaveMainExt() ? deInfo.origFault == DebugMonitor : false;
-
-    bool targetIsSecure;
-    int targetFault;
-    if (deInfo.isTerminal) {
-      targetIsSecure  = deInfo.isSecure;
-      targetFault     = deInfo.fault;
-      if (!_ComparePriorities(deInfo, false, oePriority, oeNumber, oeIsSecure)) {
-        _ActivateException(oeNumber, oeIsSecure);
-        _Lockup(true);
-      }
-    } else if (deIsDbgMonFault && !_ComparePriorities(deInfo, true, pePriority, peNumber, peIsSecure)) {
-      _SetPending(DebugMonitor, deInfo.isSecure, false);
-      targetFault = oeNumber;
-      targetIsSecure = oeIsSecure;
-    } else if (_ComparePriorities(deInfo, false, oePriority, oeNumber, oeIsSecure)) {
-      targetFault = deInfo.fault;
-      targetIsSecure = deInfo.isSecure;
-    } else {
-      if (deInfo.lockup) {
-        _ActivateException(oeNumber, oeIsSecure);
-        _Lockup(true);
-      } else {
-        targetFault = oeNumber;
-        targetIsSecure = oeIsSecure;
-      }
-    }
-
-    if (_HaveMainExt() && deInfo.fault == HardFault && deInfo.origFault != HardFault)
-      InternalOr32(REG_HFSR, REG_HFSR__FORCED);
-
-    _SetPending(deInfo.fault, deInfo.isSecure, true);
-    ExcInfo excInfo = _ExceptionTaken(targetFault, deInfo.inExcTaken, targetIsSecure, true);
-    if (excInfo.fault != NoFault)
-      _DerivedLateArrival(pePriority, peNumber, peIsSecure, excInfo, targetFault, targetIsSecure);
-  }
-
-  /* _ComparePriorities {{{3
-   * ------------------
-   */
-  bool _ComparePriorities(int exc0Pri, int exc0Number, bool exc0IsSecure,
-                          int exc1Pri, int exc1Number, bool exc1IsSecure) {
-    bool takeE0;
-    if (exc0Pri != exc1Pri)
-      takeE0 = (exc0Pri < exc1Pri);
-    else if (exc0Number != exc1Number)
-      takeE0 = (exc0Number < exc1Number);
-    else if (exc0IsSecure != exc1IsSecure)
-      takeE0 = exc0IsSecure;
-    else
-      takeE0 = false;
-    return takeE0;
-  }
-
-  bool _ComparePriorities(const ExcInfo &exc0Info, bool groupPri, int exc1Pri, int exc1Number, bool exc1IsSecure) {
-    int exc0Pri = _ExceptionPriority(exc0Info.fault, exc0Info.isSecure, groupPri);
-    return _ComparePriorities(exc0Pri, exc0Info.fault, exc0Info.isSecure, exc1Pri, exc1Number, exc1IsSecure);
-  }
-
-  /* _ActivateException {{{3
-   * ------------------
-   */
-  void _ActivateException(int excNo, bool excIsSecure) {
-    _s.curState = excIsSecure ? SecurityState_Secure : SecurityState_NonSecure;
-    _s.xpsr = CHGBITSM(_s.xpsr, XPSR__EXCEPTION, excNo);
-    if (_HaveMainExt())
-      _SetITSTATE(0);
-    uint32_t &control = _IsSecure() ? _s.controlS : _s.controlNS;
-    if (_HaveFPExt()) {
-      control = CHGBITSM(control, CONTROL__FPCA, 0);
-      _s.controlS = CHGBITSM(_s.controlS, CONTROL__SFPA, 0);
-    }
-    control = CHGBITSM(control, CONTROL__SPSEL, 0);
-
-    _SetPending(excNo, excIsSecure, false);
-    _SetActive(excNo, excIsSecure, true);
-  }
-
-  /* _SetActive {{{3
-   * ----------
-   */
-  void _SetActive(int exc, bool isSecure, bool setNotClear) {
-    if (!_HaveSecurityExt())
-      isSecure = false;
-
-    if (_IsExceptionTargetConfigurable(exc)) {
-      if (_ExceptionTargetsSecure(exc, false/*UNKNOWN*/) == isSecure)
-        _s.excActive[exc] = setNotClear ? 0b11 : 0b00;
-    } else {
-      uint32_t idx = isSecure ? 0 : 1;
-      _s.excActive[exc] = CHGBITS(_s.excActive[exc], idx, idx, setNotClear ? 1 : 0);
-    }
-  }
-
-  /* _TailChain {{{3
-   * ----------
-   */
-  ExcInfo _TailChain(int excNo, bool excIsSecure, uint32_t excReturn) {
-    if (!_HaveFPExt())
-      excReturn = CHGBITSM(excReturn, EXC_RETURN__FTYPE, 1);
-    excReturn = CHGBITSM(excReturn, EXC_RETURN__PREFIX, 0xFF);
-    _SetLR(excReturn);
-
-    return _ExceptionTaken(excNo, true, excIsSecure, false);
-  }
-
-  /* _ConsumeExcStackFrame {{{3
-   * ---------------------
-   */
-  void _ConsumeExcStackFrame(uint32_t excReturn, bool fourByteAlign) {
-    bool toSecure = _HaveSecurityExt() && !!(excReturn & BIT(6));
-    uint32_t frameSize;
-    if (toSecure && (!GETBITSM(excReturn, EXC_RETURN__ES) || !GETBITSM(excReturn, EXC_RETURN__DCRS)))
-      frameSize = 0x48;
-    else
-      frameSize = 0x20;
-
-    if (_HaveFPExt() && !GETBITSM(excReturn, EXC_RETURN__FTYPE)) {
-      if (toSecure && (InternalLoad32(REG_FPCCR_S) & REG_FPCCR__TS))
-        frameSize = frameSize + 0x88;
-      else
-        frameSize = frameSize + 0x48;
-    }
-
-    PEMode mode = GETBITSM(excReturn, EXC_RETURN__MODE) == 1 ? PEMode_Thread : PEMode_Handler;
-    RName spName = _LookUpSP_with_security_mode(toSecure, mode);
-    _s.r[spName] = (_GetSP(spName) + frameSize) | (fourByteAlign ? 0b100 : 0);
-  }
-
-  /* _ExceptionReturn {{{3
-   * ----------------
-   */
-  std::tuple<ExcInfo, uint32_t> _ExceptionReturn(uint32_t excReturn) {
-    int returningExcNo = GETBITSM(_s.xpsr, XPSR__EXCEPTION);
-
-    ExcInfo exc;
-    std::tie(exc, excReturn) = _ValidateExceptionReturn(excReturn, returningExcNo);
-    if (exc.fault != NoFault)
-      return {exc, excReturn};
-
-    bool excSecure, retToSecure;
-    if (_HaveSecurityExt()) {
-      excSecure   = !!GETBITSM(excReturn, EXC_RETURN__ES);
-      retToSecure = !!GETBITSM(excReturn, EXC_RETURN__S);
-    } else {
-      excSecure   = false;
-      retToSecure = false;
-    }
-
-    if (excSecure)
-      _s.controlS = CHGBITSM(_s.controlS, CONTROL__SPSEL, GETBITSM(excReturn, EXC_RETURN__SPSEL));
-    else
-      _s.controlNS = CHGBITSM(_s.controlNS, CONTROL__SPSEL, GETBITSM(excReturn, EXC_RETURN__SPSEL));
-
-    bool targetDomainSecure = !!GETBITSM(excReturn, EXC_RETURN__ES);
-    _DeActivate(returningExcNo, targetDomainSecure);
-
-    auto &control = _IsSecure() ? _s.controlS : _s.controlNS;
-    if (_HaveFPExt() && (InternalLoad32(REG_FPCCR) & REG_FPCCR__CLRONRET) && (control & CONTROL__FPCA)) {
-      if (InternalLoad32(REG_FPCCR_S) & REG_FPCCR__LSPACT) {
-        InternalOr32(REG_SFSR, REG_SFSR__LSERR);
-        exc = _CreateException(SecureFault, true, true);
-        return {exc, excReturn};
-      } else {
-        for (int i=0; i<16; ++i)
-          _SetS(i,0);
-        _s.fpscr = 0;
-      }
-    }
-
-    if (IMPL_DEF_TAIL_CHAINING_SUPPORTED) {
-      auto [takeException, exc2, excIsSecure] = _PendingExceptionDetails();
-      if (takeException) {
-        exc = _TailChain(exc2, excIsSecure, excReturn);
-        return {exc, excReturn};
-      }
-    }
-
-    if (_HaveSecurityExt())
-      _s.curState = retToSecure ? SecurityState_Secure : SecurityState_NonSecure;
-
-    if (GETBITSM(excReturn, EXC_RETURN__MODE) && (InternalLoad32(REG_SCR) & REG_SCR__SLEEPONEXIT) && !_ExceptionActiveBitCount())
-      _SleepOnExit();
-
-    exc = _PopStack(excReturn);
-    if (exc.fault == NoFault) {
-      _ClearExclusiveLocal(_ProcessorID());
-      _SetEventRegister();
-      _InstructionSynchronizationBarrier(0b1111);
-    }
-
-    return {exc, excReturn};
-  }
-
-  /* _ExceptionActiveBitCount {{{3
-   * ------------------------
-   */
-  int _ExceptionActiveBitCount() {
-    int count = 0;
-    for (int i=0; i<=_MaxExceptionNum(); ++i)
-      for (int j=0; j<2; ++j)
-        if (_IsActiveForState(i, !j))
-          ++count;
-    return count;
-  }
-
-  /* _DeActivate {{{3
-   * -----------
-   */
-  void _DeActivate(int returningExcNo, bool targetDomainSecure) {
-    int rawPri = _RawExecutionPriority();
-    if (rawPri == -1)
-      _SetActive(HardFault, !(InternalLoad32(REG_AIRCR) & REG_AIRCR__BFHFNMINS), false);
-    else if (rawPri == -2)
-      _SetActive(NMI,       !(InternalLoad32(REG_AIRCR) & REG_AIRCR__BFHFNMINS), false);
-    else if (rawPri == -3)
-      _SetActive(HardFault,  true, false);
-    else {
-      bool secure = _HaveSecurityExt() && targetDomainSecure;
-      _SetActive(returningExcNo, secure, false);
-    }
-
-    if (_HaveMainExt() && rawPri >= 0) {
-      if (_HaveSecurityExt() && targetDomainSecure)
-        _s.faultmaskS &= ~1;
-      else
-        _s.faultmaskNS &= ~1;
-    }
-  }
-
-  /* _SleepOnExit {{{3
-   * ------------
-   */
-  void _SleepOnExit() {
-    // TODO
-  }
-
-  /* _IsIrqValid {{{3
-   * -----------
-   */
-  bool _IsIrqValid(int e) {
-    return true; // TODO
-  }
-
-  /* _PopStack {{{3
-   * ---------
-   */
-  ExcInfo _PopStack(uint32_t excReturn) {
-    PEMode    mode      = (GETBITSM(excReturn, EXC_RETURN__MODE) ? PEMode_Thread : PEMode_Handler);
-    bool      toSecure  = _HaveSecurityExt() && GETBITSM(excReturn, EXC_RETURN__S);
-    RName     spName    = _LookUpSP_with_security_mode(toSecure, mode);
-    uint32_t  framePtr  = _GetSP(spName);
-    if (!_IsAligned(framePtr, 8))
-      throw Exception(ExceptionType::UNPREDICTABLE);
-
-    uint32_t tmp;
-    ExcInfo exc = _DefaultExcInfo();
-    if (toSecure && (!GETBITSM(excReturn, EXC_RETURN__ES) || !GETBITSM(excReturn, EXC_RETURN__DCRS))) {
-      uint32_t expectedSig = 0xFEFA'125B;
-      if (_HaveFPExt())
-        expectedSig = CHGBITS(expectedSig, 0, 0, GETBITSM(excReturn, EXC_RETURN__FTYPE));
-      uint32_t integritySig;
-      std::tie(exc, integritySig) = _Stack(framePtr, 0, spName, mode);
-      if (exc.fault == NoFault && integritySig != expectedSig) {
-        if (_HaveMainExt())
-          InternalOr32(REG_SFSR, REG_SFSR__INVIS);
-        return _CreateException(SecureFault, true, true);
-      }
-
-      if (exc.fault == NoFault) { std::tie(exc, tmp) = _Stack(framePtr, 0x08, spName, mode); _SetR( 4, tmp); }
-      if (exc.fault == NoFault) { std::tie(exc, tmp) = _Stack(framePtr, 0x0C, spName, mode); _SetR( 5, tmp); }
-      if (exc.fault == NoFault) { std::tie(exc, tmp) = _Stack(framePtr, 0x10, spName, mode); _SetR( 6, tmp); }
-      if (exc.fault == NoFault) { std::tie(exc, tmp) = _Stack(framePtr, 0x14, spName, mode); _SetR( 7, tmp); }
-      if (exc.fault == NoFault) { std::tie(exc, tmp) = _Stack(framePtr, 0x18, spName, mode); _SetR( 8, tmp); }
-      if (exc.fault == NoFault) { std::tie(exc, tmp) = _Stack(framePtr, 0x1C, spName, mode); _SetR( 9, tmp); }
-      if (exc.fault == NoFault) { std::tie(exc, tmp) = _Stack(framePtr, 0x20, spName, mode); _SetR(10, tmp); }
-      if (exc.fault == NoFault) { std::tie(exc, tmp) = _Stack(framePtr, 0x24, spName, mode); _SetR(11, tmp); }
-      framePtr += 0x28;
-    }
-
-    uint32_t pc, psr;
-    if (exc.fault == NoFault) { std::tie(exc, tmp) = _Stack(framePtr, 0x00, spName, mode); _SetR( 0, tmp); }
-    if (exc.fault == NoFault) { std::tie(exc, tmp) = _Stack(framePtr, 0x04, spName, mode); _SetR( 1, tmp); }
-    if (exc.fault == NoFault) { std::tie(exc, tmp) = _Stack(framePtr, 0x08, spName, mode); _SetR( 2, tmp); }
-    if (exc.fault == NoFault) { std::tie(exc, tmp) = _Stack(framePtr, 0x0C, spName, mode); _SetR( 3, tmp); }
-    if (exc.fault == NoFault) { std::tie(exc, tmp) = _Stack(framePtr, 0x10, spName, mode); _SetR(12, tmp); }
-    if (exc.fault == NoFault) { std::tie(exc, tmp) = _Stack(framePtr, 0x14, spName, mode); _SetLR(tmp); }
-    if (exc.fault == NoFault) { std::tie(exc, pc ) = _Stack(framePtr, 0x18, spName, mode); }
-    if (exc.fault == NoFault) { std::tie(exc, psr) = _Stack(framePtr, 0x1C, spName, mode); }
-    _BranchToAndCommit(pc);
-
-    uint32_t excNo = GETBITSM(psr, XPSR__EXCEPTION);
-    if (exc.fault == NoFault && (mode == PEMode_Handler) == !excNo) {
-      if (_HaveMainExt())
-        InternalOr32(REG_UFSR, REG_UFSR__INVPC);
-      return _CreateException(UsageFault, false, false/*UNKNOWN*/);
-    }
-
-    bool validIPSR = (excNo == 0 || excNo == 1 || excNo == NMI || excNo == HardFault || excNo == SVCall || excNo == PendSV || excNo == SysTick);
-    if (!validIPSR && _HaveMainExt())
-      validIPSR = (excNo == MemManage || excNo == BusFault || excNo == UsageFault || excNo == SecureFault || excNo == DebugMonitor);
-
-    if (!validIPSR && !_IsIrqValid(excNo))
-      psr = CHGBITSM(psr, XPSR__EXCEPTION, 0); // UNKNOWN
-
-    if (_HaveFPExt()) {
-      if (!GETBITSM(excReturn, EXC_RETURN__FTYPE)) {
-        if (!toSecure && (InternalLoad32(REG_FPCCR_S) & REG_FPCCR__LSPACT)) {
-          InternalOr32(REG_SFSR, REG_SFSR__LSERR);
-          ExcInfo newExc = _CreateException(SecureFault, true, true);
-          if (IMPL_DEF_DROP_PREV_GEN_EXC)
-            exc = newExc;
-          else
-            exc = _MergeExcInfo(exc, newExc);
-        } else {
-          bool lspAct = !!(toSecure ? InternalLoad32(REG_FPCCR_S) & REG_FPCCR__LSPACT : InternalLoad32(REG_FPCCR_NS) & REG_FPCCR__LSPACT);
-          if (lspAct) {
-            if (exc.fault == NoFault) {
-              if (toSecure)
-                InternalMask32(REG_FPCCR_S, REG_FPCCR__LSPACT);
-              else
-                InternalMask32(REG_FPCCR_NS, REG_FPCCR__LSPACT);
-            }
-          } else {
-            if (exc.fault == NoFault) {
-              bool nPriv  = toSecure ? GETBITSM(_s.controlS, CONTROL__NPRIV) : GETBITSM(_s.controlNS, CONTROL__NPRIV);
-              bool isPriv = (mode == PEMode_Handler || !nPriv);
-              exc = _CheckCPEnabled(10, isPriv, toSecure);
-            }
-
-            if (exc.fault == NoFault) {
-              for (int i=0; i<16; ++i)
-                if (exc.fault == NoFault) {
-                  uint32_t offset = 0x20+(4*i);
-                  uint32_t tmp;
-                  std::tie(exc, tmp) = _Stack(framePtr, offset, spName, mode);
-                  _SetS(i, tmp);
-                }
-              if (exc.fault == NoFault) {
-                uint32_t tmp;
-                std::tie(exc, tmp) = _Stack(framePtr, 0x60, spName, mode);
-                _s.fpscr = tmp;
-              }
-              if (toSecure && (InternalLoad32(REG_FPCCR_S) & REG_FPCCR__TS)) {
-                for (int i=0; i<16; ++i)
-                  if (exc.fault == NoFault) {
-                    uint32_t offset = 0x68+(4*i);
-                    uint32_t tmp;
-                    std::tie(exc, tmp) = _Stack(framePtr, offset, spName, mode);
-                    _SetS(i+16, tmp);
-                  }
-
-                if (exc.fault != NoFault)
-                  for (int i=16; i<32; ++i)
-                    _SetS(i, _HaveSecurityExt() ? 0 : 0 /* UNKNOWN */);
-              }
-              if (exc.fault != NoFault) {
-                for (int i=0; i<16; ++i)
-                  _SetS(i, _HaveSecurityExt() ? 0 : 0 /* UNKNOWN */);
-                _s.fpscr = (_HaveSecurityExt() ? 0 : 0 /* UNKNOWN */);
-              }
-            }
-          }
-        }
-      }
-
-      auto &control = _IsSecure() ? _s.controlS : _s.controlNS;
-      control = CHGBITSM(control, CONTROL__FPCA, GETBITSM(excReturn, EXC_RETURN__FTYPE) ^ 1);
-    }
-
-    if (exc.fault == NoFault)
-      _ConsumeExcStackFrame(excReturn, GETBITSM(psr, RETPSR__SPREALIGN));
-
-    if (_HaveDSPExt())
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__GE, GETBITSM(psr, XPSR__GE));
-
-    if (_IsSecure())
-      _s.controlS = CHGBITSM(_s.controlS, CONTROL__SFPA, GETBITSM(psr, RETPSR__SFPA));
-
-    _s.xpsr = CHGBITSM(_s.xpsr, XPSR__EXCEPTION, GETBITSM(psr, XPSR__EXCEPTION));
-    _s.xpsr = CHGBITSM(_s.xpsr, XPSR__T,         GETBITSM(psr, XPSR__T));
-    if (_HaveMainExt()) {
-      _s.xpsr = CHGBITS(_s.xpsr,27,31,GETBITS(psr,27,31));
-
-      uint32_t it = (GETBITSM(psr, XPSR__IT_ICI_LO)<<2) | GETBITSM(psr, XPSR__IT_ICI_HI);
-      _SetITSTATEAndCommit(it);
-    } else
-      _s.xpsr = CHGBITS(_s.xpsr,28,31,GETBITS(psr,28,31));
-
-    return exc;
-  }
-
-  /* _CheckCPEnabled {{{3
-   * ---------------
-   */
-  ExcInfo _CheckCPEnabled(int cp) {
-    return _CheckCPEnabled(cp, _CurrentModeIsPrivileged(), _IsSecure());
-  }
-
-  ExcInfo _CheckCPEnabled(int cp, bool priv, bool secure) {
-    auto [enabled, toSecure] = _IsCPEnabled(cp, priv, secure);
-    ExcInfo excInfo;
-    if (!enabled) {
-      if (toSecure)
-        InternalOr32(REG_UFSR_S, REG_UFSR__NOCP);
-      else
-        InternalOr32(REG_UFSR_NS, REG_UFSR__NOCP);
-      excInfo = _CreateException(UsageFault, true, toSecure);
-    } else
-      excInfo = _DefaultExcInfo();
-    return excInfo;
-  }
-
-  /* _ValidateExceptionReturn {{{3
-   * ------------------------
-   */
-  std::tuple<ExcInfo, uint32_t> _ValidateExceptionReturn(uint32_t excReturn, int retExcNo) {
-    bool error = false;
-    assert(_CurrentMode() == PEMode_Handler);
-    if (GETBITS(excReturn, 7,23) != BITS(0,16) || GETBITS(excReturn, 1, 1))
-      throw Exception(ExceptionType::UNPREDICTABLE);
-    if (!_HaveFPExt() && !GETBITSM(excReturn, EXC_RETURN__FTYPE))
-      throw Exception(ExceptionType::UNPREDICTABLE);
-
-    bool targetDomainSecure = !!GETBITSM(excReturn, EXC_RETURN__ES);
-    bool excStateNonSecure;
-    int excNo;
-    if (_HaveSecurityExt()) {
-      excStateNonSecure = (_s.curState == SecurityState_NonSecure || !targetDomainSecure);
-      if (excStateNonSecure && (!GETBITSM(excReturn, EXC_RETURN__DCRS) || targetDomainSecure)) {
-        if (_HaveMainExt())
-          InternalOr32(REG_SFSR, REG_SFSR__INVER);
-
-        if (excStateNonSecure && targetDomainSecure)
-          excReturn = CHGBITSM(excReturn, EXC_RETURN__ES, 0);
-
-        targetDomainSecure = false;
-        error = true;
-        excNo = SecureFault;
-      }
-    } else
-      excStateNonSecure = true;
-
-    if (!error)
-      if (!_IsActiveForState(retExcNo, targetDomainSecure)) {
-        error = true;
-        if (_HaveMainExt()) {
-          InternalOr32(REG_UFSR, REG_UFSR__INVPC);
-          excNo = UsageFault;
-        } else
-          excNo = HardFault;
-      }
-
-    ExcInfo excInfo;
-    if (error) {
-      _DeActivate(retExcNo, targetDomainSecure);
-      if (_HaveSecurityExt() && targetDomainSecure)
-        _s.controlS = CHGBITSM(_s.controlS, CONTROL__SPSEL, GETBITSM(excReturn, EXC_RETURN__SPSEL));
-      else
-        _s.controlNS = CHGBITSM(_s.controlNS, CONTROL__SPSEL, GETBITSM(excReturn, EXC_RETURN__SPSEL));
-      excInfo = _CreateException(excNo, false, false /*UNKNOWN*/);
-    } else
-      excInfo = _DefaultExcInfo();
-
-    return {excInfo, excReturn};
-  }
-
-  /* _ExceptionTaken {{{3
-   * ---------------
-   */
-  ExcInfo _ExceptionTaken(int excNo, bool doTailChain, bool excIsSecure, bool ignStackFaults) {
-    assert(_HaveSecurityExt() || !excIsSecure);
-
-    ExcInfo exc = _DefaultExcInfo();
-    if (_HaveSecurityExt() && GETBIT(_GetLR(), 6)) {
-      if (excIsSecure) {
-        if (doTailChain && !GETBIT(_GetLR(), 0))
-          _SetLR(CHGBITS(_GetLR(), 5, 5, 0));
-      } else {
-        if (GETBIT(_GetLR(), 5) && !(doTailChain && !GETBIT(_GetLR(),0)))
-          exc = _PushCalleeStack(doTailChain);
-        _SetLR(CHGBITS(_GetLR(), 5, 5, 1));
-      }
-    }
-
-    if (excIsSecure)
-      _SetLR(CHGBITS(CHGBITS(_GetLR(), 2, 2, GETBITSM(_s.controlS, CONTROL__SPSEL)), 0, 0, 1));
-    else
-      _SetLR(CHGBITS(CHGBITS(_GetLR(), 2, 2, GETBITSM(_s.controlNS, CONTROL__SPSEL)), 0, 0, 0));
-
-    uint32_t callerRegValue = (!_HaveSecurityExt() || excIsSecure) ? 0 /*UNKNOWN*/ : 0;
-    for (int n=0; n<4; ++n)
-      _SetR(n, callerRegValue);
-    _SetR(12, callerRegValue);
-    _s.xpsr = (callerRegValue & ~XPSR__EXCEPTION) | (_s.xpsr & XPSR__EXCEPTION);
-
-    if (_HaveSecurityExt() && GETBIT(_GetLR(), 6)) {
-      if (excIsSecure) {
-        if (!GETBIT(_GetLR(),5))
-          for (int n=4; n<12; ++n)
-            _SetR(n, 0/*UNKNOWN*/);
-      } else
-        for (int n=4; n<12; ++n)
-          _SetR(n, 0);
-    }
-
-    uint32_t start;
-    if (exc.fault == NoFault || ignStackFaults)
-      std::tie(exc, start) = _GetVector(excNo, excIsSecure);
-
-    if (exc.fault == NoFault) {
-      _ActivateException(excNo, excIsSecure);
-      _SCS_UpdateStatusRegs();
-      _ClearExclusiveLocal(_ProcessorID());
-      _SetEventRegister();
-      _InstructionSynchronizationBarrier(0b1111);
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__T, start & 1);
-      _BranchTo(start & ~1);
-    } else
-      exc.inExcTaken = true;
-
-    return exc;
-  }
-
-  /* _PushCalleeStack {{{3
-   * ----------------
-   */
-  ExcInfo _PushCalleeStack(bool doTailChain) {
-    PEMode mode;
-    RName spName;
-    if (doTailChain) {
-      if (!GETBIT(_GetLR(), 3)) {
-        mode = PEMode_Handler;
-        spName = RNameSP_Main_Secure;
-      } else {
-        mode = PEMode_Thread;
-        spName = (GETBIT(_GetLR(), 2) ? RNameSP_Process_Secure : RNameSP_Main_Secure);
-      }
-    } else {
-      spName = _LookUpSP();
-      mode = _CurrentMode();
-    }
-
-    uint32_t framePtr = _GetSP(spName) - 0x28;
-
-    uint32_t integritySig = _HaveFPExt() ? CHGBITS(0xFEFA125A,0,0,GETBIT(_GetLR(),4)) : 0xFEFA125B;
-    ExcInfo exc = _Stack(framePtr, 0x00, spName, mode, integritySig);
-
-    if (exc.fault == NoFault) exc = _Stack(framePtr, 0x08, spName, mode, _GetR( 4));
-    if (exc.fault == NoFault) exc = _Stack(framePtr, 0x0C, spName, mode, _GetR( 5));
-    if (exc.fault == NoFault) exc = _Stack(framePtr, 0x10, spName, mode, _GetR( 6));
-    if (exc.fault == NoFault) exc = _Stack(framePtr, 0x14, spName, mode, _GetR( 7));
-    if (exc.fault == NoFault) exc = _Stack(framePtr, 0x18, spName, mode, _GetR( 8));
-    if (exc.fault == NoFault) exc = _Stack(framePtr, 0x1C, spName, mode, _GetR( 9));
-    if (exc.fault == NoFault) exc = _Stack(framePtr, 0x20, spName, mode, _GetR(10));
-    if (exc.fault == NoFault) exc = _Stack(framePtr, 0x24, spName, mode, _GetR(11));
-
-    ExcInfo spExc = _SetSP(spName, true, framePtr);
-    return _MergeExcInfo(exc, spExc);
-  }
-
-  /* _SCS_UpdateStatusRegs {{{3
-   * ---------------------
-   */
-  void _SCS_UpdateStatusRegs() {
-    // TODO
-  }
-
-  /* _ConstrainUnpredictableBool {{{3
-   * ---------------------------
-   */
-  bool _ConstrainUnpredictableBool(bool x) { return x; }
-
-  /* _ExceptionPriority {{{3
-   * ------------------
-   */
-  int _ExceptionPriority(int n, bool isSecure, bool groupPri) {
-    if (_HaveMainExt())
-      assert(n >= 1 && n <= 511);
-    else
-      assert(n >= 1 && n <= 48);
-
-    int result;
-    if (n == Reset)
-      result = -4;
-    else if (n == NMI)
-      result = -2;
-    else if (n == HardFault) {
-      if (isSecure && (InternalLoad32(REG_AIRCR) & REG_AIRCR__BFHFNMINS))
-        result = -3;
-      else
-        result = -1;
-    } else if (_HaveMainExt() && n == MemManage)
-      result = isSecure ? GETBITSM(InternalLoad32(REG_SHPR1_S), REG_SHPR1__PRI_4) : GETBITSM(InternalLoad32(REG_SHPR1_NS), REG_SHPR1__PRI_4);
-    else if (_HaveMainExt() && n == BusFault)
-      result = GETBITSM(InternalLoad32(REG_SHPR1_S), REG_SHPR1__PRI_5);
-    else if (_HaveMainExt() && n == UsageFault)
-      result = isSecure ? GETBITSM(InternalLoad32(REG_SHPR1_S), REG_SHPR1__PRI_6) : GETBITSM(InternalLoad32(REG_SHPR1_NS), REG_SHPR1__PRI_6);
-    else if (_HaveMainExt() && n == SecureFault)
-      result = GETBITSM(InternalLoad32(REG_SHPR1_S), REG_SHPR1__PRI_7);
-    else if (n == SVCall)
-      result = isSecure ? GETBITSM(InternalLoad32(REG_SHPR2_S), REG_SHPR2__PRI_11) : GETBITSM(InternalLoad32(REG_SHPR2_NS), REG_SHPR2__PRI_11);
-    else if (_HaveMainExt() && n == DebugMonitor)
-      result = GETBITSM(InternalLoad32(REG_SHPR3_S), REG_SHPR3__PRI_12);
-    else if (n == PendSV)
-      result = isSecure ? GETBITSM(InternalLoad32(REG_SHPR3_S), REG_SHPR3__PRI_14) : GETBITSM(InternalLoad32(REG_SHPR3_NS), REG_SHPR3__PRI_14);
-    else if (   n == SysTick
-             && (   (_HaveSysTick() == 2)
-                 || (_HaveSysTick() == 1 && (!(InternalLoad32(REG_ICSR_S) & REG_ICSR__STTNS)) == isSecure)))
-      result = isSecure ? GETBITSM(InternalLoad32(REG_SHPR3_S), REG_SHPR3__PRI_15) : GETBITSM(InternalLoad32(REG_SHPR3_NS), REG_SHPR3__PRI_15);
-    else if (n >= 16) {
-      int r = (n-16)/4;
-      int v = n%4;
-      result = GETBITS(InternalLoad32(_IsSecure() ? REG_NVIC_IPRn_S(r) : REG_NVIC_IPRn_NS(r)), v*8, v*8+7);
-    } else
-      result = 256;
-
-    if (result >= 0) {
-      if (_HaveMainExt() && groupPri) {
-        int subGroupShift;
-        if (isSecure)
-          subGroupShift = GETBITSM(InternalLoad32(REG_AIRCR_S), REG_AIRCR__PRIGROUP);
-        else
-          subGroupShift = GETBITSM(InternalLoad32(REG_AIRCR_NS), REG_AIRCR__PRIGROUP);
-        int groupValue    = 2<<subGroupShift;
-        int subGroupValue = result % groupValue;
-        result = result - subGroupValue;
-      }
-
-      int priSNsPri = _RestrictedNSPri();
-      if ((InternalLoad32(REG_AIRCR_S) & REG_AIRCR__PRIS) && !isSecure)
-        result = (result>>1) + priSNsPri;
-    }
-
-    return result;
-  }
-
-  /* _TopLevel {{{3
-   * ---------
-   * Called once for each tick the PE is not in a sleep state. Handles all
-   * instruction processing, including fetching the opcode, decode and execute.
-   * It also handles pausing execution when in the lockup state.
-   */
-  void _TopLevel() {
-    // If the PE has locked up then abort execution of this instruction. Set
-    // the length of the current instruction to 0 so NextInstrAddr() reports
-    // the correct lockup address.
-    TRACE("top-level begin\n");
-    TRACE_BLOCK();
-    bool ok = !GETBITSM(InternalLoad32(REG_DHCSR), REG_DHCSR__S_LOCKUP);
-    if (!ok) {
-      TRACE("locked up\n");
-      _SetThisInstrDetails(0, 0, 0b1111);
-    } else {
-      ASSERT(!_s.pcChanged);
-
-      // Check for stepping debug for current insn fetch.
-      bool monStepActive = _SteppingDebug();
-      _UpdateSecureDebugEnable();
-      uint32_t pc = _ThisInstrAddr();
-
-      uint32_t instr;
-      bool is16bit;
-      try {
-        // Not locked up, so attempt to fetch the instruction.
-        std::tie(instr, is16bit) = _FetchInstr(pc);
-        TRACE("fetched %d-bit insn: 0x%08x\n", is16bit ? 16 : 32, instr);
-
-        // Setup the details of the instruction. NOTE: The default condition
-        // is based on the ITSTATE, however this is overridden in the decode
-        // stage by instructions that have explicit condition codes.
-        uint32_t len = is16bit ? 2 : 4;
-
-        uint32_t defaultCond = !GETBITS(_GetITSTATE(),0,3) ? 0b1110 : GETBITS(_GetITSTATE(),4,7);
-        _SetThisInstrDetails(instr, len, defaultCond);
-
-        // Checking for FPB Breakpoint on instructions
-        if (_HaveFPB() && _FPB_CheckBreakPoint(pc, len, true, _IsSecure()))
-          _FPB_BreakpointMatch();
-
-        // Finally try and execute the instruction.
-        _DecodeExecute(instr, pc, is16bit);
-
-        // Check for Monitor Step
-        if (_HaveDebugMonitor())
-          _SetMonStep(monStepActive);
-
-        // Check for DWT match
-        if (_IsDWTEnabled())
-          _DWT_InstructionMatch(pc);
-
-      } catch (Exception e) {
-        if (_IsSEE(e) || _IsUNDEFINED(e)) {
-          TRACE("top-level SEE/UD exception\n");
-          // Unallocated instructions in the NOP hint space and instructions that
-          // fail their condition tests are treated like NOPs.
-          bool nopHint =
-               (instr & 0b11111111111111111111111100001111U) == 0b00000000000000001011111100000000U
-            || (instr & 0b11111111111111111111111100000000U) == 0b11110011101011111000000000000000U;
-          if (_ConditionHolds(_CurrentCond()) && !nopHint) {
-            ok = false;
-            bool toSecure = _IsSecure();
-            // Unallocated instructions in the coprocessor space behave as NOCP if the
-            // coprocessor is disabled.
-            auto [isCp, cpNum] = _IsCPInstruction(instr);
-            if (isCp) {
-              auto [cpEnabled, cpFaultState] = _IsCPEnabled(cpNum);
-              if (!cpEnabled) {
-                // A PE is permitted to decode the coprocessor space and raise
-                // UNDEFINSTR UsageFaults for unallocated encodings even if the
-                // coprocessor is disabled.
-                if (IMPL_DEF_DECODE_CP_SPACE)
-                  InternalOr32(REG_UFSR, REG_UFSR__UNDEFINSTR);
-                else {
-                  InternalOr32(REG_UFSR, REG_UFSR__NOCP);
-                  toSecure = cpFaultState;
-                }
-              }
-            } else
-              InternalOr32(REG_UFSR, REG_UFSR__UNDEFINSTR);
-
-            // If Main Extension is not implemented the fault will escalate to a HardFault.
-            ExcInfo excInfo = _CreateException(UsageFault, true, toSecure);
-
-            // Prevent EndOfInstruction() being called in HandleInstruction() as the
-            // instruction has already been terminated so there is no need to throw
-            // the exception again.
-            excInfo.termInst = false;
-            _HandleException(excInfo);
-          }
-        } else if (_IsExceptionTaken(e)) { // XXX guessing this is EndOfInstruction
-          TRACE("top-level EOI exception\n");
-          ok = false;
-        } else
-          // Do not catch UNPREDICTABLE or internal errors
-          throw;
-      }
-    }
-
-    // SEE
-    // UNDEFINED
-    // Taken
-    // UNPREDICTABLE
-    // internal
-
-    // If there is a reset pending do that, otherwise process the normal
-    // instruction advance.
-    try {
-      if (_s.excPending[Reset]) {
-        TRACE("top-level handling pending reset\n");
-        _s.excPending[Reset] = 0;
-        _TakeReset();
-        TRACE("top-level done handling pending reset\n");
-      } else {
-        // Call instruction advance for exception handling and PC/ITSTATE
-        // advance.
-        TRACE("top-level advancing\n");
-        _InstructionAdvance(ok);
-        TRACE("top-level advance done\n");
-      }
-
-    } catch (Exception e) {
-      TRACE("top-level reset/advance exception\n");
-
-      // Do not catch UNPREDICTABLE or internal errors
-      if (!_IsExceptionTaken(e))
-        throw;
-
-      // The correct architectural behaviour for any exceptions is performed
-      // inside TakeReset() and InstructionAdvance(). So no additional actions
-      // are required in this catch block.
-    }
-  }
-
-  /* _EndOfInstruction {{{3
-   * -----------------
-   */
-  void _EndOfInstruction() {
-    throw Exception(ExceptionType::EndOfInstruction);
-  }
-
-  /* _CreateException {{{3
-   * ----------------
-   */
-  ExcInfo _CreateException(int exc, bool forceSecurity, bool isSecure, bool isSync=true) {
-    // Work out the effective target state of the exception.
-    if (_HaveSecurityExt()) {
-      if (!forceSecurity)
-        isSecure = _ExceptionTargetsSecure(exc, _IsSecure());
-      else
-        isSecure = false;
-    }
-
-    // An implementation without Security Extensions cannot cause a fault targeting
-    // Secure state.
-    assert(_HaveSecurityExt() || !isSecure);
-
-    // Get the remaining exception details.
-    auto [escalateToHf, termInst] = _ExceptionDetails(exc, isSecure, isSync);
-
-    // Fill in the default exception info.
-    ExcInfo info            = _DefaultExcInfo();
-    info.fault              = exc;
-    info.termInst           = termInst;
-    info.origFault          = exc;
-    info.origFaultIsSecure  = isSecure;
-
-    // Check for HardFault escalation.
-    // NOTE: In some cases (for example faults during lazy floating-point state
-    // preservation) the decision to escalate below is ignored and instead
-    // based on the info.origFaults fields and other factors.
-    if (escalateToHf && info.fault != HardFault) {
-      // Update the exception info with the escalation details, including
-      // whether there's a change in destination Security state.
-      info.fault    = HardFault;
-      isSecure      = _ExceptionTargetsSecure(HardFault, isSecure);
-      bool dummy;
-      std::tie(escalateToHf, dummy) = _ExceptionDetails(HardFault, isSecure, isSync);
-    }
-
-    // If the requested exception was already a HardFault then we can't
-    // escalate to a HardFault, so lockup. NOTE: Async BusFaults never cause
-    // lockups, if the BusFault is disabled it escalates to a HardFault that is
-    // pended.
-    if (escalateToHf && isSync && info.fault == HardFault)
-      info.lockup = true;
-
-    // Fill in the remaining exception info.
-    info.isSecure = isSecure;
-    return info;
-  }
-
-  /* _UpdateSecureDebugEnable {{{3
-   * ------------------------
-   */
-  void _UpdateSecureDebugEnable() {
-    /// DHCSR.S_SDE is frozen if the PE is in Debug state
-    uint32_t dhcsr = InternalLoad32(REG_DHCSR);
-    if (!GETBITSM(dhcsr, REG_DHCSR__S_HALT)) {
-      dhcsr = CHGBITSM(dhcsr, REG_DHCSR__S_SDE, _SecureHaltingDebugAllowed());
-      InternalStore32(REG_DHCSR, dhcsr);
-    }
-
-    uint32_t demcr = InternalLoad32(REG_DEMCR);
-    if (_HaveDebugMonitor() && !_s.excActive[DebugMonitor] && !GETBITSM(demcr, REG_DEMCR__MON_PEND)) {
-      demcr = CHGBITSM(demcr, REG_DEMCR__SDME, _SecureDebugMonitorAllowed());
-      InternalStore32(REG_DEMCR, demcr);
-    }
-  }
-
-  /* _TakeReset {{{3
-   * ----------
-   */
-  void _TakeReset() {
-    _s.curState = _HaveSecurityExt() ? SecurityState_Secure : SecurityState_NonSecure;
-
-    _ResetSCSRegs(); // Catch-all function for System Control Space reset
-    _s.xpsr = 0; // APSR is UNKNOWN UNPREDICTABLE, IPSR exception number is 0
-    if (_HaveMainExt()) {
-      _s.lr = 0xFFFF'FFFF;      // Preset to an illegal exception return value
-      _SetITSTATEAndCommit(0);  // IT/ICI bits cleared
-    } else
-      _s.lr = 0xFFFF'FFFF;      // UNKNOWN
-
-    // Reset priority boosting
-    _s.primaskNS &= ~1;
-    if (_HaveSecurityExt())
-      _s.primaskS &= ~1;
-    if (_HaveMainExt()) {
-      _s.faultmaskNS &= ~1;
-      _s.basepriNS = CHGBITS(_s.basepriNS,0,7,0);
-      if (_HaveSecurityExt()) {
-        _s.faultmaskS &= ~1;
-        _s.basepriS = CHGBITS(_s.basepriS,0,7,0);
-      }
-    }
-
-    // Initialize the Floating Point Extn
-    if (_HaveFPExt()) {
-      _s.controlS = CHGBITSM(_s.controlS, CONTROL__FPCA, 0); // FP inactive
-      uint32_t fpdscrNS = InternalLoad32(REG_FPDSCR_NS);
-      fpdscrNS = CHGBITSM(fpdscrNS, REG_FPDSCR__AHP,    0);
-      fpdscrNS = CHGBITSM(fpdscrNS, REG_FPDSCR__DN,     0);
-      fpdscrNS = CHGBITSM(fpdscrNS, REG_FPDSCR__FZ,     0);
-      fpdscrNS = CHGBITSM(fpdscrNS, REG_FPDSCR__RMODE,  0);
-      InternalStore32(REG_FPDSCR_NS, fpdscrNS);
-      uint32_t fpccr = InternalLoad32(REG_FPCCR_S);
-      fpccr = CHGBITSM(fpccr, REG_FPCCR__LSPEN, 1);
-      InternalStore32(REG_FPCCR_S, fpccr);
-      uint32_t fpccrNS = InternalLoad32(REG_FPCCR_NS);
-      fpccrNS = CHGBITSM(fpccrNS, REG_FPCCR__ASPEN, 1);
-      fpccrNS = CHGBITSM(fpccrNS, REG_FPCCR__LSPACT, 0);
-      InternalStore32(REG_FPCCR_NS, fpccrNS);
-      InternalStore32(REG_FPCAR_NS, 0); // UNKNOWN
-      if (_HaveSecurityExt()) {
-        _s.controlS = CHGBITSM(_s.controlS, CONTROL__SFPA, 0);
-        uint32_t fpdscrS = InternalLoad32(REG_FPDSCR_S);
-        fpdscrS = CHGBITSM(fpdscrS, REG_FPDSCR__AHP, 0);
-        fpdscrS = CHGBITSM(fpdscrS, REG_FPDSCR__DN, 0);
-        fpdscrS = CHGBITSM(fpdscrS, REG_FPDSCR__FZ, 0);
-        fpdscrS = CHGBITSM(fpdscrS, REG_FPDSCR__RMODE, 0);
-        InternalStore32(REG_FPDSCR_S, fpdscrS);
-        uint32_t fpccr = InternalLoad32(REG_FPCCR_S);
-        fpccr = CHGBITSM(fpccr, REG_FPCCR__LSPENS, 0);
-        InternalStore32(REG_FPCCR_S, fpccr);
-        uint32_t fpccrS = InternalLoad32(REG_FPCCR_S);
-        fpccrS = CHGBITSM(fpccrS, REG_FPCCR__ASPEN, 1);
-        fpccrS = CHGBITSM(fpccrS, REG_FPCCR__LSPACT, 0);
-        InternalStore32(REG_FPCCR_S, fpccrS);
-        InternalStore32(REG_FPCAR_S, 0); // UNKNOWN
-      }
-      for (int i=0; i<32; ++i)
-        _SetS(i, 0); // UNKNOWN
-    }
-
-    for (int i=0; i<_MaxExceptionNum(); ++i) // All exceptions Inactive
-      _s.excActive[i] = 0;
-    _ClearExclusiveLocal(_ProcessorID());
-    _ClearEventRegister();
-    for (int i=0; i<13; ++i)
-      _s.r[i] = 0; // UNKNOWN
-
-    // Stack limit registers. It is IMPLEMENTATIOND EFINED how many bits
-    // of these registers are writable. The following writes only affect the bits
-    // that an implementation defines as writable.
-    if (_HaveMainExt()) {
-      _s.msplimNS = 0;
-      _s.psplimNS = 0;
-    }
-    if (_HaveSecurityExt()) {
-      _s.msplimS = 0;
-      _s.psplimS = 0;
-    }
-
-    // Load the initial value of the stack pointer and the reset value from the
-    // vector table. The order of the loads is IMPLEMENTATION DEFINED.
-    auto [excSp, sp]      = _GetVector(0,     _HaveSecurityExt());
-    auto [excRst, start]  = _GetVector(Reset, _HaveSecurityExt());
-    if (excSp.fault != NoFault || excRst.fault != NoFault)
-      _Lockup(true);
-
-    // Initialize the stack pointers and start execution at the reset vector
-    if (_HaveSecurityExt()) {
-      _SetSP_Main_Secure(sp);
-      _SetSP_Main_NonSecure(0); // UNKNOWN
-      _SetSP_Process_Secure(0); // UNKNOWN
-    } else
-      _SetSP_Main_NonSecure(sp);
-
-    // Begin Implementation-Specific Resets
-    _NestReset(); // Implementation-Specific
-    _s.curCondOverride = -1;
-    // End Implementation-Specific Resets
-
-    _SetSP_Process_NonSecure(0); // UNKNOWN
-    _s.xpsr = CHGBITSM(_s.xpsr, XPSR__T, start & 1);
-    _BranchToAndCommit(start & ~1);
-
-    // This is not included in the psuedocode but is required else the first
-    // instruction will be executed twice.
-    _s.pcChanged       = false;
-  }
-
-  /* _SteppingDebug {{{3
-   * --------------
-   */
-  bool _SteppingDebug() {
-    // If halting debug is allowed and C_STEP is set, set C_HALT for the next instruction.
-    uint32_t dhcsr = InternalLoad32(REG_DHCSR);
-    if (_CanHaltOnEvent(_IsSecure()) && !!(dhcsr & REG_DHCSR__C_STEP)) {
-      dhcsr |= REG_DHCSR__C_HALT;
-      InternalStore32(REG_DHCSR, dhcsr);
-
-      uint32_t dfsr = InternalLoad32(REG_DFSR);
-      dfsr |= REG_DFSR__HALTED;
-      InternalStore32(REG_DFSR, dfsr);
-    }
-
-    uint32_t demcr = InternalLoad32(REG_DEMCR);
-    bool monStepEnabled = _HaveDebugMonitor() && _CanPendMonitorOnEvent(_IsSecure(), false);
-    return monStepEnabled && !!(demcr & REG_DEMCR__MON_STEP);
-  }
-
-  /* _FetchInstr {{{3
-   * -----------
-   */
-  std::tuple<uint32_t,bool> _FetchInstr(uint32_t addr) {
-    uint32_t sgOpcode = 0xE97F'E97F;
-
-    SAttributes hw1Attr = _SecurityCheck(addr, true, _IsSecure());
-    // Fetch the T16 instruction, or the first half of a T32.
-    uint16_t hw1Instr = _GetMemI(addr);
-
-    // If the T bit is clear then the instruction can't be decoded
-    if (!GETBITSM(_s.xpsr, XPSR__T)) {
-      // Attempted NS->S domain crossing with the T bit clear raise an INVEP
-      // SecureFault
-      ExcInfo excInfo;
-      if (!_IsSecure() && !hw1Attr.ns) {
-        uint32_t sfsr = InternalLoad32(REG_SFSR);
-        sfsr |= REG_SFSR__INVEP;
-        InternalStore32(REG_SFSR, sfsr);
-        excInfo = _CreateException(SecureFault, true, true);
-      } else {
-        uint32_t ufsr = InternalLoad32(REG_UFSR);
-        ufsr |= REG_UFSR__INVSTATE;
-        InternalStore32(REG_UFSR, ufsr);
-        excInfo = _CreateException(UsageFault, false, false/*unknown*/);
-      }
-      _HandleException(excInfo);
-    }
-
-    // Implementations are permitted to terminate the fetch process early if a
-    // domain crossing is being attempted and the first 16bits of the opcode
-    // isn't the first part of the SG instruction.
-    if (IMPL_DEF_EARLY_SG_CHECK) {
-      if (!_IsSecure() && !hw1Attr.ns && (hw1Instr != sgOpcode>>16)) {
-        uint32_t sfsr = InternalLoad32(REG_SFSR);
-        sfsr |= REG_SFSR__INVEP;
-        InternalStore32(REG_SFSR, sfsr);
-        ExcInfo excInfo = _CreateException(SecureFault, true, true);
-        _HandleException(excInfo);
-      }
-    }
-
-    // NOTE: Implementations are also permitted to terminate the fetch process
-    // at this point with an UNDEFINSTR UsageFault if the first 16 bits are an
-    // undefined T32 prefix.
-
-    // If the data fetched is the top half of a T32 instruction, fetch the bottom
-    // 16 bits.
-    uint32_t instr;
-    SAttributes hw2Attr;
-    bool isT16 = GETBITS(hw1Instr,11,15) < 0b11101;
-    if (isT16)
-      instr = hw1Instr;
-    else {
-      hw2Attr = _SecurityCheck(addr+2, true, _IsSecure());
-      // The following test covers 2 possible fault conditions:
-      // 1) NS code branching to a T32 instruction where the first half is in
-      //    NS memory, and the second half is in S memory
-      // 2) NS code branching to a T32 instruction in S & NSC memory, but
-      //    where the second half of the instruction is in NS memory
-      if (!_IsSecure() && hw1Attr.ns != hw2Attr.ns) {
-        uint32_t sfsr = InternalLoad32(REG_SFSR);
-        sfsr |= REG_SFSR__INVEP;
-        InternalStore32(REG_SFSR, sfsr);
-        ExcInfo excInfo = _CreateException(SecureFault, true, true);
-        _HandleException(excInfo);
-      }
-
-      // Fetch the second half of the TE2 instruction.
-      instr = (uint32_t(hw1Instr)<<16) | _GetMemI(addr+2);
-    }
-
-    // Raise a fault if an otherwise valid NS->S transition that doesn't land on
-    // an SG instruction.
-    if (!_IsSecure() && !hw1Attr.ns && instr != sgOpcode) {
-      uint32_t sfsr = InternalLoad32(REG_SFSR);
-      sfsr |= REG_SFSR__INVEP;
-      InternalStore32(REG_SFSR, sfsr);
-      ExcInfo excInfo = _CreateException(SecureFault, true, true);
-      _HandleException(excInfo);
-    }
-
-    return {instr, isT16};
-  }
-
-  /* _GenerateDebugEventResponse {{{3
-   * ---------------------------
-   */
-  bool _GenerateDebugEventResponse() {
-    if (_CanHaltOnEvent(_IsSecure())) {
-      InternalOr32(REG_DFSR, REG_DFSR__BKPT);
-      InternalOr32(REG_DHCSR, REG_DHCSR__C_HALT);
-      return true;
-    } else if (_HaveMainExt() && _CanPendMonitorOnEvent(_IsSecure(), true)) {
-      InternalOr32(REG_DFSR, REG_DFSR__BKPT);
-      InternalOr32(REG_DEMCR, REG_DEMCR__MON_PEND);
-      ExcInfo excInfo = _CreateException(DebugMonitor, false, false/*UNKNOWN*/);
-      _HandleException(excInfo);
-      return true;
-    } else
-      return false;
-  }
-
-  /* _FPB_CheckBreakPoint {{{3
-   * --------------------
-   */
-  bool _FPB_CheckBreakPoint(uint32_t iaddr, int size, bool isIFetch, bool isSecure) {
-    bool match = _FPB_CheckMatchAddress(iaddr);
-    if (!match && size == 4 && _FPB_CheckMatchAddress(iaddr+2))
-      match = _ConstrainUnpredictableBool(false/*Unpredictable_FPBreakpoint*/);
-    return match;
-  }
-
-  /* _FPB_CheckMatchAddress {{{3
-   * ----------------------
-   */
-  bool _FPB_CheckMatchAddress(uint32_t iaddr) {
-    if (!(InternalLoad32(REG_FP_CTRL) & REG_FP_CTRL__ENABLE))
-      return false; // FPB not enabled
-
-    // Instruction Comparator.
-    uint32_t fpCtrl = InternalLoad32(REG_FP_CTRL);
-    uint32_t numAddrCmp = GETBITSM(fpCtrl, REG_FP_CTRL__NUM_CODE_LO) | (GETBITSM(fpCtrl, REG_FP_CTRL__NUM_CODE_HI)<<4);
-    if (!numAddrCmp)
-      return false; // No comparator support
-
-    for (int N=0; N<numAddrCmp; ++N) {
-      uint32_t x = InternalLoad32(REG_FP_COMP(N));
-      if (x & REG_FP_COMPn__BE) // Breakpoint enabled
-        if ((iaddr>>1) == GETBITSM(x, REG_FP_COMPn__BPADDR))
-          return true;
-    }
-
-    return false;
-  }
-
-  /* _ExceptionDetails {{{3
-   * -----------------
-   */
-  std::tuple<bool,bool> _ExceptionDetails(int exc, bool isSecure, bool isSync) {
-    bool escalateToHf, termInst, enabled, canEscalate;
-
-    switch (exc) {
-      case HardFault:
-        termInst = true;
-        enabled = true;
-        canEscalate = true;
-        break;
-      case MemManage:
-        termInst = true;
-        if (_HaveMainExt()) {
-          uint32_t val = isSecure ? InternalLoad32(REG_SHCSR_S) : InternalLoad32(REG_SHCSR_NS);
-          enabled = !!(val & REG_SHCSR__MEMFAULTENA);
-        } else
-          enabled = false;
-        canEscalate = true;
-        break;
-      case BusFault:
-        termInst = isSync;
-        enabled = _HaveMainExt() ? !!(InternalLoad32(REG_SHCSR_S) & REG_SHCSR__BUSFAULTENA) : false;
-        canEscalate = termInst || !enabled; // Async BusFaults only escalate if they are disabled
-        break;
-      case UsageFault:
-        termInst = true;
-        if (_HaveMainExt()) {
-          uint32_t val = isSecure ? InternalLoad32(REG_SHCSR_S) : InternalLoad32(REG_SHCSR_NS);
-          enabled = !!(val & REG_SHCSR__USGFAULTENA);
-        } else
-          enabled = false;
-        canEscalate = true;
-        break;
-      case SecureFault:
-        termInst = true;
-        enabled = _HaveMainExt() ? !!(InternalLoad32(REG_SHCSR_S) & REG_SHCSR__SECUREFAULTENA) : false;
-        canEscalate = true;
-        break;
-      case SVCall:
-        termInst = false;
-        enabled  = true;
-        canEscalate = true;
-        break;
-      case DebugMonitor:
-        termInst = true;
-        enabled = _HaveMainExt() ? !!(InternalLoad32(REG_DEMCR) & REG_DEMCR__MON_EN) : false;
-        canEscalate = false; // true if fault caused by BKPT instruction
-        break;
-      default:
-        termInst = false;
-        canEscalate = false;
-        break;
-    }
-
-    // If the fault can escalate then check if exception can be taken
-    // immediately, or whether it should escalate.
-    escalateToHf = false;
-    if (canEscalate) {
-      int execPri = _ExecutionPriority();
-      int excePri = _ExceptionPriority(exc, isSecure, true);
-      if (excePri >= execPri || !enabled)
-        escalateToHf = true;
-    }
-
-    return {escalateToHf, termInst};
-  }
-
-  /* _HandleException {{{3
-   * ----------------
-   */
-  void _HandleException(const ExcInfo &excInfo) {
-    if (excInfo.fault == NoFault)
-      return;
-
-    TRACE("handling exception %d\n", excInfo.fault);
-
-    if (excInfo.lockup) {
-      TRACE("commencing lockup\n");
-      _Lockup(excInfo.termInst);
-      return;
-    }
-
-    // If the fault escalated to a HardFault update the syndrome info
-    if (_HaveMainExt() && excInfo.fault == HardFault && excInfo.origFault != HardFault)
-      InternalOr32(REG_HFSR, REG_HFSR__FORCED);
-
-    // If the exception does not cause a lockup set the exception pending and
-    // potentially terminate execution of the current instruction
-    _SetPending(excInfo.fault, excInfo.isSecure, true);
-    if (excInfo.termInst)
-      _EndOfInstruction();
-  }
-
-  /* _InstructionAdvance {{{3
-   * -------------------
-   */
-  void _InstructionAdvance(bool instExecOk) {
-    // Check for, and process any exception returns that were requested. This
-    // must be done after the instruction has completed so any exceptions raised
-    // during the exception return do not interfere with the execution of the
-    // instruction that causes the exception return (e.g. a POP causing an
-    // excReturn value to be written to the PC must adjust SP even if the
-    // exception return caused by the POP raises a fault).
-    bool excRetFault = false;
-    uint32_t excReturn = _NextInstrAddr();
-    if (_s.pendingReturnOperation) {
-      _s.pendingReturnOperation = false;
-      ExcInfo excInfo;
-      std::tie(excInfo, excReturn) = _ExceptionReturn(excReturn);
-      // Handle any faults raised during exception return
-      if (excInfo.fault != NoFault) {
-        excRetFault = true;
-        // Either lockup, or pend the fault if it can be taken
-        if (excInfo.lockup) {
-          // Check if the fault occured on an exception return, or whether it
-          // occured during a tail chained exception entry. This is because
-          // Lockups on exception return have to be handled differently.
-          if (!excInfo.inExcTaken) {
-            // If the fault occured during exception return, then the register
-            // state is UNKNOWN. This is due to the fact that an unknown amount
-            // of the exception stack frame might have been restored.
-            for (int n=0; n<13; ++n)
-              _s.r[n] = 0; // UNKNOWN
-            _s.lr = 0; // UNKNOWN
-            _s.xpsr = 0; // UNKNOWN
-            if (_HaveFPExt())
-              for (int n=0; n<32; ++n)
-                _SetS(n, 0); // UNKNOWN
-            _s.fpscr = 0; // UNKNOWN
-            // If lockup is entered as a result of an exception return fault the
-            // original exception is deactivated. Therefore the stack pointer
-            // must be updated to consume the exception stack frame to keep the
-            // stack depth consistent with the number of active exceptions. NOTE:
-            // The XPSR SP alignment flag is UNKNOWN, assume is was zero.
-            _ConsumeExcStackFrame(excReturn, false);
-            // IPSR from stack is UNKNOWN, set IPSR bsased on mode specified in
-            // EXC_RETURN.
-            _s.xpsr = CHGBITSM(_s.xpsr, XPSR__EXCEPTION, (excReturn & EXC_RETURN__MODE) ? NoFault : HardFault);
-            if (_HaveFPExt()) {
-              uint32_t &control = _IsSecure() ? _s.controlS : _s.controlNS;
-              control = CHGBITSM(control,  CONTROL__FPCA, ~GETBITSM(excReturn, EXC_RETURN__FTYPE));
-              _s.controlS = CHGBITSM(_s.controlS, CONTROL__SFPA, 0); // UNKNOWN
-            }
-          }
-          _Lockup(false);
-        } else {
-          // Set syndrome if fault escalated to a hardfault
-          if (_HaveMainExt() && excInfo.fault == HardFault && excInfo.origFault != HardFault)
-            InternalOr32(REG_HFSR, REG_HFSR__FORCED);
-          _SetPending(excInfo.fault, excInfo.isSecure, true);
-        }
-      }
-    }
-
-      TRACE("NIA Y ch=%d thisAddr=0x%x thisLen=%d ovr=0x%x\n", _s.pcChanged, _ThisInstrAddr(), _ThisInstrLength(), _s.nextInstrAddr);
-    // If there is a pending exception with sufficient priority take it now. This
-    // is done before committing PC and ITSTATE changes caused by the previous
-    // instruction so that calls to ThisInstrAddr(), NextInstrAddr(),
-    // ThisInstrITState(), NextInstrITState() represent the context the
-    // instruction was executed in. IE so the correct context is pushed to the
-    // stack.
-    auto [takeException, exception, excIsSecure] = _PendingExceptionDetails();
-    if (takeException) {
-      TRACE("TAKE EXC %d\n", exception);
-      // If a fault occurred during an exception return then the exception
-      // stack frame will already be on the stack, as a resut entry to the
-      // next exception is treated as if it were a tail chain.
-      int pePriority = _ExecutionPriority();
-      uint32_t peException = GETBITSM(_s.xpsr, XPSR__EXCEPTION);
-      bool peIsSecure = _IsSecure();
-      ExcInfo excInfo;
-      if (excRetFault) {
-        // If the fault occurred during ExceptionTaken() then LR will have been
-        // updated with the new exception return value. To excReturn consistent
-        // with the state of the exception stack frame we need to use the updated
-        // version in this case. If no updates have occurred then the excReturn
-        // value from the previous exception return is used.
-        uint32_t nextExcReturn = excInfo.inExcTaken ? _s.lr : excReturn;
-        excInfo = _TailChain(exception, excIsSecure, nextExcReturn);
-      } else
-        excInfo = _ExceptionEntry(exception, excIsSecure, instExecOk);
-      // Handle any derived faults that have occurred
-      if (excInfo.fault != NoFault)
-        _DerivedLateArrival(pePriority, peException, peIsSecure, excInfo, exception, excIsSecure);
-    }
-
-    // If the PC has moved away from the lockup address (eg because an NMI has
-    // been taken) leave the lockup state.
-    if (InternalLoad32(REG_DHCSR) & REG_DHCSR__S_LOCKUP && _NextInstrAddr() != 0xEFFF'FFFE)
-      InternalMask32(REG_DHCSR, REG_DHCSR__S_LOCKUP);
-
-    // Only advance the PC and ISTATE if not locked up.
-    if (!(InternalLoad32(REG_DHCSR) & REG_DHCSR__S_LOCKUP)) {
-      // Commit PC and ITSTATE changes ready for the next instruction.
-      TRACE("NIA Z ch=%d thisAddr=0x%x thisLen=%d ovr=0x%x\n", _s.pcChanged, _ThisInstrAddr(), _ThisInstrLength(), _s.nextInstrAddr);
-      _s.pc = _NextInstrAddr();
-      _s.pcChanged = false;
-      if (_HaveMainExt()) {
-        uint32_t next = _NextInstrITState();
-        _s.xpsr = CHGBITSM(_s.xpsr, XPSR__IT_ICI_LO, next>>2);
-        _s.xpsr = CHGBITSM(_s.xpsr, XPSR__IT_ICI_HI, next);
-        _s.itStateChanged = false;
-      }
-    }
-  }
-
-  /* _ConditionHolds {{{3
-   * ---------------
-   */
-  bool _ConditionHolds(uint32_t cond) {
-    bool result;
-    switch ((cond>>1) & 0b111) {
-      case 0b000: result = GETBITSM(_s.xpsr, XPSR__Z); break;
-      case 0b001: result = GETBITSM(_s.xpsr, XPSR__C); break;
-      case 0b010: result = GETBITSM(_s.xpsr, XPSR__N); break;
-      case 0b011: result = GETBITSM(_s.xpsr, XPSR__V); break;
-      case 0b100: result = GETBITSM(_s.xpsr, XPSR__C) && !GETBITSM(_s.xpsr, XPSR__Z); break;
-      case 0b101: result = GETBITSM(_s.xpsr, XPSR__Z) == GETBITSM(_s.xpsr, XPSR__V); break;
-      case 0b110: result = GETBITSM(_s.xpsr, XPSR__Z) == GETBITSM(_s.xpsr, XPSR__V) && !GETBITSM(_s.xpsr, XPSR__Z); break;
-      case 0b111: result = true; break;
-    }
-
-    if ((cond & 1) && cond != 0b111)
-      result = !result;
-
-    return result;
-  }
-
-  /* _SetMonStep {{{3
-   * -----------
-   */
-  void _SetMonStep(bool monStepActive) {
-    if (!monStepActive)
-      return;
-
-    if (!(InternalLoad32(REG_DEMCR) & REG_DEMCR__MON_STEP))
-      throw Exception(ExceptionType::UNPREDICTABLE);
-
-    if (_ExceptionPriority(DebugMonitor, _IsSecure(), true) < _ExecutionPriority()) {
-      InternalOr32(REG_DEMCR, REG_DEMCR__MON_PEND);
-      InternalOr32(REG_DFSR, REG_DFSR__HALTED);
-    }
-  }
-
-  /* _ExceptionTargetsSecure {{{3
-   * -----------------------
-   */
-  bool _ExceptionTargetsSecure(int excNo, bool isSecure) {
-    if (!_HaveSecurityExt())
-      return false;
-
-    bool targetSecure = false;
-    switch (excNo) {
-      case NMI:
-        targetSecure = !(InternalLoad32(REG_AIRCR) & REG_AIRCR__BFHFNMINS);
-        break;
-      case HardFault:
-        targetSecure = !(InternalLoad32(REG_AIRCR) & REG_AIRCR__BFHFNMINS) || isSecure;
-        break;
-      case MemManage:
-        targetSecure = isSecure;
-        break;
-      case BusFault:
-        targetSecure = !(InternalLoad32(REG_AIRCR) & REG_AIRCR__BFHFNMINS);
-        break;
-      case UsageFault:
-        targetSecure = isSecure;
-        break;
-      case SecureFault:
-        targetSecure = true;
-        break;
-      case SVCall:
-        targetSecure = isSecure;
-        break;
-      case DebugMonitor:
-        targetSecure = !!(InternalLoad32(REG_DEMCR) & REG_DEMCR__SDME);
-        break;
-      case PendSV:
-        targetSecure = isSecure;
-        break;
-      case SysTick:
-        if (_HaveSysTick() == 2) {
-        } else if (_HaveSysTick() == 1)
-          // SysTick target state is configurable
-          targetSecure = !(InternalLoad32(REG_ICSR_S) & REG_ICSR__STTNS);
-        break;
-
-      default:
-        if (excNo >= 16)
-          targetSecure = !(InternalLoad32(REG_NVIC_ITNSn((excNo-16)/32)) & BIT((excNo-16)%32));
-        break;
-    }
-
-    return targetSecure;
-  }
-
-  /* _IsCPInstruction {{{3
-   * ----------------
-   */
-  std::tuple<bool, int> _IsCPInstruction(uint32_t instr) {
-    bool isCp = false;
-    if ((instr & 0b11101111000000000000000000000000) == 0b11101110000000000000000000000000)
-      isCp = true;
-    if ((instr & 0b11101110000000000000000000000000) == 0b11101100000000000000000000000000)
-      isCp = true;
-    int cpNum = isCp ? GETBITS(instr, 8,11) : 0 /* UNKNOWN */;
-    if (cpNum == 11)
-      cpNum = 10;
-    return {isCp, cpNum};
-  }
-
-  /* _DWT_InstructionMatch {{{3
-   * ---------------------
-   */
-  void _DWT_InstructionMatch(uint32_t iaddr) {
-    bool triggerDebugEvent = false;
-    bool debugEvent = false;
-
-    if (!_HaveDWT() || !(InternalLoad32(REG_DWT_CTRL) & REG_DWT_CTRL__NUMCOMP))
-      return;
-
-    assert(false); // TODO
-  }
-
-  /* _IsCPEnabled {{{3
-   * ------------
-   */
-  std::tuple<bool, bool> _IsCPEnabled(int cp, bool priv, bool secure) {
-    bool enabled, forceToSecure = false;
-
-    uint32_t cpacr = secure ? InternalLoad32(REG_CPACR_S) : InternalLoad32(REG_CPACR_NS);
-    switch (GETBITS(cpacr,cp*2,cp*2+1)) {
-      case 0b00:
-        enabled = false;
-        break;
-      case 0b01:
-        enabled = priv;
-        break;
-      case 0b10:
-        throw Exception(ExceptionType::UNPREDICTABLE);
-        break;
-      case 0b11:
-        enabled = true;
-        break;
-    }
-
-    if (enabled && _HaveSecurityExt()) {
-      if (!secure && !(InternalLoad32(REG_NSACR) & BIT(cp))) {
-        enabled = false;
-        forceToSecure = true;
-      }
-    }
-
-    if (enabled && !!(InternalLoad32(REG_CPPWR) & BIT(cp*2))) {
-      enabled = false;
-      forceToSecure = !!(InternalLoad32(REG_CPPWR) & BIT(cp*2+1));
-    }
-
-    return {enabled, secure || forceToSecure};
-  }
-
-  /* _GetMemI {{{3
-   * --------
-   */
-  uint16_t _GetMemI(uint32_t addr) {
-    uint16_t value;
-    auto [excInfo, memAddrDesc] = _ValidateAddress(addr, AccType_IFETCH, _FindPriv(), _IsSecure(), false, true);
-    if (excInfo.fault == NoFault) {
-      bool error;
-      std::tie(error, value) = _GetMem(memAddrDesc, 2);
-      if (error) {
-        value = UINT16_MAX; // UNKNOWN
-        InternalOr32(REG_BFSR, REG_BFSR__IBUSERR);
-        excInfo = _CreateException(BusFault, false, false/*UNKNOWN*/);
-        TRACE("fetch failed\n");
-      }
-    } else TRACE("fetch addr validate failed\n");
-
-    _HandleException(excInfo);
-    if (_IsDWTEnabled())
-      _DWT_InstructionMatch(addr);
-    return value;
-  }
-
-  /* _ExecutionPriority {{{3
-   * ------------------
-   */
-  int _ExecutionPriority() {
-    int boostedPri = _HighestPri();
-
-    int priSNsPri = _RestrictedNSPri();
-    if (_HaveMainExt()) {
-      if (GETBITS(_s.basepriNS, 0, 7)) {
-        uint32_t basepri        = GETBITS(_s.basepriNS, 0, 7);
-        uint32_t subGroupShift  = GETBITSM(InternalLoad32(REG_AIRCR_NS), REG_AIRCR__PRIGROUP);
-        uint32_t groupValue     = 2U<<subGroupShift;
-        uint32_t subGroupValue  = basepri % groupValue;
-        boostedPri              = basepri - subGroupValue;
-        if (InternalLoad32(REG_AIRCR_S) & REG_AIRCR__PRIS)
-          boostedPri = (boostedPri>>1) + priSNsPri;
-      }
-
-      if (GETBITS(_s.basepriS, 0, 7)) {
-        uint32_t basepri        = GETBITS(_s.basepriS, 0, 7);
-        uint32_t subGroupShift  = GETBITSM(InternalLoad32(REG_AIRCR_S), REG_AIRCR__PRIGROUP);
-        uint32_t groupValue     = 2U<<subGroupShift;
-        uint32_t subGroupValue  = basepri % groupValue;
-        basepri                 = basepri - subGroupValue;
-        if (boostedPri > basepri)
-          boostedPri = basepri;
-      }
-    }
-
-    if (_s.primaskNS & 1) {
-      if (!(InternalLoad32(REG_AIRCR_S) & REG_AIRCR__PRIS))
-        boostedPri = 0;
-      else if (boostedPri > priSNsPri)
-        boostedPri = priSNsPri;
-    }
-
-    if (_s.primaskS & 1)
-      boostedPri = 0;
-
-    if (_HaveMainExt()) {
-      if (_s.faultmaskNS & 1) {
-        if (!(InternalLoad32(REG_AIRCR) & REG_AIRCR__BFHFNMINS)) {
-          if (!(InternalLoad32(REG_AIRCR_S) & REG_AIRCR__PRIS))
-            boostedPri = 0;
-          else if (boostedPri > priSNsPri)
-            boostedPri = priSNsPri;
-        } else
-          boostedPri = -1;
-      }
-
-      if (_s.faultmaskS & 1)
-        boostedPri = !(InternalLoad32(REG_AIRCR) & REG_AIRCR__BFHFNMINS) ? -1 : -3;
-    }
-
-    int rawExecPri = _RawExecutionPriority();
-    return boostedPri < rawExecPri ? boostedPri : rawExecPri;
-  }
-
-  /* _SecurityCheck {{{3
-   * --------------
-   */
-  SAttributes _SecurityCheck(uint32_t addr, bool isInstrFetch, bool isSecure) {
-    SAttributes result = {};
-
-    bool idauExempt = false;
-    bool idauNs = true;
-    bool idauNsc = true;
-
-    if (IMPL_DEF_IDAU_PRESENT) {
-      //TODO
-    }
-
-    if (isInstrFetch && GETBITS(addr,28,31) == 0b1111) {
-      // Use default attributes defined above.
-    } else if (   idauExempt
-               || (isInstrFetch && GETBITS(addr,28,31) == 0b1110)
-               || (addr >= 0xE000'0000 && addr <= 0xE000'2FFF)
-               || (addr >= 0xE000'E000 && addr <= 0xE000'EFFF)
-               || (addr >= 0xE002'E000 && addr <= 0xE002'EFFF)
-               || (addr >= 0xE004'0000 && addr <= 0xE004'1FFF)
-               || (addr >= 0xE00F'F000 && addr <= 0xE00F'FFFF)) {
-      result.ns       = !isSecure;
-      result.irvalid  = false;
-    } else {
-      if (InternalLoad32(REG_SAU_CTRL) & REG_SAU_CTRL__ENABLE) {
-        bool multiRegionHit = false;
-        uint32_t numRegion = GETBITSM(InternalLoad32(REG_SAU_TYPE), REG_SAU_TYPE__SREGION);
-        for (int r=0; r<numRegion; ++r) {
-          auto [rbar,rlar] = _InternalLoadSauRegion(r);
-          if (rlar & REG_SAU_RLAR__ENABLE) {
-            uint32_t baseAddr   = (GETBITSM(rbar, REG_SAU_RBAR__BADDR) << 5) | 0b00000;
-            uint32_t limitAddr  = (GETBITSM(rlar, REG_SAU_RLAR__LADDR) << 5) | 0b11111;
-            if (baseAddr <= addr && limitAddr >= addr) {
-              if (result.srvalid)
-                multiRegionHit = true;
-              else {
-                result.ns       =  !(rlar & REG_SAU_RLAR__NSC);
-                result.nsc      = !!(rlar & REG_SAU_RLAR__NSC);
-                result.srvalid  = true;
-                result.sregion  = r & 0xFF;
-              }
-            }
-          }
-        }
-        if (multiRegionHit) {
-          result.ns       = false;
-          result.nsc      = false;
-          result.sregion  = 0;
-          result.srvalid  = false;
-        }
-      } else if (InternalLoad32(REG_SAU_CTRL) & REG_SAU_CTRL__ALLNS)
-        result.ns = true;
-
-      if (!idauNs) {
-        if (result.ns || (!idauNsc && result.nsc)) {
-          result.ns   = false;
-          result.nsc  = idauNsc;
-        }
-      }
-    }
-
-    return result;
-  }
+  // }}}3
 
 private:
   CpuState _s{};
