@@ -46,6 +46,20 @@
  * ============================================================================
  * TODO LIST:
  *  IMPL_DEF_OVERRIDDEN_EXCEPTIONS_PENDED
+ *  _InternalLoadMpu/Sau
+ *  _InstructionSynchronizationBarrier
+ *  _ExternalInvasiveDebugEnabled
+ *  _ExternalNoninvasiveDebugEnabled
+ *  _ExternalSecureInvasiveDebugEnabled
+ *  _ExternalSecureSelfHostedDebugEnabled
+ *  _ClearExclusiveByAddress
+ *  _DWT_DataAddressMatch
+ *  _DWT_DataValueMatch
+ *  _IsDWTConfigUnpredictable
+ *  _SleepOnExit
+ *  _SCS_UpdateStatusRegs
+ *  _DWT_InstructionMatch
+ *  Instructions
  */
 
 /* Simulator Debugging and Tracing Utilities {{{2
@@ -613,6 +627,10 @@ struct IDevice {
   virtual int Store32(phys_t addr, uint32_t v) = 0;
   virtual int Store16(phys_t addr, uint16_t v) = 0;
   virtual int Store8(phys_t addr, uint8_t v) = 0;
+
+  virtual std::tuple<bool, bool, bool, uint8_t, bool> IDAUCheck(uint32_t addr) {
+    return {false, true, true, 0, false};
+  }
 };
 
 /* Emulator {{{2
@@ -620,7 +638,8 @@ struct IDevice {
  */
 template<typename Device=IDevice>
 struct Emulator {
-  Emulator(Device &dev) :_dev(dev) {
+  Emulator(Device &dev, int maxExc=NUM_EXC-1) :_dev(dev), _maxExc(maxExc) {
+    ASSERT(maxExc < NUM_EXC);
     _TakeReset();
   }
 
@@ -3472,7 +3491,7 @@ private:
    * -----------
    */
   bool _IsIrqValid(int e) {
-    return true; // TODO
+    return e >= 16 && e <= _maxExc;
   }
 
   /* _PopStack {{{4
@@ -4804,9 +4823,8 @@ private:
     bool idauNs = true;
     bool idauNsc = true;
 
-    if (IMPL_DEF_IDAU_PRESENT) {
-      //TODO
-    }
+    if (IMPL_DEF_IDAU_PRESENT)
+      std::tie(idauExempt, idauNs, idauNsc, result.iregion, result.irvalid) = _IDAUCheck(addr & ~BITS(0,4));
 
     if (isInstrFetch && GETBITS(addr,28,31) == 0b1111) {
       // Use default attributes defined above.
@@ -4858,6 +4876,13 @@ private:
     }
 
     return result;
+  }
+
+  /* _IDAUCheck {{{4
+   * ----------
+   */
+  std::tuple<bool, bool, bool, uint8_t, bool> _IDAUCheck(uint32_t addr) {
+    return _dev.IDAUCheck(addr);
   }
 
   /* _DecodeExecute {{{3
@@ -6243,6 +6268,7 @@ private:
   CpuState _s{};
   CpuNest  _n{};
   Device  &_dev;
+  int      _maxExc;
 };
 
 /* Test Driver                                                             {{{1
