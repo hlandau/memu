@@ -37,7 +37,7 @@
 #define unlikely(Expr)    (__builtin_expect(!!(Expr), 0))
 #define UNREACHABLE()     do { __builtin_unreachable(); } while(0)
 
-#define NUM_EXC 511
+#define NUM_EXC 512
 
 #define UNDEFINED_VAL(X)  (X)
 #define UNKNOWN_VAL(X)    (X)
@@ -465,6 +465,10 @@ struct CpuState {
   char curCondOverride; // _CurrentCond()
 };
 
+struct CpuNest {
+  uint32_t fpdscrS{}, fpdscrNS{}, fpccrS{BIT(2)|BIT(30)|BIT(31)}, fpccrNS{BIT(2)|BIT(30)|BIT(31)}, fpcarS{}, fpcarNS{}, vtorS{0x2000'4000}, vtorNS{0x2000'4000}, sauCtrl{}, mpuTypeS{}, mpuTypeNS{}, mpuCtrlS{}, mpuCtrlNS{}, mpuMair0S{}, mpuMair0NS{}, mpuMair1S{}, mpuMair1NS{}, aircrS{}, aircrNS{}, demcrS{}, demcrNS{}, dhcsrS{}, dhcsrNS{}, dauthCtrl{}, mmfsrS{}, mmfsrNS{}, shcsrS{}, shcsrNS{}, shpr1S{}, shpr1NS{}, hfsrS{}, hfsrNS{}, ufsrS{}, ufsrNS{}, fpCtrl{}, nvicNonSecure[16]{}, nvicIntrPrio[124]{};
+};
+
 #define CONTROL__NPRIV    BIT(0)
 #define CONTROL__SPSEL    BIT(1)
 #define CONTROL__FPCA     BIT(2)
@@ -577,8 +581,191 @@ private:
   static bool _IsUNDEFINED(const Exception &e) { return e.GetType() == ExceptionType::UNDEFINED; }
   static bool _IsExceptionTaken(const Exception &e) { return e.GetType() == ExceptionType::EndOfInstruction; }
 
-  uint32_t InternalLoad32(phys_t addr) { return _dev.InternalLoad32(addr); }
-  void InternalStore32(phys_t addr, uint32_t v) { _dev.InternalStore32(addr, v); }
+  void _NestReset() {
+  }
+
+  // {targetNS, targetRAZWI, targetFault}
+  std::tuple<bool,bool,bool> _NestAccessClassify(phys_t addr, bool isPriv, bool isSecure) {
+    bool isAltSpace = !!(addr & 0x2'0000);
+    uint8_t code =
+      (((uint32_t)isSecure  ) << 2)
+    | (((uint32_t)isPriv    ) << 1)
+    | (((uint32_t)isAltSpace) << 0)
+      ;
+
+    bool targetNS     = false;
+    bool targetRAZWI  = false;
+    bool targetFault  = false;
+    bool isStir       = ((addr & ~0x2'0000U) == 0xE000'EF00);
+
+    // RAZ/WI: Read as Zero, Writes Ignored
+    // RES0:   Should be Zero or Preserved (SBZP)
+    //
+    //                                        SE                          !SE
+    //                                        --------------------------  --------------------------
+    // SECURE     PRIV  ACCESS TO 0xE000_xxxx Secure space                Secure space
+    // SECURE     PRIV  ACCESS TO 0xE002_xxxx Non-Secure space            RAZ/WI
+    // SECURE     NPRIV ACCESS TO 0xE000_xxxx BusFault (STIR: Secure sp)  BusFault (STIR: Secure sp)
+    // SECURE     NPRIV ACCESS TO 0xE002_xxxx BusFault                    BusFault
+    // NON-SECURE PRIV  ACCESS TO 0xE000_xxxx Non-Secure space            Secure space
+    // NON-SECURE PRIV  ACCESS TO 0xE002_xxxx RES0                        RAZ/WI
+    // NON-SECURE NPRIV ACCESS TO 0xE000_xxxx BusFault (STIR: NS sp)      BusFault (STIR: Secure sp)
+    // NON-SECURE NPRIV ACCESS TO 0xE002_xxxx BusFault                    BusFault
+    //
+    // INTERNAL         ACCESS TO 0xE000_xxxx Secure space                Secure space
+    // INTERNAL         ACCESS TO 0xE002_xxxx Non-Secure space            [TODO] Non-Secure space
+
+    //       SPA    S=Secure?  P=Privileged?  A=Alt Space?
+    switch (code) {
+      case 0b110: targetNS = false; break;
+      case 0b111: if (_HaveSecurityExt()) targetNS = true; else targetRAZWI = true; break;
+      case 0b100: if (isStir) targetNS = false; else targetFault = true ; break;
+      case 0b101: targetFault = true; break; // ?
+      case 0b010: targetNS = _HaveSecurityExt(); break;
+      case 0b011: targetRAZWI = true; break;
+      case 0b000: if (isStir) targetNS = _HaveSecurityExt(); else targetFault = true; break;
+      case 0b001: targetFault = true; break;
+    }
+
+    return {targetNS, targetRAZWI, targetFault};
+  }
+
+  // Returns nonzero for BusFault.
+  int _NestLoad32(phys_t addr, bool isPriv, bool isSecure, uint32_t &v) {
+    auto [targetNS, targetRAZWI, targetFault] = _NestAccessClassify(addr, isPriv, isSecure);
+
+    if (targetFault)
+      return -1;
+
+    if (targetRAZWI)
+      v = 0;
+    else if (targetNS)
+      v = _NestLoad32Actual(addr |  0x2'0000U);
+    else
+      v = _NestLoad32Actual(addr & ~0x2'0000U);
+
+    return 0;
+  }
+
+  uint32_t _NestLoad32Actual(phys_t addr) {
+    phys_t baddr = addr & ~0x2'0000U;
+
+    switch (addr) {
+      case REG_FPDSCR_S:      return _n.fpdscrS;
+      case REG_FPDSCR_NS:     return _n.fpdscrNS;
+      case REG_FPCCR_S:       return _n.fpccrS;
+      case REG_FPCCR_NS:      return _n.fpccrNS;
+      case REG_FPCAR_S:       return _n.fpcarS;
+      case REG_FPCAR_NS:      return _n.fpcarNS;
+      case REG_VTOR_S:        return _n.vtorS;
+      case REG_VTOR_NS:       return _n.vtorNS;
+      case REG_SAU_CTRL:      return _n.sauCtrl;
+      case REG_MPU_TYPE_S:    return _n.mpuTypeS;
+      case REG_MPU_TYPE_NS:   return _n.mpuTypeNS;
+      case REG_MPU_CTRL_S:    return _n.mpuCtrlS;
+      case REG_MPU_CTRL_NS:   return _n.mpuCtrlNS;
+      case REG_MPU_MAIR0_S:   return _n.mpuMair0S;
+      case REG_MPU_MAIR0_NS:  return _n.mpuMair0NS;
+      case REG_MPU_MAIR1_S:   return _n.mpuMair1S;
+      case REG_MPU_MAIR1_NS:  return _n.mpuMair1NS;
+      case REG_AIRCR_S:       return _n.aircrS;
+      case REG_AIRCR_NS:      return _n.aircrNS;
+      case REG_DEMCR:         return _n.demcrS;
+      case REG_DEMCR_NS:      return _n.demcrNS;
+      case REG_DHCSR:         return _n.dhcsrS;
+      case REG_DHCSR_NS:      return _n.dhcsrNS;
+      case REG_DAUTHCTRL:     return _n.dauthCtrl;
+      case REG_MMFSR_S:       return _n.mmfsrS;
+      case REG_MMFSR_NS:      return _n.mmfsrNS;
+      case REG_SHCSR_S:       return _n.shcsrS;
+      case REG_SHCSR_NS:      return _n.shcsrNS;
+      case REG_SHPR1_S:       return _n.shpr1S;
+      case REG_SHPR1_NS:      return _n.shpr1NS;
+      case REG_HFSR_S:        return _n.hfsrS;
+      case REG_HFSR_NS:       return _n.hfsrNS;
+      case REG_UFSR_S:        return _n.ufsrS;
+      case REG_UFSR_NS:       return _n.ufsrNS;
+      case REG_FP_CTRL:       return _n.fpCtrl;
+      default:
+        if (baddr >= 0xE000E200 && baddr < 0xE000E240)
+          return _NestLoadNvicPendingReg((addr/4)&0xF, /*secure=*/!(addr & 0x2'0000));
+
+        if (addr >= 0xE000E380 && addr < 0xE000E3C0)
+          return _n.nvicNonSecure[(addr/4)&0xF];
+
+        if (addr >= 0xE000E400 && addr < 0xE000E5F0)
+          return _n.nvicIntrPrio[(addr - 0xE000E400)/4];
+
+        printf("Unsupported nest load 0x%08x\n", addr);
+        abort();
+    }
+  }
+
+  uint32_t _NestLoadNvicPendingReg(uint32_t groupNo, bool isSecure) {
+    uint32_t v      = 0;
+    uint32_t itns   = _n.nvicNonSecure[groupNo];
+    int      limit  = (groupNo == 15) ? 15 : 32;
+    for (int i=0; i<limit; ++i)
+      if (_s.excPending[16+groupNo*32+i] && (isSecure || GETBIT(itns, i)))
+        v |= BIT(i);
+    return v;
+  }
+
+  int _NestStore32(phys_t addr, bool isPriv, bool isSecure, uint32_t v) {
+    auto [targetNS, targetRAZWI, targetFault] = _NestAccessClassify(addr, isPriv, isSecure);
+
+    if (targetFault)
+      return -1;
+
+    if (targetRAZWI)
+      return 0;
+
+    if (targetNS)
+      _NestStore32Actual(addr |  0x2'0000U, v);
+    else
+      _NestStore32Actual(addr & ~0x2'0000U, v);
+
+    return 0;
+  }
+
+  void _NestStore32Actual(phys_t addr, uint32_t v) {
+    phys_t baddr = addr & ~0x2'0000U;
+
+    switch (addr) {
+      case REG_FPDSCR_S:  _n.fpdscrS  = v; break;
+      case REG_FPDSCR_NS: _n.fpdscrNS = v; break;
+      case REG_FPCCR_S:   _n.fpccrS   = v; break;
+      case REG_FPCCR_NS:  _n.fpccrNS  = v; break;
+      case REG_FPCAR_S:   _n.fpcarS   = v; break;
+      case REG_FPCAR_NS:  _n.fpcarNS  = v; break;
+      case REG_VTOR_S:    _n.vtorS    = v; break;
+      case REG_VTOR_NS:   _n.vtorNS   = v; break;
+      case REG_DEMCR:     _n.demcrS   = v; break;
+      case REG_DEMCR_NS:  _n.demcrNS  = v; break;
+      case REG_DHCSR:     _n.dhcsrS   = v; break;
+      case REG_DHCSR_NS:  _n.dhcsrNS  = v; break;
+      case REG_MMFSR_S:   _n.mmfsrS   = v; break;
+      case REG_MMFSR_NS:  _n.mmfsrNS  = v; break;
+      case REG_HFSR_S:    _n.hfsrS    = v; break;
+      case REG_HFSR_NS:   _n.hfsrNS   = v; break;
+      case REG_UFSR_S:    _n.ufsrS    = v; break;
+      case REG_UFSR_NS:   _n.ufsrNS   = v; break;
+      default:
+        printf("Unsupported nest store 0x%08x <- 0x%08x\n", addr, v);
+        abort();
+    }
+  }
+
+  uint32_t InternalLoad32(phys_t addr) {
+    //return _dev.InternalLoad32(addr);
+    ASSERT(addr >= 0xE000'0000);
+    return _NestLoad32Actual(addr);
+  }
+  void InternalStore32(phys_t addr, uint32_t v) {
+    //_dev.InternalStore32(addr, v);
+    ASSERT(addr >= 0xE000'0000);
+    _NestStore32Actual(addr, v);
+  }
   void InternalOr32(phys_t addr, uint32_t x) {
     InternalStore32(addr, InternalLoad32(addr) | x);
   }
@@ -2398,7 +2585,6 @@ private:
   }
   int _HaveSysTick() { return 2; }
   uint32_t _NextInstrAddr() {
-    TRACE("NIA ch=%d thisAddr=0x%x thisLen=%d ovr=0x%x\n", _s.pcChanged, _ThisInstrAddr(), _ThisInstrLength(), _s.nextInstrAddr);
     if (_s.pcChanged)
       return _s.nextInstrAddr;
     else
@@ -2406,26 +2592,65 @@ private:
   }
   int _ThisInstrLength() { return _s.thisInstrLength; }
   uint16_t _GetMemI(uint32_t addr);
+  int _Load8(AddressDescriptor memAddrDesc, uint8_t &v) {
+    if (memAddrDesc.physAddr >= 0xE000'0000 && memAddrDesc.physAddr < 0xE010'0000)
+      // Non-32 bit accesses to SCS are UNPREDICTABLE; generate BusFault.
+      return 1;
+
+    return _dev.Load8(memAddrDesc.physAddr, v);
+  }
+  int _Load16(AddressDescriptor memAddrDesc, uint16_t &v) {
+    if (memAddrDesc.physAddr >= 0xE000'0000 && memAddrDesc.physAddr < 0xE010'0000)
+      // Non-32 bit accesses to SCS are UNPREDICTABLE; generate BusFault.
+      return 1;
+
+    return _dev.Load16(memAddrDesc.physAddr, v);
+  }
+  int _Load32(AddressDescriptor memAddrDesc, uint32_t &v) {
+    if (memAddrDesc.physAddr >= 0xE000'0000 && memAddrDesc.physAddr < 0xE010'0000)
+      return _NestLoad32(memAddrDesc.physAddr, memAddrDesc.accAttrs.isPriv, !memAddrDesc.memAttrs.ns, v);
+
+    return _dev.Load32(memAddrDesc.physAddr, v);
+  }
+  int _Store8(AddressDescriptor memAddrDesc, uint8_t v) {
+    if (memAddrDesc.physAddr >= 0xE000'0000 && memAddrDesc.physAddr < 0xE010'0000)
+      // Non-32 bit accesses to SCS are UNPREDICTABLE; generate BusFault.
+      return 1;
+
+    return _dev.Store8(memAddrDesc.physAddr, v);
+  }
+  int _Store16(AddressDescriptor memAddrDesc, uint16_t v) {
+    if (memAddrDesc.physAddr >= 0xE000'0000 && memAddrDesc.physAddr < 0xE010'0000)
+      // Non-32 bit accesses to SCS are UNPREDICTABLE; generate BusFault.
+      return 1;
+
+    return _dev.Store16(memAddrDesc.physAddr, v);
+  }
+  int _Store32(AddressDescriptor memAddrDesc, uint32_t v) {
+    if (memAddrDesc.physAddr >= 0xE000'0000 && memAddrDesc.physAddr < 0xE010'0000)
+      return _NestStore32(memAddrDesc.physAddr, memAddrDesc.accAttrs.isPriv, !memAddrDesc.memAttrs.ns, v);
+
+    return _dev.Store32(memAddrDesc.physAddr, v);
+  }
   std::tuple<bool,uint32_t> _GetMem(AddressDescriptor memAddrDesc, int size) {
-    uint32_t addr = memAddrDesc.physAddr;
     switch (size) {
       case 1: {
         uint8_t v;
-        if (_dev.Load8(addr, v))
+        if (_Load8(memAddrDesc, v))
           return {true,0};
         else
           return {false,v};
       }
       case 2: {
         uint16_t v;
-        if (_dev.Load16(addr, v))
+        if (_Load16(memAddrDesc, v))
           return {true,0};
         else
           return {false,v};
       }
       case 4: {
         uint32_t v;
-        if (_dev.Load32(addr, v))
+        if (_Load32(memAddrDesc, v))
           return {true,0};
         else
           return {false,v};
@@ -2436,14 +2661,13 @@ private:
     }
   }
   bool _SetMem(AddressDescriptor memAddrDesc, int size, uint32_t v) {
-    uint32_t addr = memAddrDesc.physAddr;
     switch (size) {
       case 1:
-        return !!_dev.Store8(addr, (uint8_t)v);
+        return !!_Store8(memAddrDesc, (uint8_t)v);
       case 2:
-        return !!_dev.Store16(addr, (uint16_t)v);
+        return !!_Store16(memAddrDesc, (uint16_t)v);
       case 4:
-        return !!_dev.Store32(addr, (uint32_t)v);
+        return !!_Store32(memAddrDesc, (uint32_t)v);
       default:
         assert(false);
     }
@@ -4218,6 +4442,7 @@ private:
 
 private:
   CpuState _s{};
+  CpuNest  _n{};
   IDevice &_dev;
 };
 
@@ -4528,6 +4753,7 @@ void Emulator::_TakeReset() {
     _SetSP_Main_NonSecure(sp);
 
   // Begin Implementation-Specific Resets
+  _NestReset(); // Implementation-Specific
   _s.curCondOverride = -1;
   // End Implementation-Specific Resets
 
@@ -4828,6 +5054,7 @@ void Emulator::_InstructionAdvance(bool instExecOk) {
     }
   }
 
+    TRACE("NIA Y ch=%d thisAddr=0x%x thisLen=%d ovr=0x%x\n", _s.pcChanged, _ThisInstrAddr(), _ThisInstrLength(), _s.nextInstrAddr);
   // If there is a pending exception with sufficient priority take it now. This
   // is done before committing PC and ITSTATE changes caused by the previous
   // instruction so that calls to ThisInstrAddr(), NextInstrAddr(),
@@ -4836,6 +5063,7 @@ void Emulator::_InstructionAdvance(bool instExecOk) {
   // stack.
   auto [takeException, exception, excIsSecure] = _PendingExceptionDetails();
   if (takeException) {
+    TRACE("TAKE EXC %d\n", exception);
     // If a fault occurred during an exception return then the exception
     // stack frame will already be on the stack, as a resut entry to the
     // next exception is treated as if it were a tail chain.
@@ -4866,6 +5094,7 @@ void Emulator::_InstructionAdvance(bool instExecOk) {
   // Only advance the PC and ISTATE if not locked up.
   if (!(InternalLoad32(REG_DHCSR) & REG_DHCSR__S_LOCKUP)) {
     // Commit PC and ITSTATE changes ready for the next instruction.
+    TRACE("NIA Z ch=%d thisAddr=0x%x thisLen=%d ovr=0x%x\n", _s.pcChanged, _ThisInstrAddr(), _ThisInstrLength(), _s.nextInstrAddr);
     _s.pc = _NextInstrAddr();
     _s.pcChanged = false;
     if (_HaveMainExt()) {
@@ -5562,7 +5791,7 @@ private:
       // QUADSPI Registers
       return nullptr;
     } else if (addr >= 0xE000'0000 && addr <= 0xFFFF'FFFF) {
-      return &_core;
+      return nullptr; //&_core;
     } else
       return nullptr;
   }
