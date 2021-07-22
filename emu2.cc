@@ -4,6 +4,10 @@
 #include <exception>
 #include <tuple>
 
+/* Preprocessor Utilities                                                  {{{1
+ * ============================================================================
+ */
+
 #define PP_CAT_(X,Y) X##Y
 #define PP_CAT(X,Y) PP_CAT_(X,Y)
 
@@ -37,11 +41,14 @@
 #define unlikely(Expr)    (__builtin_expect(!!(Expr), 0))
 #define UNREACHABLE()     do { __builtin_unreachable(); } while(0)
 
-#define NUM_EXC 512
 
-#define UNDEFINED_VAL(X)  (X)
-#define UNKNOWN_VAL(X)    (X)
+/* ARMv8-M Simulator                                                       {{{1
+ * ============================================================================
+ */
 
+/* Simulator Debugging and Tracing Utilities {{{2
+ * -----------------------------------------
+ */
 #ifndef EMU_TRACE
 #  define EMU_TRACE 0
 #endif
@@ -61,6 +68,19 @@ struct EmuTraceBlock {
 
 #define ASSERT(Cond) do { if unlikely (!(Cond)) { printf("assertion fail on line %u: %s\n", __LINE__, #Cond); abort(); } } while(0)
 
+/* Simulator Definitions {{{2
+ * =====================
+ */
+// Maximum number of exceptions an ARMv8-M implementation may support.
+#define NUM_EXC 512
+
+// Where a value is defined as UNDEFINED or UNKNOWN in the ISA psuedocode, we
+// choose a specific value X and wrap it in one of these macros here as
+// exposition.
+#define UNDEFINED_VAL(X)  (X)
+#define UNKNOWN_VAL(X)    (X)
+
+// The standard exceptions. Exceptions 16 and higher are external interrupts.
 enum {
   NoFault      =  0,
   Reset        =  1,
@@ -87,6 +107,15 @@ struct ExcInfo {
   bool termInst;
 };
 
+using phys_t = uint32_t;
+
+/* Exception {{{3
+ * ---------
+ */
+// These constitute the various reasons for which normal control flow can be
+// interrupted inside our simulator. 'Exception' here means C++ exception, not
+// ARM exception; C++ exceptions may or may not be related to the handling of
+// an ARM exception.
 enum class ExceptionType {
   SEE,
   UNDEFINED,
@@ -104,6 +133,9 @@ private:
   ExceptionType _type;
 };
 
+/* Implementation Defined Flags {{{3
+ * ----------------------------
+ */
 #define IMPL_DEF_DECODE_CP_SPACE            1
 #define IMPL_DEF_EARLY_SG_CHECK             1
 #define IMPL_DEF_SPLIM_CHECK_UNPRED_INSTR   1
@@ -113,6 +145,9 @@ private:
 #define IMPL_DEF_TAIL_CHAINING_SUPPORTED    1
 #define IMPL_DEF_DROP_PREV_GEN_EXC          1
 
+/* Register Definitions {{{3
+ * --------------------
+ */
 #define SECREG(Name) (_IsSecure() ? Name##_S : Name##_NS)
 
 #define REG_DHCSR     0xE000'EDF0
@@ -377,14 +412,6 @@ private:
 
 #define REG_NVIC_ITNSn(N) (0xE000'E380+4*(N))
 
-#define EXC_RETURN__ES      BIT ( 0)
-#define EXC_RETURN__SPSEL   BIT ( 2)
-#define EXC_RETURN__MODE    BIT ( 3)
-#define EXC_RETURN__FTYPE   BIT ( 4)
-#define EXC_RETURN__DCRS    BIT ( 5)
-#define EXC_RETURN__S       BIT ( 6)
-#define EXC_RETURN__PREFIX  BITS(24,31)
-
 #define REG_SHPR1_S       0xE000'ED18
 #define REG_SHPR1_NS      0xE002'ED18
 #define   REG_SHPR1__PRI_4  BITS( 0, 7)
@@ -413,62 +440,6 @@ private:
 #define PRIMASK__PM     BIT(0)
 #define FAULTMASK__FM   BIT(0)
 
-using phys_t = uint32_t;
-
-enum PEMode {
-  PEMode_Thread,
-  PEMode_Handler,
-};
-
-enum SecurityState {
-  SecurityState_NonSecure,
-  SecurityState_Secure,
-};
-
-enum RName {
-  RName0, RName1, RName2, RName3, RName4, RName5, RName6, RName7, RName8, RName9, RName10, RName11, RName12,
-  RNameSP_Main_NonSecure, RNameSP_Process_NonSecure, RName_LR, RName_PC, RNameSP_Main_Secure, RNameSP_Process_Secure,
-  _RName_Max
-};
-
-enum SRType {
-  SRType_LSL,
-  SRType_LSR,
-  SRType_ASR,
-  SRType_ROR,
-  SRType_RRX,
-};
-
-struct CpuState {
-  union {
-    struct {
-      uint32_t r0,r1,r2,r3,r4,r5,r6,r7,r8,r9,r10,r11,r12,spMainNS,spProcessNS,lr,pc,spMainS,spProcessS;
-    };
-    uint32_t r[_RName_Max];
-  };
-  uint32_t xpsr, spNS, psplimNS, psplimS, msplimNS, msplimS, fpscr;
-  uint32_t primaskNS, primaskS, faultmaskNS, faultmaskS, basepriNS, basepriS, controlNS, controlS;
-  SecurityState curState;
-  uint8_t excActive[NUM_EXC];
-  uint8_t excPending[NUM_EXC];
-  uint64_t d[16];
-  bool event, pendingReturnOperation;
-  bool itStateChanged;
-  bool pcChanged;
-  uint8_t nextInstrITState;
-  uint32_t nextInstrAddr;
-  uint32_t thisInstr;
-  uint8_t  thisInstrLength;
-  uint32_t thisInstrDefaultCond;
-
-  // Implementation-specific state
-  char curCondOverride; // _CurrentCond()
-};
-
-struct CpuNest {
-  uint32_t fpdscrS{}, fpdscrNS{}, fpccrS{BIT(2)|BIT(30)|BIT(31)}, fpccrNS{BIT(2)|BIT(30)|BIT(31)}, fpcarS{}, fpcarNS{}, vtorS{0x2000'4000}, vtorNS{0x2000'4000}, sauCtrl{}, mpuTypeS{}, mpuTypeNS{}, mpuCtrlS{}, mpuCtrlNS{}, mpuMair0S{}, mpuMair0NS{}, mpuMair1S{}, mpuMair1NS{}, aircrS{}, aircrNS{}, demcrS{}, demcrNS{}, dhcsrS{}, dhcsrNS{}, dauthCtrl{}, mmfsrS{}, mmfsrNS{}, shcsrS{}, shcsrNS{}, shpr1S{}, shpr1NS{}, hfsrS{}, hfsrNS{}, ufsrS{}, ufsrNS{}, fpCtrl{}, nvicNonSecure[16]{}, nvicIntrPrio[124]{};
-};
-
 #define CONTROL__NPRIV    BIT(0)
 #define CONTROL__SPSEL    BIT(1)
 #define CONTROL__FPCA     BIT(2)
@@ -495,13 +466,43 @@ struct CpuNest {
 #define RETPSR__SFPA      BIT (20)
 #define RETPSR__T         BIT (24)
 
-struct IDevice {
-  virtual int Load32(phys_t addr, uint32_t &v) = 0;
-  virtual int Load16(phys_t addr, uint16_t &v) = 0;
-  virtual int Load8(phys_t addr, uint8_t &v) = 0;
-  virtual int Store32(phys_t addr, uint32_t v) = 0;
-  virtual int Store16(phys_t addr, uint16_t v) = 0;
-  virtual int Store8(phys_t addr, uint8_t v) = 0;
+
+/* Special Values {{{3
+ * --------------
+ */
+#define EXC_RETURN__ES      BIT ( 0)
+#define EXC_RETURN__SPSEL   BIT ( 2)
+#define EXC_RETURN__MODE    BIT ( 3)
+#define EXC_RETURN__FTYPE   BIT ( 4)
+#define EXC_RETURN__DCRS    BIT ( 5)
+#define EXC_RETURN__S       BIT ( 6)
+#define EXC_RETURN__PREFIX  BITS(24,31)
+
+/* CPU State {{{3
+ * ---------
+ */
+enum PEMode {
+  PEMode_Thread,
+  PEMode_Handler,
+};
+
+enum SecurityState {
+  SecurityState_NonSecure,
+  SecurityState_Secure,
+};
+
+enum RName {
+  RName0, RName1, RName2, RName3, RName4, RName5, RName6, RName7, RName8, RName9, RName10, RName11, RName12,
+  RNameSP_Main_NonSecure, RNameSP_Process_NonSecure, RName_LR, RName_PC, RNameSP_Main_Secure, RNameSP_Process_Secure,
+  _RName_Max
+};
+
+enum SRType {
+  SRType_LSL,
+  SRType_LSR,
+  SRType_ASR,
+  SRType_ROR,
+  SRType_RRX,
 };
 
 enum MemType {
@@ -559,6 +560,54 @@ struct Permissions {
   uint8_t region;
 };
 
+struct CpuState {
+  union {
+    struct {
+      uint32_t r0,r1,r2,r3,r4,r5,r6,r7,r8,r9,r10,r11,r12,spMainNS,spProcessNS,lr,pc,spMainS,spProcessS;
+    };
+    uint32_t r[_RName_Max];
+  };
+  uint32_t xpsr, spNS, psplimNS, psplimS, msplimNS, msplimS, fpscr;
+  uint32_t primaskNS, primaskS, faultmaskNS, faultmaskS, basepriNS, basepriS, controlNS, controlS;
+  SecurityState curState;
+  uint8_t excActive[NUM_EXC];
+  uint8_t excPending[NUM_EXC];
+  uint64_t d[16];
+  bool event, pendingReturnOperation;
+  bool itStateChanged;
+  bool pcChanged;
+  uint8_t nextInstrITState;
+  uint32_t nextInstrAddr;
+  uint32_t thisInstr;
+  uint8_t  thisInstrLength;
+  uint32_t thisInstrDefaultCond;
+
+  // Implementation-specific state
+  char curCondOverride; // _CurrentCond()
+};
+
+/* Nest State {{{3
+ * ----------
+ */
+struct CpuNest {
+  uint32_t fpdscrS{}, fpdscrNS{}, fpccrS{BIT(2)|BIT(30)|BIT(31)}, fpccrNS{BIT(2)|BIT(30)|BIT(31)}, fpcarS{}, fpcarNS{}, vtorS{0x2000'4000}, vtorNS{0x2000'4000}, sauCtrl{}, mpuTypeS{}, mpuTypeNS{}, mpuCtrlS{}, mpuCtrlNS{}, mpuMair0S{}, mpuMair0NS{}, mpuMair1S{}, mpuMair1NS{}, aircrS{}, aircrNS{}, demcrS{}, demcrNS{}, dhcsrS{}, dhcsrNS{}, dauthCtrl{}, mmfsrS{}, mmfsrNS{}, shcsrS{}, shcsrNS{}, shpr1S{}, shpr1NS{}, hfsrS{}, hfsrNS{}, ufsrS{}, ufsrNS{}, fpCtrl{}, nvicNonSecure[16]{}, nvicIntrPrio[124]{};
+};
+
+/* IDevice {{{3
+ * -------
+ */
+struct IDevice {
+  virtual int Load32(phys_t addr, uint32_t &v) = 0;
+  virtual int Load16(phys_t addr, uint16_t &v) = 0;
+  virtual int Load8(phys_t addr, uint8_t &v) = 0;
+  virtual int Store32(phys_t addr, uint32_t v) = 0;
+  virtual int Store16(phys_t addr, uint16_t v) = 0;
+  virtual int Store8(phys_t addr, uint8_t v) = 0;
+};
+
+/* Emulator {{{2
+ * ========
+ */
 struct Emulator {
   Emulator(IDevice &dev) :_dev(dev) {
     _TakeReset();
@@ -4454,7 +4503,11 @@ private:
   IDevice &_dev;
 };
 
-/* _TopLevel {{{2
+/* Emulator: Additional Functions {{{2
+ * ==============================
+ */
+
+/* _TopLevel {{{3
  * ---------
  * Called once for each tick the PE is not in a sleep state. Handles all
  * instruction processing, including fetching the opcode, decode and execute.
@@ -4591,14 +4644,14 @@ void Emulator::_TopLevel() {
   }
 }
 
-/* _EndOfInstruction
+/* _EndOfInstruction {{{3
  * -----------------
  */
 void Emulator::_EndOfInstruction() {
   throw Exception(ExceptionType::EndOfInstruction);
 }
 
-/* _CreateException
+/* _CreateException {{{3
  * ----------------
  */
 ExcInfo Emulator::_CreateException(int exc, bool forceSecurity, bool isSecure, bool isSync) {
@@ -4649,6 +4702,9 @@ ExcInfo Emulator::_CreateException(int exc, bool forceSecurity, bool isSecure, b
   return info;
 }
 
+/* _UpdateSecureDebugEnable {{{3
+ * ------------------------
+ */
 void Emulator::_UpdateSecureDebugEnable() {
   /// DHCSR.S_SDE is frozen if the PE is in Debug state
   uint32_t dhcsr = InternalLoad32(REG_DHCSR);
@@ -4664,6 +4720,9 @@ void Emulator::_UpdateSecureDebugEnable() {
   }
 }
 
+/* _TakeReset {{{3
+ * ----------
+ */
 void Emulator::_TakeReset() {
   _s.curState = _HaveSecurityExt() ? SecurityState_Secure : SecurityState_NonSecure;
 
@@ -4774,6 +4833,9 @@ void Emulator::_TakeReset() {
   _s.pcChanged       = false;
 }
 
+/* _SteppingDebug {{{3
+ * --------------
+ */
 bool Emulator::_SteppingDebug() {
   // If halting debug is allowed and C_STEP is set, set C_HALT for the next instruction.
   uint32_t dhcsr = InternalLoad32(REG_DHCSR);
@@ -4791,6 +4853,9 @@ bool Emulator::_SteppingDebug() {
   return monStepEnabled && !!(demcr & REG_DEMCR__MON_STEP);
 }
 
+/* _FetchInstr {{{3
+ * -----------
+ */
 std::tuple<uint32_t,bool> Emulator::_FetchInstr(uint32_t addr) {
   uint32_t sgOpcode = 0xE97F'E97F;
 
@@ -4873,6 +4938,9 @@ std::tuple<uint32_t,bool> Emulator::_FetchInstr(uint32_t addr) {
   return {instr, isT16};
 }
 
+/* _GenerateDebugEventResponse {{{3
+ * ---------------------------
+ */
 bool Emulator::_GenerateDebugEventResponse() {
   if (_CanHaltOnEvent(_IsSecure())) {
     InternalOr32(REG_DFSR, REG_DFSR__BKPT);
@@ -4888,6 +4956,9 @@ bool Emulator::_GenerateDebugEventResponse() {
     return false;
 }
 
+/* _FPB_CheckBreakPoint {{{3
+ * --------------------
+ */
 bool Emulator::_FPB_CheckBreakPoint(uint32_t iaddr, int size, bool isIFetch, bool isSecure) {
   bool match = _FPB_CheckMatchAddress(iaddr);
   if (!match && size == 4 && _FPB_CheckMatchAddress(iaddr+2))
@@ -4895,6 +4966,9 @@ bool Emulator::_FPB_CheckBreakPoint(uint32_t iaddr, int size, bool isIFetch, boo
   return match;
 }
 
+/* _FPB_CheckMatchAddress {{{3
+ * ----------------------
+ */
 bool Emulator::_FPB_CheckMatchAddress(uint32_t iaddr) {
   if (!(InternalLoad32(REG_FP_CTRL) & REG_FP_CTRL__ENABLE))
     return false; // FPB not enabled
@@ -4915,6 +4989,9 @@ bool Emulator::_FPB_CheckMatchAddress(uint32_t iaddr) {
   return false;
 }
 
+/* _ExceptionDetails {{{3
+ * -----------------
+ */
 std::tuple<bool,bool> Emulator::_ExceptionDetails(int exc, bool isSecure, bool isSync) {
   bool escalateToHf, termInst, enabled, canEscalate;
 
@@ -4981,6 +5058,9 @@ std::tuple<bool,bool> Emulator::_ExceptionDetails(int exc, bool isSecure, bool i
   return {escalateToHf, termInst};
 }
 
+/* _HandleException {{{3
+ * ----------------
+ */
 void Emulator::_HandleException(const ExcInfo &excInfo) {
   if (excInfo.fault == NoFault)
     return;
@@ -5004,6 +5084,9 @@ void Emulator::_HandleException(const ExcInfo &excInfo) {
     _EndOfInstruction();
 }
 
+/* _InstructionAdvance {{{3
+ * -------------------
+ */
 void Emulator::_InstructionAdvance(bool instExecOk) {
   // Check for, and process any exception returns that were requested. This
   // must be done after the instruction has completed so any exceptions raised
@@ -5114,6 +5197,9 @@ void Emulator::_InstructionAdvance(bool instExecOk) {
   }
 }
 
+/* _ConditionHolds {{{3
+ * ---------------
+ */
 bool Emulator::_ConditionHolds(uint32_t cond) {
   bool result;
   switch ((cond>>1) & 0b111) {
@@ -5133,6 +5219,9 @@ bool Emulator::_ConditionHolds(uint32_t cond) {
   return result;
 }
 
+/* _SetMonStep {{{3
+ * -----------
+ */
 void Emulator::_SetMonStep(bool monStepActive) {
   if (!monStepActive)
     return;
@@ -5146,6 +5235,9 @@ void Emulator::_SetMonStep(bool monStepActive) {
   }
 }
 
+/* _ExceptionTargetsSecure {{{3
+ * -----------------------
+ */
 bool Emulator::_ExceptionTargetsSecure(int excNo, bool isSecure) {
   if (!_HaveSecurityExt())
     return false;
@@ -5195,6 +5287,9 @@ bool Emulator::_ExceptionTargetsSecure(int excNo, bool isSecure) {
   return targetSecure;
 }
 
+/* _IsCPInstruction {{{3
+ * ----------------
+ */
 std::tuple<bool, int> Emulator::_IsCPInstruction(uint32_t instr) {
   bool isCp = false;
   if ((instr & 0b11101111000000000000000000000000) == 0b11101110000000000000000000000000)
@@ -5207,6 +5302,9 @@ std::tuple<bool, int> Emulator::_IsCPInstruction(uint32_t instr) {
   return {isCp, cpNum};
 }
 
+/* _DWT_InstructionMatch {{{3
+ * ---------------------
+ */
 void Emulator::_DWT_InstructionMatch(uint32_t iaddr) {
   bool triggerDebugEvent = false;
   bool debugEvent = false;
@@ -5217,6 +5315,9 @@ void Emulator::_DWT_InstructionMatch(uint32_t iaddr) {
   assert(false); // TODO
 }
 
+/* _IsCPEnabled {{{3
+ * ------------
+ */
 std::tuple<bool, bool> Emulator::_IsCPEnabled(int cp, bool priv, bool secure) {
   bool enabled, forceToSecure = false;
 
@@ -5251,6 +5352,9 @@ std::tuple<bool, bool> Emulator::_IsCPEnabled(int cp, bool priv, bool secure) {
   return {enabled, secure || forceToSecure};
 }
 
+/* _GetMemI {{{3
+ * --------
+ */
 uint16_t Emulator::_GetMemI(uint32_t addr) {
   uint16_t value;
   auto [excInfo, memAddrDesc] = _ValidateAddress(addr, AccType_IFETCH, _FindPriv(), _IsSecure(), false, true);
@@ -5271,6 +5375,9 @@ uint16_t Emulator::_GetMemI(uint32_t addr) {
   return value;
 }
 
+/* _ExecutionPriority {{{3
+ * ------------------
+ */
 int Emulator::_ExecutionPriority() {
   int boostedPri = _HighestPri();
 
@@ -5326,6 +5433,9 @@ int Emulator::_ExecutionPriority() {
   return boostedPri < rawExecPri ? boostedPri : rawExecPri;
 }
 
+/* _SecurityCheck {{{3
+ * --------------
+ */
 SAttributes Emulator::_SecurityCheck(uint32_t addr, bool isInstrFetch, bool isSecure) {
   SAttributes result = {};
 
@@ -5389,6 +5499,9 @@ SAttributes Emulator::_SecurityCheck(uint32_t addr, bool isInstrFetch, bool isSe
   return result;
 }
 
+/* Test Driver                                                             {{{1
+ * ============================================================================
+ */
 #if 1
 struct RamDevice final :IDevice {
   RamDevice(phys_t base, size_t len) {
