@@ -63,6 +63,7 @@ struct EmuTraceBlock {
 #  define TRACE_BLOCK() EmuTraceBlock PP_CAT(_traceblk_,__COUNTER__)
 #  define TRACE(...) do { printf("T: "); for (size_t _traceI=0; _traceI<g_emuTraceIndent; ++_traceI) printf("  "); printf(__VA_ARGS__); } while(0)
 #else
+#  define TRACE_BLOCK()
 #  define TRACE(...) do {} while (0)
 #endif
 
@@ -108,6 +109,13 @@ struct ExcInfo {
 };
 
 using phys_t = uint32_t;
+
+#define UNDEFINED_DEC() do { throw Exception(ExceptionType::UNDEFINED); } while (0)
+#define TODO_DEC()      do { printf("warning: todo insn on line %u\n", __LINE__); UNDEFINED_DEC(); } while (0)
+  // For CONSTRAINED UNPREDICTABLE which we choose to implement as UNDEFINED
+#define CUNPREDICTABLE_UNDEFINED() UNDEFINED_DEC()
+#define CUNPREDICTABLE_UNALIGNED() do { _ThrowUnaligned(); } while (0)
+
 
 /* Exception {{{3
  * ---------
@@ -614,18 +622,38 @@ struct Emulator {
     _TakeReset();
   }
 
+  /* TopLevel {{{3
+   * --------
+   */
   void TopLevel() { _TopLevel(); }
 
 private:
+  /* _IsSEE {{{3
+   * ------
+   */
   static bool _IsSEE(const Exception &e) { return e.GetType() == ExceptionType::SEE; }
+
+  /* _IsUNDEFINED {{{3
+   * ------------
+   */
   static bool _IsUNDEFINED(const Exception &e) { return e.GetType() == ExceptionType::UNDEFINED; }
+
+  /* _IsExceptionTaken {{{3
+   * -----------------
+   */
   static bool _IsExceptionTaken(const Exception &e) { return e.GetType() == ExceptionType::EndOfInstruction; }
 
+  /* _NestReset {{{3
+   * ----------
+   */
   void _NestReset() {
     _n = CpuNest();
   }
 
-  // {targetNS, targetRAZWI, targetFault}
+  /* _NestAccessClassify {{{3
+   * -------------------
+   * {targetNS, targetRAZWI, targetFault}
+   */
   std::tuple<bool,bool,bool> _NestAccessClassify(phys_t addr, bool isPriv, bool isSecure) {
     bool isAltSpace = !!(addr & 0x2'0000);
     uint8_t code =
@@ -671,7 +699,10 @@ private:
     return {targetNS, targetRAZWI, targetFault};
   }
 
-  // Returns nonzero for BusFault.
+  /* _NestLoad32 {{{3
+   * -----------
+   * Returns nonzero for BusFault.
+   */
   int _NestLoad32(phys_t addr, bool isPriv, bool isSecure, uint32_t &v) {
     auto [targetNS, targetRAZWI, targetFault] = _NestAccessClassify(addr, isPriv, isSecure);
 
@@ -688,6 +719,9 @@ private:
     return 0;
   }
 
+  /* _NestLoad32Actual {{{3
+   * -----------------
+   */
   uint32_t _NestLoad32Actual(phys_t addr) {
     phys_t baddr = addr & ~0x2'0000U;
 
@@ -742,6 +776,9 @@ private:
     }
   }
 
+  /* _NestLoadNvicPendingReg {{{3
+   * -----------------------
+   */
   uint32_t _NestLoadNvicPendingReg(uint32_t groupNo, bool isSecure) {
     uint32_t v      = 0;
     uint32_t itns   = _n.nvicNonSecure[groupNo];
@@ -752,6 +789,9 @@ private:
     return v;
   }
 
+  /* _NestStore32 {{{3
+   * ------------
+   */
   int _NestStore32(phys_t addr, bool isPriv, bool isSecure, uint32_t v) {
     auto [targetNS, targetRAZWI, targetFault] = _NestAccessClassify(addr, isPriv, isSecure);
 
@@ -769,6 +809,9 @@ private:
     return 0;
   }
 
+  /* _NestStore32Actual {{{3
+   * ------------------
+   */
   void _NestStore32Actual(phys_t addr, uint32_t v) {
     phys_t baddr = addr & ~0x2'0000U;
 
@@ -797,59 +840,126 @@ private:
     }
   }
 
+  /* InternalLoad32 {{{3
+   * --------------
+   */
   uint32_t InternalLoad32(phys_t addr) {
     ASSERT(addr >= 0xE000'0000);
     return _NestLoad32Actual(addr);
   }
+
+  /* InternalStore32 {{{3
+   * ---------------
+   */
   void InternalStore32(phys_t addr, uint32_t v) {
     ASSERT(addr >= 0xE000'0000);
     _NestStore32Actual(addr, v);
   }
+
+  /* InternalOr32 {{{3
+   * ------------
+   */
   void InternalOr32(phys_t addr, uint32_t x) {
     InternalStore32(addr, InternalLoad32(addr) | x);
   }
+
+  /* InternalMask32 {{{3
+   * --------------
+   */
   void InternalMask32(phys_t addr, uint32_t x) {
     InternalStore32(addr, InternalLoad32(addr) & ~x);
   }
 
+  /* _InternalLoadMpuSecureRegion {{{3
+   * ----------------------------
+   */
   std::tuple<uint32_t,uint32_t> _InternalLoadMpuSecureRegion(size_t idx) {
     printf("Bus internal load MPU secure region %zu\n", idx);
     return {0,0}; // {RBAR,RLAR} // TODO
   }
 
+  /* _InternalLoadMpuNonSecureRegion {{{3
+   * -------------------------------
+   */
   std::tuple<uint32_t,uint32_t> _InternalLoadMpuNonSecureRegion(size_t idx) {
     printf("Bus internal load MPU non-secure region %zu\n", idx);
     return {0,0}; // {RBAR,RLAR} // TODO
   }
 
+  /* _InternalLoadSauRegion {{{3
+   * ----------------------
+   */
   std::tuple<uint32_t,uint32_t> _InternalLoadSauRegion(size_t idx) {
     printf("Bus internal load SAU region %zu\n", idx);
     return {0,0}; // {RBAR,RLAR} // TODO
   }
 
+  /* _ThisInstrAddr {{{3
+   * --------------
+   */
   uint32_t _ThisInstrAddr() { return _s.pc; }
+
+  /* _IsSecure {{{3
+   * ---------
+   */
   bool _IsSecure() { return _HaveSecurityExt() && _s.curState == SecurityState_Secure; }
+
+  /* _HaveMainExt {{{3
+   * ------------
+   */
   bool _HaveMainExt() { return true; }
+
+  /* _HaveSecurityExt {{{3
+   * ----------------
+   */
   bool _HaveSecurityExt() { return true; }
+
+  /* _SetThisInstrDetails {{{3
+   * --------------------
+   */
   void _SetThisInstrDetails(uint32_t opcode, int len, uint32_t defaultCond) {
     _s.thisInstr            = opcode;
     _s.thisInstrLength      = len;
     _s.thisInstrDefaultCond = defaultCond;
     _s.curCondOverride      = -1;
   }
+
+  /* _VFPSmallRegisterBank {{{3
+   * ---------------------
+   */
   bool _VFPSmallRegisterBank() { return false; }
+
+  /* _HaveDebugMonitor {{{3
+   * -----------------
+   */
   bool _HaveDebugMonitor() { return _HaveMainExt(); }
+
+  /* _MaxExceptionNum {{{3
+   * ----------------
+   */
   int _MaxExceptionNum() { return _HaveMainExt() ? 511 : 47; }
+
+  /* _GetD {{{3
+   * -----
+   */
   uint64_t _GetD(int n) {
     assert(n >= 0 && n <= 31);
     assert(!(n >= 16 && _VFPSmallRegisterBank())); // UNDEFINED
     return _s.d[n];
   }
+
+  /* _SetD {{{3
+   * -----
+   */
   void _SetD(int n, uint64_t value) {
     assert(n >= 0 && n <= 31);
     assert(!(n >= 16 && _VFPSmallRegisterBank())); // UNDEFINED
     _s.d[n] = value;
   }
+
+  /* _GetS {{{3
+   * -----
+   */
   uint32_t _GetS(int n) {
     assert(n >= 0 && n <= 31);
     if (!(n%2))
@@ -857,6 +967,10 @@ private:
     else
       return (uint32_t)(_GetD(n/2)>>32);
   }
+
+  /* _SetS {{{3
+   * -----
+   */
   void _SetS(int n, uint32_t value) {
     assert(n >= 0 && n <= 31);
     if (!(n%2))
@@ -864,17 +978,49 @@ private:
     else
       _SetD(n/2, (_GetD(n/2) & ~UINT64_C(0xFFFF'FFFF'0000'0000)) | (uint64_t(value)<<32));
   }
+
+  /* _ClearExclusiveLocal {{{3
+   * --------------------
+   */
   void _ClearExclusiveLocal(int procID) {}
+
+  /* _ProcessorID {{{3
+   * ------------
+   */
   int _ProcessorID() { return 0; }
+
+  /* _SetEventRegister {{{3
+   * -----------------
+   */
   void _SetEventRegister() { _s.event = true; }
+
+  /* _ClearEventRegister {{{3
+   * -------------------
+   */
   void _ClearEventRegister() { _s.event = false; }
+
+  /* _InstructionSynchronizationBarrier {{{3
+   * ----------------------------------
+   */
   void _InstructionSynchronizationBarrier(uint8_t option) {
     // TODO
   }
+
+  /* _HaveFPB {{{3
+   * --------
+   */
   bool _HaveFPB() { return true; }
+
+  /* _FPB_BreakpointMatch {{{3
+   * --------------------
+   */
   void _FPB_BreakpointMatch() {
     _GenerateDebugEventResponse();
   }
+
+  /* _DefaultExcInfo {{{3
+   * ---------------
+   */
   ExcInfo _DefaultExcInfo() {
     ExcInfo exc = {};
     exc.fault       = NoFault;
@@ -886,23 +1032,55 @@ private:
     exc.termInst    = true;
     return exc;
   }
+
+  /* _HaveDWT {{{3
+   * --------
+   */
   bool _HaveDWT() { return true; }
+
+  /* _HaveFPExt {{{3
+   * ----------
+   */
   bool _HaveFPExt() { return true; }
+
+  /* _NoninvasiveDebugAllowed {{{3
+   * ------------------------
+   */
   bool _NoninvasiveDebugAllowed() {
     return _ExternalNoninvasiveDebugEnabled() || _HaltingDebugAllowed();
   }
+
+  /* _HaltingDebugAllowed {{{3
+   * --------------------
+   */
   bool _HaltingDebugAllowed() {
     return _ExternalInvasiveDebugEnabled() || GETBITSM(InternalLoad32(REG_DHCSR), REG_DHCSR__S_HALT);
   }
+
+  /* _ExternalInvasiveDebugEnabled {{{3
+   * -----------------------------
+   */
   bool _ExternalInvasiveDebugEnabled() {
     return false; // TODO: DBGEN == HIGH
   }
+
+  /* _ExternalNoninvasiveDebugEnabled {{{3
+   * --------------------------------
+   */
   bool _ExternalNoninvasiveDebugEnabled() {
     return _ExternalInvasiveDebugEnabled() || false; // TODO: NIDEN == HIGH
   }
+
+  /* _IsDWTEnabled {{{3
+   * -------------
+   */
   bool _IsDWTEnabled() {
     return _HaveDWT() && GETBITSM(InternalLoad32(REG_DEMCR), REG_DEMCR__TRCENA) && _NoninvasiveDebugAllowed();
   }
+
+  /* _SecureHaltingDebugAllowed {{{3
+   * --------------------------
+   */
   bool _SecureHaltingDebugAllowed() {
     if (!_HaltingDebugAllowed())
       return false;
@@ -911,10 +1089,17 @@ private:
     else
       return _ExternalSecureInvasiveDebugEnabled();
   }
+
+  /* _ExternalSecureInvasiveDebugEnabled {{{3
+   * -----------------------------------
+   */
   bool _ExternalSecureInvasiveDebugEnabled() {
     return _ExternalInvasiveDebugEnabled() && false; // TODO: SPIDEN == HIGH
   }
 
+  /* _CurrentCond {{{3
+   * ------------
+   */
   uint32_t _CurrentCond() {
     // Defined in ISA manual (ARMv8-M § C1.6.1). This is
     // based on ITSTATE for most instructions but is specially overriden for
@@ -927,21 +1112,40 @@ private:
     return _s.thisInstrDefaultCond;
   }
 
+  /* _SecureDebugMonitorAllowed {{{3
+   * --------------------------
+   */
   bool _SecureDebugMonitorAllowed() {
     if (InternalLoad32(REG_DAUTHCTRL) & REG_DAUTHCTRL__SPIDENSEL)
       return !!(InternalLoad32(REG_DAUTHCTRL) & REG_DAUTHCTRL__INTSPIDEN);
     else
       return _ExternalSecureSelfHostedDebugEnabled();
   }
+
+  /* _ExternalSecureSelfHostedDebugEnabled {{{3
+   * -------------------------------------
+   */
   bool _ExternalSecureSelfHostedDebugEnabled() {
     return false && false; // DBGEN == HIGH && SPIDEN == HIGH // TODO
   }
+
+  /* _ResetSCSRegs {{{3
+   * -------------
+   */
   void _ResetSCSRegs() {
     _NestReset();
   }
+
+  /* _IsCPEnabled {{{3
+   * ------------
+   */
   std::tuple<bool, bool> _IsCPEnabled(int cp) {
     return _IsCPEnabled(cp, _CurrentModeIsPrivileged(), _IsSecure());
   }
+
+  /* _CurrentModeIsPrivileged {{{3
+   * ------------------------
+   */
   bool _CurrentModeIsPrivileged() {
     return _CurrentModeIsPrivileged(_IsSecure());
   }
@@ -949,61 +1153,86 @@ private:
     bool npriv = isSecure ? GETBITSM(_s.controlS, CONTROL__NPRIV) : GETBITSM(_s.controlNS, CONTROL__NPRIV);
     return (_CurrentMode() == PEMode_Handler || !npriv);
   }
+
+  /* _CurrentMode {{{3
+   * ------------
+   */
   PEMode _CurrentMode() {
     return GETBITSM(_s.xpsr, XPSR__EXCEPTION) == NoFault ? PEMode_Thread : PEMode_Handler;
   }
 
+  /* _ConditionPassed {{{3
+   * ----------------
+   */
   bool _ConditionPassed() {
     return _ConditionHolds(_CurrentCond());
   }
 
+  /* _GetPC {{{3
+   * ------
+   */
   uint32_t _GetPC() {
     return _GetR(15);
   }
 
-  // This function is not defined by the ISA definition and must be generated from all of the
-  // instruction definitions. Our actual implementation is in _DecodeExecuteActual
-  // and wrapped by this.
-#define UNDEFINED_DEC() do { throw Exception(ExceptionType::UNDEFINED); } while (0)
-#define TODO_DEC()      do { printf("warning: todo insn on line %u\n", __LINE__); UNDEFINED_DEC(); } while (0)
-  // For CONSTRAINED UNPREDICTABLE which we choose to implement as UNDEFINED
-#define CUNPREDICTABLE_UNDEFINED() UNDEFINED_DEC()
-#define CUNPREDICTABLE_UNALIGNED() do { _ThrowUnaligned(); } while (0)
-
-  // Custom function not corresponding to the ISA manual. Throws unaligned
-  // usage fault. For use implementing UNPREDICTABLE where a permitted
-  // implementation is to raise an UNALIGNED UsageFault.
+  /* _ThrowUnaligned {{{3
+   * ---------------
+   * Custom function not corresponding to the ISA manual. Throws unaligned
+   * usage fault. For use implementing UNPREDICTABLE where a permitted
+   * implementation is to raise an UNALIGNED UsageFault.
+   */
   void _ThrowUnaligned() {
     InternalOr32(REG_UFSR, REG_UFSR__UNALIGNED);
     auto excInfo = _CreateException(UsageFault, false, false/*UNKNOWN*/);
     _HandleException(excInfo);
   }
 
-  // Exposition only
+  /* _ZeroExtend {{{3
+   * -----------
+   * Exposition only
+   */
   static uint32_t _ZeroExtend(uint32_t v, uint32_t w) {
     return v;
   }
 
+  /* _Align {{{3
+   * ------
+   */
   static uint32_t _Align(uint32_t x, uint32_t align) {
     return x & ~(align-1);
   }
 
+  /* _BranchWritePC {{{3
+   * --------------
+   */
   void _BranchWritePC(uint32_t address) {
     _BranchTo(address & ~BIT(0));
   }
 
+  /* _ALUWritePC {{{3
+   * -----------
+   */
   void _ALUWritePC(uint32_t address) {
     _BranchWritePC(address);
   }
 
+  /* _InITBlock {{{3
+   * ----------
+   */
   bool _InITBlock() {
     return !!(_GetITSTATE() & BITS(0,3));
   }
 
+  /* _LastInITBlock {{{3
+   * --------------
+   */
   bool _LastInITBlock() {
     return GETBITS(_GetITSTATE(),0,3) == 0b1000;
   }
 
+  /* _LSL_C {{{3
+   * ------
+   */
   static std::tuple<uint32_t, bool> _LSL_C(uint32_t x, int shift) {
     ASSERT(shift > 0);
 
@@ -1019,6 +1248,9 @@ private:
     return {result, carryOut};
   }
 
+  /* _LSR_C {{{3
+   * ------
+   */
   static std::tuple<uint32_t, bool> _LSR_C(uint32_t x, int shift) {
     ASSERT(shift > 0);
 
@@ -1028,6 +1260,9 @@ private:
     return {result, carryOut};
   }
 
+  /* _ASR_C {{{3
+   * ------
+   */
   static std::tuple<uint32_t, bool> _ASR_C(uint32_t x, int shift) {
     ASSERT(shift > 0);
 
@@ -1039,6 +1274,9 @@ private:
     return {result, carryOut};
   }
 
+  /* _LSL {{{3
+   * ----
+   */
   static uint32_t _LSL(uint32_t x, int shift) {
     ASSERT(shift >= 0);
     if (!shift)
@@ -1048,6 +1286,9 @@ private:
     return result;
   }
 
+  /* _LSR {{{3
+   * ----
+   */
   static uint32_t _LSR(uint32_t x, int shift) {
     ASSERT(shift >= 0);
     if (!shift)
@@ -1057,6 +1298,9 @@ private:
     return result;
   }
 
+  /* _ROR_C {{{3
+   * ------
+   */
   static std::tuple<uint32_t, bool> _ROR_C(uint32_t x, int shift) {
     ASSERT(shift);
 
@@ -1067,6 +1311,9 @@ private:
     return {result, carryOut};
   }
 
+  /* _RRX_C {{{3
+   * ------
+   */
   static std::tuple<uint32_t, bool> _RRX_C(uint32_t x, bool carryIn) {
     uint32_t result   = (carryIn ? BIT(31) : 0) | (x>>1);
     bool    carryOut  = !!(x & BIT(0));
@@ -1074,6 +1321,9 @@ private:
     return {result, carryOut};
   }
 
+  /* _Shift_C {{{3
+   * --------
+   */
   static std::tuple<uint32_t, bool> _Shift_C(uint32_t value, SRType srType, int amount, bool carryIn) {
     ASSERT(!(srType == SRType_RRX && amount != 1));
 
@@ -1096,14 +1346,23 @@ private:
     }
   }
 
+  /* _IsZero {{{3
+   * -------
+   */
   static bool _IsZero(uint32_t x) {
     return !x;
   }
 
+  /* _IsZeroBit {{{3
+   * ----------
+   */
   static bool _IsZeroBit(uint32_t x) {
     return _IsZero(x);
   }
 
+  /* _LookUpRName {{{3
+   * ------------
+   */
   RName _LookUpRName(int n) {
     ASSERT(n >= 0 && n <= 15);
     switch (n) {
@@ -1127,6 +1386,9 @@ private:
     }
   }
 
+  /* _BranchToNS {{{3
+   * -----------
+   */
   void _BranchToNS(uint32_t addr) {
     ASSERT(_HaveSecurityExt() && _IsSecure());
 
@@ -1140,6 +1402,9 @@ private:
     _BranchTo(addr & ~BIT(0));
   }
 
+  /* _FunctionReturn {{{3
+   * ---------------
+   */
   ExcInfo _FunctionReturn() {
     auto exc = _DefaultExcInfo();
 
@@ -1217,6 +1482,9 @@ private:
     return exc;
   }
 
+  /* _BXWritePC {{{3
+   * ----------
+   */
   ExcInfo _BXWritePC(uint32_t addr, bool allowNonSecure) {
     auto exc = _DefaultExcInfo();
 
@@ -1246,6 +1514,9 @@ private:
     return exc;
   }
 
+  /* _LoadWritePC {{{3
+   * ------------
+   */
   void _LoadWritePC(uint32_t addr, int baseReg, uint32_t baseRegVal, bool baseRegUpdate, bool spLimCheck) {
     RName    regName;
     uint32_t oldBaseVal;
@@ -1269,9 +1540,16 @@ private:
     _HandleException(excInfo);
   }
 
+  /* _GetPRIMASK {{{3
+   * -----------
+   */
   uint32_t _GetPRIMASK() {
     return _IsSecure() ? _s.primaskS : _s.primaskNS;
   }
+
+  /* _SetPRIMASK {{{3
+   * -----------
+   */
   void _SetPRIMASK(uint32_t v) {
     if (_IsSecure())
       _s.primaskS = v;
@@ -1279,9 +1557,16 @@ private:
       _s.primaskNS = v;
   }
 
+  /* _GetFAULTMASK {{{3
+   * -------------
+   */
   uint32_t _GetFAULTMASK() {
     return _IsSecure() ? _s.faultmaskS : _s.faultmaskNS;
   }
+
+  /* _SetFAULTMASK {{{3
+   * -------------
+   */
   void _SetFAULTMASK(uint32_t v) {
     if (_IsSecure())
       _s.faultmaskS = v;
@@ -1289,6 +1574,9 @@ private:
       _s.faultmaskNS = v;
   }
 
+  /* _AddWithCarry {{{3
+   * -------------
+   */
   std::tuple<uint32_t, bool, bool> _AddWithCarry(uint32_t x, uint32_t y, bool carryIn) {
     uint32_t unsignedSum;
     int32_t  signedSum;
@@ -1303,7 +1591,10 @@ private:
     return {unsignedSum, carryOut, overflow};
   }
 
-  // Corresponds to SignExtend(), but has an additional parameter to represent input width.
+  /* _SignExtend {{{3
+   * -----------
+   * Corresponds to SignExtend(), but has an additional parameter to represent input width.
+   */
   uint32_t _SignExtend(uint32_t x, uint32_t inWidth, uint32_t outWidth) {
     if (x & BIT(inWidth-1)) {
       return x | BITS(inWidth,outWidth-1);
@@ -1311,6 +1602,53 @@ private:
       return x;
   }
 
+  /* _BitCount {{{3
+   * ---------
+   */
+  static uint32_t _BitCount(uint32_t x) {
+    return __builtin_popcount(x);
+  }
+
+  /* _T32ExpandImm_C {{{3
+   * ---------------
+   */
+  static std::tuple<uint32_t, bool> _T32ExpandImm_C(uint32_t imm12, bool carryIn) {
+    if (GETBITS(imm12,10,11) == 0b00) {
+      uint32_t imm32;
+      switch (GETBITS(imm12, 8, 9)) {
+        case 0b00:
+          imm32 = _ZeroExtend(GETBITS(imm12, 0, 7), 32);
+          break;
+        case 0b01:
+          if (GETBITS(imm12, 0, 7) == 0)
+            throw Exception(ExceptionType::UNPREDICTABLE);
+          imm32 = (GETBITS(imm12, 0, 7)<<16) | GETBITS(imm12, 0, 7);
+          break;
+        case 0b10:
+          if (GETBITS(imm12, 0, 7) == 0)
+            throw Exception(ExceptionType::UNPREDICTABLE);
+          imm32 = (GETBITS(imm12, 0, 7)<<24) | (GETBITS(imm12, 0, 7)<<8);
+          break;
+        case 0b11:
+          if (GETBITS(imm12, 0, 7) == 0)
+            throw Exception(ExceptionType::UNPREDICTABLE);
+          imm32 = (GETBITS(imm12, 0, 7)<<24) | (GETBITS(imm12, 0, 7)<<16)
+            | (GETBITS(imm12, 0, 7)<<8) | GETBITS(imm12, 0, 7);
+          break;
+      }
+      return {imm32, carryIn};
+    } else {
+      uint32_t unrotatedValue = _ZeroExtend(BIT(7) | GETBITS(imm12, 0, 6), 32);
+      return _ROR_C(unrotatedValue, GETBITS(imm12, 7, 11));
+    }
+  }
+
+  /* _DecodeExecute {{{3
+   * --------------
+   * This function is not defined by the ISA definition and must be generated
+   * from all of the instruction definitions. Our actual implementation is in
+   * _DecodeExecute(16|32) and wrapped by this.
+   */
   void _DecodeExecute(uint32_t instr, uint32_t pc, bool is16bit) {
     if (is16bit)
       _DecodeExecute16(instr, pc);
@@ -1318,6 +1656,9 @@ private:
       _DecodeExecute32(instr, pc);
   }
 
+  /* _DecodeExecute16 {{{3
+   * ----------------
+   */
   void _DecodeExecute16_1010xx_0(uint32_t instr, uint32_t pc) {
     // ADR § C2.4.8 T1
     // ---- DECODE --------------------------------------------------
@@ -1930,6 +2271,9 @@ private:
     }
   }
 
+  /* _DecodeExecute32 {{{3
+   * ----------------
+   */
   void _DecodeExecute32_0100_011_LS_STRD(uint32_t instr, uint32_t pc) {
     TODO_DEC();
   }
@@ -2006,41 +2350,6 @@ private:
       default:
         // Load/store dual (immediate, post-indexed)
         return _DecodeExecute32_0100_011_LS(instr, pc);
-    }
-  }
-
-  static uint32_t _BitCount(uint32_t x) {
-    return __builtin_popcount(x);
-  }
-
-  static std::tuple<uint32_t, bool> _T32ExpandImm_C(uint32_t imm12, bool carryIn) {
-    if (GETBITS(imm12,10,11) == 0b00) {
-      uint32_t imm32;
-      switch (GETBITS(imm12, 8, 9)) {
-        case 0b00:
-          imm32 = _ZeroExtend(GETBITS(imm12, 0, 7), 32);
-          break;
-        case 0b01:
-          if (GETBITS(imm12, 0, 7) == 0)
-            throw Exception(ExceptionType::UNPREDICTABLE);
-          imm32 = (GETBITS(imm12, 0, 7)<<16) | GETBITS(imm12, 0, 7);
-          break;
-        case 0b10:
-          if (GETBITS(imm12, 0, 7) == 0)
-            throw Exception(ExceptionType::UNPREDICTABLE);
-          imm32 = (GETBITS(imm12, 0, 7)<<24) | (GETBITS(imm12, 0, 7)<<8);
-          break;
-        case 0b11:
-          if (GETBITS(imm12, 0, 7) == 0)
-            throw Exception(ExceptionType::UNPREDICTABLE);
-          imm32 = (GETBITS(imm12, 0, 7)<<24) | (GETBITS(imm12, 0, 7)<<16)
-            | (GETBITS(imm12, 0, 7)<<8) | GETBITS(imm12, 0, 7);
-          break;
-      }
-      return {imm32, carryIn};
-    } else {
-      uint32_t unrotatedValue = _ZeroExtend(BIT(7) | GETBITS(imm12, 0, 6), 32);
-      return _ROR_C(unrotatedValue, GETBITS(imm12, 7, 11));
     }
   }
 
@@ -2616,20 +2925,39 @@ private:
     }
   }
 
+  /* _SetITSTATEAndCommit {{{3
+   * --------------------
+   */
   void _SetITSTATEAndCommit(uint8_t it) {
     _s.nextInstrITState = it;
     _s.itStateChanged = true;
     _s.xpsr = CHGBITSM(_s.xpsr, XPSR__IT_ICI_LO, it>>2);
     _s.xpsr = CHGBITSM(_s.xpsr, XPSR__IT_ICI_HI, it&3);
   }
+
+  /* _HaveSysTick {{{3
+   * ------------
+   */
   int _HaveSysTick() { return 2; }
+
+  /* _NextInstrAddr {{{3
+   * --------------
+   */
   uint32_t _NextInstrAddr() {
     if (_s.pcChanged)
       return _s.nextInstrAddr;
     else
       return _ThisInstrAddr() + _ThisInstrLength();
   }
+
+  /* _ThisInstrLength {{{3
+   * ----------------
+   */
   int _ThisInstrLength() { return _s.thisInstrLength; }
+
+  /* _Load8 {{{3
+   * ------
+   */
   int _Load8(AddressDescriptor memAddrDesc, uint8_t &v) {
     if (memAddrDesc.physAddr >= 0xE000'0000 && memAddrDesc.physAddr < 0xE010'0000)
       // Non-32 bit accesses to SCS are UNPREDICTABLE; generate BusFault.
@@ -2637,6 +2965,10 @@ private:
 
     return _dev.Load8(memAddrDesc.physAddr, v);
   }
+
+  /* _Load16 {{{3
+   * -------
+   */
   int _Load16(AddressDescriptor memAddrDesc, uint16_t &v) {
     if (memAddrDesc.physAddr >= 0xE000'0000 && memAddrDesc.physAddr < 0xE010'0000)
       // Non-32 bit accesses to SCS are UNPREDICTABLE; generate BusFault.
@@ -2644,12 +2976,20 @@ private:
 
     return _dev.Load16(memAddrDesc.physAddr, v);
   }
+
+  /* _Load32 {{{3
+   * -------
+   */
   int _Load32(AddressDescriptor memAddrDesc, uint32_t &v) {
     if (memAddrDesc.physAddr >= 0xE000'0000 && memAddrDesc.physAddr < 0xE010'0000)
       return _NestLoad32(memAddrDesc.physAddr, memAddrDesc.accAttrs.isPriv, !memAddrDesc.memAttrs.ns, v);
 
     return _dev.Load32(memAddrDesc.physAddr, v);
   }
+
+  /* _Store8 {{{3
+   * -------
+   */
   int _Store8(AddressDescriptor memAddrDesc, uint8_t v) {
     if (memAddrDesc.physAddr >= 0xE000'0000 && memAddrDesc.physAddr < 0xE010'0000)
       // Non-32 bit accesses to SCS are UNPREDICTABLE; generate BusFault.
@@ -2657,6 +2997,10 @@ private:
 
     return _dev.Store8(memAddrDesc.physAddr, v);
   }
+
+  /* _Store16 {{{3
+   * --------
+   */
   int _Store16(AddressDescriptor memAddrDesc, uint16_t v) {
     if (memAddrDesc.physAddr >= 0xE000'0000 && memAddrDesc.physAddr < 0xE010'0000)
       // Non-32 bit accesses to SCS are UNPREDICTABLE; generate BusFault.
@@ -2664,12 +3008,20 @@ private:
 
     return _dev.Store16(memAddrDesc.physAddr, v);
   }
+
+  /* _Store32 {{{3
+   * --------
+   */
   int _Store32(AddressDescriptor memAddrDesc, uint32_t v) {
     if (memAddrDesc.physAddr >= 0xE000'0000 && memAddrDesc.physAddr < 0xE010'0000)
       return _NestStore32(memAddrDesc.physAddr, memAddrDesc.accAttrs.isPriv, !memAddrDesc.memAttrs.ns, v);
 
     return _dev.Store32(memAddrDesc.physAddr, v);
   }
+
+  /* _GetMem {{{3
+   * -------
+   */
   std::tuple<bool,uint32_t> _GetMem(AddressDescriptor memAddrDesc, int size) {
     switch (size) {
       case 1: {
@@ -2698,6 +3050,10 @@ private:
         break;
     }
   }
+
+  /* _SetMem {{{3
+   * -------
+   */
   bool _SetMem(AddressDescriptor memAddrDesc, int size, uint32_t v) {
     switch (size) {
       case 1:
@@ -2711,13 +3067,24 @@ private:
     }
   }
 
+  /* _HaveHaltingDebug {{{3
+   * -----------------
+   */
   bool _HaveHaltingDebug() { return true; }
+
+  /* _CanHaltOnEvent {{{3
+   * ---------------
+   */
   bool _CanHaltOnEvent(bool isSecure) {
     if (!_HaveSecurityExt())
       assert(!isSecure);
     return _HaveHaltingDebug() && _HaltingDebugAllowed() && !!(InternalLoad32(REG_DHCSR) & REG_DHCSR__C_DEBUGEN)
       && !(InternalLoad32(REG_DHCSR) & REG_DHCSR__S_HALT) && (!isSecure || !!(InternalLoad32(REG_DHCSR) & REG_DHCSR__S_SDE));
   }
+
+  /* _CanPendMonitorOnEvent {{{3
+   * ----------------------
+   */
   bool _CanPendMonitorOnEvent(bool isSecure, bool checkPri) {
     if (!_HaveSecurityExt())
       assert(!isSecure);
@@ -2727,6 +3094,10 @@ private:
       && (!isSecure || !!(InternalLoad32(REG_DEMCR) & REG_DEMCR__SDME))
       && (!checkPri || _ExceptionPriority(DebugMonitor, isSecure, true) < _ExecutionPriority());
   }
+
+  /* _ThisInstrITState {{{3
+   * -----------------
+   */
   uint8_t _ThisInstrITState() {
     if (_HaveMainExt())
       return (GETBITSM(_s.xpsr, XPSR__IT_ICI_LO)<<2) | GETBITSM(_s.xpsr, XPSR__IT_ICI_HI);
@@ -2734,12 +3105,22 @@ private:
       return 0;
   }
 
+  /* _GetITSTATE {{{3
+   * -----------
+   */
   uint8_t _GetITSTATE() { return _ThisInstrITState(); }
+
+  /* _SetITSTATE {{{3
+   * -----------
+   */
   void _SetITSTATE(uint8_t value) {
     _s.nextInstrITState = value;
     _s.itStateChanged = true;
   }
 
+  /* _GetSP {{{3
+   * ------
+   */
   uint32_t _GetSP(RName spreg) {
     assert(    spreg == RNameSP_Main_NonSecure
            || (spreg == RNameSP_Main_Secure       && _HaveSecurityExt())
@@ -2748,6 +3129,9 @@ private:
     return _s.r[spreg] & ~3;
   }
 
+  /* _SetSP {{{3
+   * ------
+   */
   ExcInfo _SetSP(RName spreg, bool excEntry, uint32_t value) {
     ExcInfo excInfo = _DefaultExcInfo();
     auto [limit, applyLimit] = _LookUpSPLim(spreg);
@@ -2766,6 +3150,9 @@ private:
     return excInfo;
   }
 
+  /* _Stack {{{3
+   * ------
+   */
   ExcInfo _Stack(uint32_t framePtr, int offset, RName spreg, PEMode mode, uint32_t value) {
     auto [limit, applyLimit] = _LookUpSPLim(spreg);
     bool doAccess;
@@ -2796,11 +3183,24 @@ private:
     return {excInfo, value};
   }
 
+  /* _GetLR {{{3
+   * ------
+   */
   uint32_t _GetLR() { return _GetR(14); }
+
+  /* _SetLR {{{3
+   * ------
+   */
   void _SetLR(uint32_t v) { _SetR(14, v); }
 
+  /* _HaveDSPExt {{{3
+   * -----------
+   */
   bool _HaveDSPExt() { return false; }
 
+  /* _GetR {{{3
+   * -----
+   */
   uint32_t _GetR(int n) {
     assert(n >= 0 && n <= 15);
     switch (n) {
@@ -2823,6 +3223,10 @@ private:
       default: assert(false);
     }
   }
+
+  /* _SetR {{{3
+   * -----
+   */
   void _SetR(int n, uint32_t v) {
     assert(n >= 0 && n <= 14);
     switch (n) {
@@ -2851,6 +3255,9 @@ private:
     }
   }
 
+  /* _LookUpSP_with_security_mode {{{3
+   * ----------------------------
+   */
   RName _LookUpSP_with_security_mode(bool isSecure, PEMode mode) {
     bool spSel;
 
@@ -2865,10 +3272,16 @@ private:
       return isSecure ? RNameSP_Main_Secure : RNameSP_Main_NonSecure;
   }
 
+  /* _LookUpSP {{{3
+   * ---------
+   */
   RName _LookUpSP() {
     return _LookUpSP_with_security_mode(_IsSecure(), _CurrentMode());
   }
 
+  /* _LookUpSPLim {{{3
+   * ------------
+   */
   std::tuple<uint32_t, bool> _LookUpSPLim(RName spreg) {
     uint32_t limit;
     switch (spreg) {
@@ -2900,6 +3313,9 @@ private:
     return {limit, applyLimit};
   }
 
+  /* _IsReqExcPriNeg {{{3
+   * ---------------
+   */
   bool _IsReqExcPriNeg(bool secure) {
     bool neg = _IsActiveForState(NMI, secure) || _IsActiveForState(HardFault, secure);
     if (_HaveMainExt()) {
@@ -2910,54 +3326,117 @@ private:
     return neg;
   }
 
+  /* _GetSP {{{3
+   * ------
+   */
   uint32_t _GetSP() { return _GetR(13); }
+
+  /* _SetSP {{{3
+   * ------
+   */
   void _SetSP(uint32_t value) { _SetRSPCheck(13, value); }
+
+  /* _GetSP_Main {{{3
+   * -----------
+   */
   uint32_t _GetSP_Main() { return _IsSecure() ? _GetSP_Main_Secure() : _GetSP_Main_NonSecure(); }
+
+  /* _SetSP_Main {{{3
+   * -----------
+   */
   void _SetSP_Main(uint32_t value) {
     if (_IsSecure())
       _SetSP_Main_Secure(value);
     else
       _SetSP_Main_NonSecure(value);
   }
+
+  /* _GetSP_Main_NonSecure {{{3
+   * ---------------------
+   */
   uint32_t _GetSP_Main_NonSecure() {
     return _GetSP(RNameSP_Main_NonSecure);
   }
+
+  /* _SetSP_Main_NonSecure {{{3
+   * ---------------------
+   */
   void _SetSP_Main_NonSecure(uint32_t value) {
     _SetSP(RNameSP_Main_NonSecure, false, value);
   }
+
+  /* _SetSP_Main_Secure {{{3
+   * ------------------
+   */
   void _SetSP_Main_Secure(uint32_t value) {
     _SetSP(RNameSP_Main_Secure, false, value);
   }
+
+  /* _GetSP_Main_Secure {{{3
+   * ------------------
+   */
   uint32_t _GetSP_Main_Secure() {
     return _GetSP(RNameSP_Main_Secure);
   }
+
+  /* _GetSP_Process {{{3
+   * --------------
+   */
   uint32_t _GetSP_Process() {
     return _IsSecure() ? _GetSP_Process_Secure() : _GetSP_Process_NonSecure();
   }
+
+  /* _SetSP_Process {{{3
+   * --------------
+   */
   void _SetSP_Process(uint32_t value) {
     if (_IsSecure())
       _SetSP_Process_Secure(value);
     else
       _SetSP_Process_NonSecure(value);
   }
+
+  /* _GetSP_Process_NonSecure {{{3
+   * ------------------------
+   */
   uint32_t _GetSP_Process_NonSecure() {
     return _GetSP(RNameSP_Process_NonSecure);
   }
+
+  /* _SetSP_Process_NonSecure {{{3
+   * ------------------------
+   */
   void _SetSP_Process_NonSecure(uint32_t value) {
     _SetSP(RNameSP_Process_NonSecure, false, value);
   }
+
+  /* _GetSP_Process_Secure {{{3
+   * ---------------------
+   */
   uint32_t _GetSP_Process_Secure() {
     return _GetSP(RNameSP_Process_Secure);
   }
+
+  /* _SetSP_Process_Secure {{{3
+   * ---------------------
+   */
   void _SetSP_Process_Secure(uint32_t value) {
     _SetSP(RNameSP_Process_Secure, false, value);
   }
+  
+  /* _SetRSPCheck {{{3
+   * ------------
+   */
   void _SetRSPCheck(int n, uint32_t v) {
     if (n == 13)
       _SetSP(_LookUpSP(), false, v);
     else
       _SetR(n, v);
   }
+
+  /* _Lockup {{{3
+   * -------
+   */
   void _Lockup(bool termInst) {
     InternalOr32(REG_DHCSR, REG_DHCSR__S_LOCKUP);
     _BranchToAndCommit(0xEFFF'FFFE);
@@ -2965,6 +3444,9 @@ private:
       _EndOfInstruction();
   }
 
+  /* _BranchToAndCommit {{{3
+   * ------------------
+   */
   void _BranchToAndCommit(uint32_t addr) {
     _s.r[RName_PC]    = addr & ~1;
     _s.pcChanged      = true;
@@ -2972,18 +3454,27 @@ private:
     _s.pendingReturnOperation = false;
   }
 
+  /* _BranchTo {{{3
+   * ---------
+   */
   void _BranchTo(uint32_t addr) {
     _s.nextInstrAddr = addr;
     _s.pcChanged     = true;
     _s.pendingReturnOperation = false;
   }
 
+  /* _PendReturnOperation {{{3
+   * --------------------
+   */
   void _PendReturnOperation(uint32_t retValue) {
     _s.nextInstrAddr          = retValue;
     _s.pcChanged              = true;
     _s.pendingReturnOperation = true;
   }
 
+  /* _IsActiveForState {{{3
+   * -----------------
+   */
   bool _IsActiveForState(int exc, bool isSecure) {
     if (!_HaveSecurityExt())
       isSecure = false;
@@ -2999,6 +3490,9 @@ private:
     return active;
   }
 
+  /* _IsExceptionTargetConfigurable {{{3
+   * ------------------------------
+   */
   bool _IsExceptionTargetConfigurable(int e) {
     if (!_HaveSecurityExt())
       return false;
@@ -3012,6 +3506,9 @@ private:
     }
   }
 
+  /* _GetVector {{{3
+   * ----------
+   */
   std::tuple<ExcInfo, uint32_t> _GetVector(int excNo, bool isSecure) {
     uint32_t vtor = isSecure ? InternalLoad32(REG_VTOR_S) : InternalLoad32(REG_VTOR_NS);
     uint32_t addr = (vtor & ~BITS(0,6)) + 4*excNo;
@@ -3025,6 +3522,9 @@ private:
     return {exc, vector};
   }
 
+  /* _ValidateAddress {{{3
+   * ----------------
+   */
   std::tuple<ExcInfo, AddressDescriptor> _ValidateAddress(uint32_t addr, AccType accType, bool isPriv, bool secure, bool isWrite, bool aligned) {
     AddressDescriptor result;
     Permissions       perms;
@@ -3100,6 +3600,9 @@ private:
     return {excInfo, result};
   }
 
+  /* _MemU {{{3
+   * -----
+   */
   uint32_t _MemU(uint32_t addr, int size) {
     if (_HaveMainExt())
       return _MemU_with_priv(addr, size, _FindPriv());
@@ -3114,6 +3617,9 @@ private:
       _MemA(addr, size, value);
   }
 
+  /* _MemU_with_priv {{{3
+   * ---------------
+   */
   uint32_t _MemU_with_priv(uint32_t addr, int size, bool priv) {
     uint32_t value;
 
@@ -3136,9 +3642,25 @@ private:
   }
 
   void _MemU_with_priv(uint32_t addr, int size, bool priv, uint32_t value) {
-
+    // Do aligned access, take alignment fault, or do sequence of bytes
+    if (addr == _Align(addr, size))
+      _MemA_with_priv(addr, size, priv, true, value);
+    else if (InternalLoad32(REG_CCR) & REG_CCR__UNALIGN_TRP) {
+      InternalOr32(REG_UFSR, REG_UFSR__UNALIGNED);
+      auto excInfo = _CreateException(UsageFault, false, UNKNOWN_VAL(false));
+      _HandleException(excInfo);
+    } else { // if unaligned access
+      // PPB (0xE0000000 to 0xE010000) is always little endian
+      if ((InternalLoad32(REG_AIRCR) & REG_AIRCR__ENDIANNESS) && GETBITS(addr,20,31) != 0xE00)
+        value = _BigEndianReverse(value, size);
+      for (int i=0; i<size; ++i)
+        _MemA_with_priv(addr+i, 1, priv, false, GETBITS(value, 8*i, 8*i+7));
+    }
   }
 
+  /* _MemA {{{3
+   * -----
+   */
   uint32_t _MemA(uint32_t addr, int size) {
     return _MemA_with_priv(addr, size, _FindPriv(), true);
   }
@@ -3147,6 +3669,9 @@ private:
     _MemA_with_priv(addr, size, _FindPriv(), true, value);
   }
 
+  /* _MemA_with_priv {{{3
+   * ---------------
+   */
   uint32_t _MemA_with_priv(uint32_t addr, int size, bool priv, bool aligned) {
     auto [excInfo, value] = _MemA_with_priv_security(addr, size, AccType_NORMAL, priv, _IsSecure(), aligned);
     _HandleException(excInfo);
@@ -3158,6 +3683,9 @@ private:
     _HandleException(excInfo);
   }
 
+  /* _MemA_with_priv_security {{{3
+   * ------------------------
+   */
   std::tuple<ExcInfo, uint32_t> _MemA_with_priv_security(uint32_t addr, int size, AccType accType, bool priv, bool secure, bool aligned) {
     ExcInfo excInfo = _DefaultExcInfo();
     if (!_IsAligned(addr, size)) {
@@ -3253,16 +3781,25 @@ private:
     return excInfo;
   }
 
+  /* _ClearExclusiveByAddress {{{3
+   * ------------------------
+   */
   void _ClearExclusiveByAddress(uint32_t addr, int exclProcID, int size) {
     // TODO
   }
 
+  /* _IsAligned {{{3
+   * ----------
+   */
   bool _IsAligned(uint32_t addr, int size) {
     assert(size == 1 || size == 2 || size == 4 || size == 8);
     uint32_t mask = (size-1);
     return !(addr & mask);
   }
 
+  /* _MPUCheck {{{3
+   * ---------
+   */
   std::tuple<MemoryAttributes, Permissions> _MPUCheck(uint32_t addr, AccType accType, bool isPriv, bool secure) {
     assert(_HaveSecurityExt() || !secure);
 
@@ -3346,6 +3883,9 @@ private:
     return {attrs, perms};
   }
 
+  /* _MAIRDecode {{{3
+   * -----------
+   */
   MemoryAttributes _MAIRDecode(uint8_t attrField, uint8_t sh) {
     MemoryAttributes memAttrs;
     bool unpackInner;
@@ -3429,6 +3969,9 @@ private:
     return memAttrs;
   }
 
+  /* _CheckPermission {{{3
+   * ----------------
+   */
   ExcInfo _CheckPermission(const Permissions &perms, uint32_t addr, AccType accType, bool isWrite, bool isPriv, bool isSecure) {
     bool fault = true;
     if (!perms.apValid)
@@ -3486,6 +4029,9 @@ private:
     return _CreateException(MemManage, true, isSecure);
   }
 
+  /* _BigEndianReverse {{{3
+   * -----------------
+   */
   uint32_t _BigEndianReverse(uint32_t value, int N) {
     assert(N == 1 || N == 2 || N == 4);
     uint32_t result;
@@ -3505,6 +4051,9 @@ private:
     }
   }
 
+  /* _DWT_DataMatch {{{3
+   * --------------
+   */
   void _DWT_DataMatch(uint32_t daddr, int dsize, uint32_t dvalue, bool read, bool nsReq) {
     bool triggerDebugEvent  = false;
     bool debugEvent         = false;
@@ -3551,21 +4100,33 @@ private:
       debugEvent = _SetDWTDebugEvent(!nsReq);
   }
 
+  /* _DWT_DataAddressMatch {{{3
+   * ---------------------
+   */
   bool _DWT_DataAddressMatch(int N, uint32_t daddr, int dsize, bool read, bool nsReq) {
     // TODO
     return false;
   }
 
+  /* _DWT_DataValueMatch {{{3
+   * -------------------
+   */
   bool _DWT_DataValueMatch(int N, uint32_t daddr, uint32_t dvalue, int dsize, bool read, bool nsReq) {
     // TODO
     return false;
   }
 
+  /* _IsDWTConfigUnpredictable {{{3
+   * -------------------------
+   */
   bool _IsDWTConfigUnpredictable(int N) {
     // TODO
     return false;
   }
 
+  /* _SetDWTDebugEvent {{{3
+   * -----------------
+   */
   bool _SetDWTDebugEvent(bool secureMatch) {
     if (_CanHaltOnEvent(secureMatch)) {
       InternalOr32(REG_DHCSR, REG_DHCSR__C_HALT);
@@ -3582,6 +4143,9 @@ private:
     return false;
   }
 
+  /* _DefaultMemoryAttributes {{{3
+   * ------------------------
+   */
   MemoryAttributes _DefaultMemoryAttributes(uint32_t addr) {
     MemoryAttributes attrs;
 
@@ -3649,6 +4213,9 @@ private:
     return attrs;
   }
 
+  /* _DefaultPermissions {{{3
+   * -------------------
+   */
   Permissions _DefaultPermissions(uint32_t addr) {
     Permissions perms = {};
     perms.ap          = 0b01;
@@ -3670,6 +4237,9 @@ private:
     return perms;
   }
 
+  /* _SetPending {{{3
+   * -----------
+   */
   void _SetPending(int exc, bool isSecure, bool setNotClear) {
     if (!_HaveSecurityExt())
       isSecure = false;
@@ -3682,6 +4252,9 @@ private:
     }
   }
 
+  /* _NextInstrITState {{{3
+   * -----------------
+   */
   uint8_t _NextInstrITState() {
     uint8_t nextState;
     if (_HaveMainExt()) {
@@ -3699,6 +4272,9 @@ private:
     return nextState;
   }
 
+  /* _PendingExceptionDetails {{{3
+   * ------------------------
+   */
   // XXX: Unfortunately the ARM ISA manual exceptionally does not give a definition
   // for this function. Its definition has been estimated via reference to qemu's codebase.
   std::tuple<bool, int, bool> _PendingExceptionDetails() {
@@ -3770,6 +4346,9 @@ private:
     return {maxPrio, maxPrioExc, excIsSecure};
   }
 
+  /* _RawExecutionPriority {{{3
+   * ---------------------
+   */
   int _RawExecutionPriority() {
     int execPri = _HighestPri();
     for (int i=2; i<=_MaxExceptionNum(); ++i)
@@ -3785,18 +4364,30 @@ private:
     return execPri;
   }
 
+  /* _HighestPri {{{3
+   * -----------
+   */
   int _HighestPri() {
     return 256;
   }
 
+  /* _RestrictedNSPri {{{3
+   * ----------------
+   */
   int _RestrictedNSPri() {
     return 0x80;
   }
 
+  /* _FindPriv {{{3
+   * ---------
+   */
   bool _FindPriv() {
     return _CurrentModeIsPrivileged();
   }
 
+  /* _ExceptionEntry {{{3
+   * ---------------
+   */
   ExcInfo _ExceptionEntry(int excType, bool toSecure, bool instExecOk) {
     ExcInfo exc = _PushStack(toSecure, instExecOk);
     if (exc.fault == NoFault)
@@ -3804,6 +4395,9 @@ private:
     return exc;
   }
 
+  /* _PushStack {{{3
+   * ----------
+   */
   ExcInfo _PushStack(bool secureExc, bool instExecOk) {
     auto &control = _IsSecure() ? _s.controlS : _s.controlNS;
 
@@ -3855,6 +4449,9 @@ private:
     return exc;
   }
 
+  /* _MergeExcInfo {{{3
+   * -------------
+   */
   ExcInfo _MergeExcInfo(const ExcInfo &a, const ExcInfo &b) {
     ExcInfo exc, pend;
 
@@ -3883,6 +4480,9 @@ private:
     return exc;
   }
 
+  /* _ReturnState {{{3
+   * ------------
+   */
   std::tuple<uint32_t, uint8_t> _ReturnState(bool instExecOk) {
     if (instExecOk)
       return {_NextInstrAddr(), _NextInstrITState()};
@@ -3890,6 +4490,9 @@ private:
       return {_ThisInstrAddr(), _ThisInstrITState()};
   }
 
+  /* _DerivedLateArrival {{{3
+   * -------------------
+   */
   void _DerivedLateArrival(int pePriority, int peNumber, bool peIsSecure, const ExcInfo &deInfo, int oeNumber, bool oeIsSecure) {
     int oePriority = _ExceptionPriority(oeNumber, oeIsSecure, false);
 
@@ -3930,6 +4533,9 @@ private:
       _DerivedLateArrival(pePriority, peNumber, peIsSecure, excInfo, targetFault, targetIsSecure);
   }
 
+  /* _ComparePriorities {{{3
+   * ------------------
+   */
   bool _ComparePriorities(int exc0Pri, int exc0Number, bool exc0IsSecure,
                           int exc1Pri, int exc1Number, bool exc1IsSecure) {
     bool takeE0;
@@ -3949,6 +4555,9 @@ private:
     return _ComparePriorities(exc0Pri, exc0Info.fault, exc0Info.isSecure, exc1Pri, exc1Number, exc1IsSecure);
   }
 
+  /* _ActivateException {{{3
+   * ------------------
+   */
   void _ActivateException(int excNo, bool excIsSecure) {
     _s.curState = excIsSecure ? SecurityState_Secure : SecurityState_NonSecure;
     _s.xpsr = CHGBITSM(_s.xpsr, XPSR__EXCEPTION, excNo);
@@ -3965,6 +4574,9 @@ private:
     _SetActive(excNo, excIsSecure, true);
   }
 
+  /* _SetActive {{{3
+   * ----------
+   */
   void _SetActive(int exc, bool isSecure, bool setNotClear) {
     if (!_HaveSecurityExt())
       isSecure = false;
@@ -3978,6 +4590,9 @@ private:
     }
   }
 
+  /* _TailChain {{{3
+   * ----------
+   */
   ExcInfo _TailChain(int excNo, bool excIsSecure, uint32_t excReturn) {
     if (!_HaveFPExt())
       excReturn = CHGBITSM(excReturn, EXC_RETURN__FTYPE, 1);
@@ -3987,6 +4602,9 @@ private:
     return _ExceptionTaken(excNo, true, excIsSecure, false);
   }
 
+  /* _ConsumeExcStackFrame {{{3
+   * ---------------------
+   */
   void _ConsumeExcStackFrame(uint32_t excReturn, bool fourByteAlign) {
     bool toSecure = _HaveSecurityExt() && !!(excReturn & BIT(6));
     uint32_t frameSize;
@@ -4007,6 +4625,9 @@ private:
     _s.r[spName] = (_GetSP(spName) + frameSize) | (fourByteAlign ? 0b100 : 0);
   }
 
+  /* _ExceptionReturn {{{3
+   * ----------------
+   */
   std::tuple<ExcInfo, uint32_t> _ExceptionReturn(uint32_t excReturn) {
     int returningExcNo = GETBITSM(_s.xpsr, XPSR__EXCEPTION);
 
@@ -4069,6 +4690,9 @@ private:
     return {exc, excReturn};
   }
 
+  /* _ExceptionActiveBitCount {{{3
+   * ------------------------
+   */
   int _ExceptionActiveBitCount() {
     int count = 0;
     for (int i=0; i<=_MaxExceptionNum(); ++i)
@@ -4078,6 +4702,9 @@ private:
     return count;
   }
 
+  /* _DeActivate {{{3
+   * -----------
+   */
   void _DeActivate(int returningExcNo, bool targetDomainSecure) {
     int rawPri = _RawExecutionPriority();
     if (rawPri == -1)
@@ -4099,14 +4726,23 @@ private:
     }
   }
 
+  /* _SleepOnExit {{{3
+   * ------------
+   */
   void _SleepOnExit() {
     // TODO
   }
 
+  /* _IsIrqValid {{{3
+   * -----------
+   */
   bool _IsIrqValid(int e) {
     return true; // TODO
   }
 
+  /* _PopStack {{{3
+   * ---------
+   */
   ExcInfo _PopStack(uint32_t excReturn) {
     PEMode    mode      = (GETBITSM(excReturn, EXC_RETURN__MODE) ? PEMode_Thread : PEMode_Handler);
     bool      toSecure  = _HaveSecurityExt() && GETBITSM(excReturn, EXC_RETURN__S);
@@ -4252,6 +4888,9 @@ private:
     return exc;
   }
 
+  /* _CheckCPEnabled {{{3
+   * ---------------
+   */
   ExcInfo _CheckCPEnabled(int cp) {
     return _CheckCPEnabled(cp, _CurrentModeIsPrivileged(), _IsSecure());
   }
@@ -4270,6 +4909,9 @@ private:
     return excInfo;
   }
 
+  /* _ValidateExceptionReturn {{{3
+   * ------------------------
+   */
   std::tuple<ExcInfo, uint32_t> _ValidateExceptionReturn(uint32_t excReturn, int retExcNo) {
     bool error = false;
     assert(_CurrentMode() == PEMode_Handler);
@@ -4321,6 +4963,9 @@ private:
     return {excInfo, excReturn};
   }
 
+  /* _ExceptionTaken {{{3
+   * ---------------
+   */
   ExcInfo _ExceptionTaken(int excNo, bool doTailChain, bool excIsSecure, bool ignStackFaults) {
     assert(_HaveSecurityExt() || !excIsSecure);
 
@@ -4375,6 +5020,9 @@ private:
     return exc;
   }
 
+  /* _PushCalleeStack {{{3
+   * ----------------
+   */
   ExcInfo _PushCalleeStack(bool doTailChain) {
     PEMode mode;
     RName spName;
@@ -4409,12 +5057,21 @@ private:
     return _MergeExcInfo(exc, spExc);
   }
 
+  /* _SCS_UpdateStatusRegs {{{3
+   * ---------------------
+   */
   void _SCS_UpdateStatusRegs() {
     // TODO
   }
 
+  /* _ConstrainUnpredictableBool {{{3
+   * ---------------------------
+   */
   bool _ConstrainUnpredictableBool(bool x) { return x; }
 
+  /* _ExceptionPriority {{{3
+   * ------------------
+   */
   int _ExceptionPriority(int n, bool isSecure, bool groupPri) {
     if (_HaveMainExt())
       assert(n >= 1 && n <= 511);
