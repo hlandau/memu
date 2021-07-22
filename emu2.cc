@@ -496,13 +496,6 @@ struct CpuNest {
 #define RETPSR__T         BIT (24)
 
 struct IDevice {
-  virtual void InternalReset() = 0;
-  virtual uint32_t InternalLoad32(phys_t addr) = 0;
-  virtual void InternalStore32(phys_t addr, uint32_t v) = 0;
-  virtual std::tuple<uint32_t,uint32_t> InternalLoadMpuSecureRegion(size_t idx) = 0; // {RBAR, RLAR}
-  virtual std::tuple<uint32_t,uint32_t> InternalLoadMpuNonSecureRegion(size_t idx) = 0; // {RBAR, RLAR}
-  virtual std::tuple<uint32_t,uint32_t> InternalLoadSauRegion(size_t idx) = 0; // {RBAR, RLAR}
-
   virtual int Load32(phys_t addr, uint32_t &v) = 0;
   virtual int Load16(phys_t addr, uint16_t &v) = 0;
   virtual int Load8(phys_t addr, uint8_t &v) = 0;
@@ -582,6 +575,7 @@ private:
   static bool _IsExceptionTaken(const Exception &e) { return e.GetType() == ExceptionType::EndOfInstruction; }
 
   void _NestReset() {
+    _n = CpuNest();
   }
 
   // {targetNS, targetRAZWI, targetFault}
@@ -757,12 +751,10 @@ private:
   }
 
   uint32_t InternalLoad32(phys_t addr) {
-    //return _dev.InternalLoad32(addr);
     ASSERT(addr >= 0xE000'0000);
     return _NestLoad32Actual(addr);
   }
   void InternalStore32(phys_t addr, uint32_t v) {
-    //_dev.InternalStore32(addr, v);
     ASSERT(addr >= 0xE000'0000);
     _NestStore32Actual(addr, v);
   }
@@ -772,6 +764,22 @@ private:
   void InternalMask32(phys_t addr, uint32_t x) {
     InternalStore32(addr, InternalLoad32(addr) & ~x);
   }
+
+  std::tuple<uint32_t,uint32_t> _InternalLoadMpuSecureRegion(size_t idx) {
+    printf("Bus internal load MPU secure region %zu\n", idx);
+    return {0,0}; // {RBAR,RLAR} // TODO
+  }
+
+  std::tuple<uint32_t,uint32_t> _InternalLoadMpuNonSecureRegion(size_t idx) {
+    printf("Bus internal load MPU non-secure region %zu\n", idx);
+    return {0,0}; // {RBAR,RLAR} // TODO
+  }
+
+  std::tuple<uint32_t,uint32_t> _InternalLoadSauRegion(size_t idx) {
+    printf("Bus internal load SAU region %zu\n", idx);
+    return {0,0}; // {RBAR,RLAR} // TODO
+  }
+
   uint32_t _ThisInstrAddr() { return _s.pc; }
   bool _IsSecure() { return _HaveSecurityExt() && _s.curState == SecurityState_Secure; }
   bool _HaveMainExt() { return true; }
@@ -895,7 +903,7 @@ private:
     return false && false; // DBGEN == HIGH && SPIDEN == HIGH // TODO
   }
   void _ResetSCSRegs() {
-    _dev.InternalReset();
+    _NestReset();
   }
   std::tuple<bool, int> _IsCPInstruction(uint32_t instr);
   void _DWT_InstructionMatch(uint32_t iaddr);
@@ -3271,9 +3279,9 @@ private:
       for (int r=0; r<numRegions; ++r) {
         uint32_t rbar, rlar;
         if (secure)
-          std::tie(rbar,rlar) = _dev.InternalLoadMpuSecureRegion(r);
+          std::tie(rbar,rlar) = _InternalLoadMpuSecureRegion(r);
         else
-          std::tie(rbar,rlar) = _dev.InternalLoadMpuNonSecureRegion(r);
+          std::tie(rbar,rlar) = _InternalLoadMpuNonSecureRegion(r);
 
         if (rlar & REG_MPU_RLAR__EN) {
           if (   addr >= ( GETBITSM(rbar, REG_MPU_RBAR__BASE )<<5)
@@ -5345,7 +5353,7 @@ SAttributes Emulator::_SecurityCheck(uint32_t addr, bool isInstrFetch, bool isSe
       bool multiRegionHit = false;
       uint32_t numRegion = GETBITSM(InternalLoad32(REG_SAU_TYPE), REG_SAU_TYPE__SREGION);
       for (int r=0; r<numRegion; ++r) {
-        auto [rbar,rlar] = _dev.InternalLoadSauRegion(r);
+        auto [rbar,rlar] = _InternalLoadSauRegion(r);
         if (rlar & REG_SAU_RLAR__ENABLE) {
           uint32_t baseAddr   = (GETBITSM(rbar, REG_SAU_RBAR__BADDR) << 5) | 0b00000;
           uint32_t limitAddr  = (GETBITSM(rlar, REG_SAU_RLAR__LADDR) << 5) | 0b11111;
@@ -5382,137 +5390,6 @@ SAttributes Emulator::_SecurityCheck(uint32_t addr, bool isInstrFetch, bool isSe
 }
 
 #if 1
-struct CorePeripheralState {
-  uint32_t fpdscrS{}, fpdscrNS{}, fpccrS{BIT(2)|BIT(30)|BIT(31)}, fpccrNS{BIT(2)|BIT(30)|BIT(31)}, fpcarS{}, fpcarNS{}, vtorS{0x2000'4000}, vtorNS{0x2000'4000}, sauCtrl{}, mpuTypeS{}, mpuTypeNS{}, mpuCtrlS{}, mpuCtrlNS{}, mpuMair0S{}, mpuMair0NS{}, mpuMair1S{}, mpuMair1NS{}, aircrS{}, aircrNS{}, demcrS{}, demcrNS{}, dhcsrS{}, dhcsrNS{}, dauthCtrl{}, mmfsrS{}, mmfsrNS{}, shcsrS{}, shcsrNS{}, shpr1S{}, shpr1NS{}, hfsrS{}, hfsrNS{}, ufsrS{}, ufsrNS{}, fpCtrl{}, nvicPendingS[16]{}, nvicPendingNS[16]{}, nvicNonSecure[16]{}, nvicIntrPrio[124]{};
-};
-
-struct CorePeripheral final :IDevice {
-  CorePeripheral() {}
-
-  void InternalReset() override {
-    printf("Bus internal reset\n");
-  }
-
-  uint32_t InternalLoad32(phys_t addr) override {
-    printf("Bus internal load 32 0x%x\n", addr);
-    switch (addr) {
-      case REG_FPDSCR_S:  return _s.fpdscrS;
-      case REG_FPDSCR_NS: return _s.fpdscrNS;
-      case REG_FPCCR_S:   return _s.fpccrS;
-      case REG_FPCCR_NS:  return _s.fpccrNS;
-      case REG_FPCAR_S:   return _s.fpcarS;
-      case REG_FPCAR_NS:  return _s.fpcarNS;
-      case REG_VTOR_S:    return _s.vtorS;
-      case REG_VTOR_NS:   return _s.vtorNS;
-      case REG_SAU_CTRL:  return _s.sauCtrl;
-      case REG_MPU_TYPE_S:    return _s.mpuTypeS;
-      case REG_MPU_TYPE_NS:   return _s.mpuTypeNS;
-      case REG_MPU_CTRL_S:    return _s.mpuCtrlS;
-      case REG_MPU_CTRL_NS:   return _s.mpuCtrlNS;
-      case REG_MPU_MAIR0_S:   return _s.mpuMair0S;
-      case REG_MPU_MAIR0_NS:  return _s.mpuMair0NS;
-      case REG_MPU_MAIR1_S:   return _s.mpuMair1S;
-      case REG_MPU_MAIR1_NS:  return _s.mpuMair1NS;
-      case REG_AIRCR_S:       return _s.aircrS;
-      case REG_AIRCR_NS:      return _s.aircrNS;
-      case REG_DEMCR:         return _s.demcrS;
-      case REG_DEMCR_NS:      return _s.demcrNS;
-      case REG_DHCSR:         return _s.dhcsrS;
-      case REG_DHCSR_NS:      return _s.dhcsrNS;
-      case REG_DAUTHCTRL:     return _s.dauthCtrl;
-      case REG_MMFSR_S:       return _s.mmfsrS;
-      case REG_MMFSR_NS:      return _s.mmfsrNS;
-      case REG_SHCSR_S:       return _s.shcsrS;
-      case REG_SHCSR_NS:      return _s.shcsrNS;
-      case REG_SHPR1_S:       return _s.shpr1S;
-      case REG_SHPR1_NS:      return _s.shpr1NS;
-      case REG_HFSR_S:        return _s.hfsrS;
-      case REG_HFSR_NS:       return _s.hfsrNS;
-      case REG_UFSR_S:        return _s.ufsrS;
-      case REG_UFSR_NS:       return _s.ufsrNS;
-      case REG_FP_CTRL:       return _s.fpCtrl;
-      default:
-        if (addr >= 0xE000E200 && addr < 0xE000E240)
-          return _s.nvicPendingS[(addr/4)&0xF];
-        if (addr >= 0xE002E200 && addr < 0xE002E240)
-          return _s.nvicPendingNS[(addr/4)&0xF];
-        if (addr >= 0xE000E380 && addr < 0xE000E3C0)
-          return _s.nvicNonSecure[(addr/4)&0xF];
-        if (addr >= 0xE000E400 && addr < 0xE000E5F0)
-          return _s.nvicIntrPrio[(addr - 0xE000E400)/4];
-        abort();
-    }
-  }
-
-  void InternalStore32(phys_t addr, uint32_t v) override {
-    printf("Bus internal store 32 0x%x = 0x%x\n", addr, v);
-    switch (addr) {
-      case REG_FPDSCR_S:  _s.fpdscrS  = v; break;
-      case REG_FPDSCR_NS: _s.fpdscrNS = v; break;
-      case REG_FPCCR_S:   _s.fpccrS   = v; break;
-      case REG_FPCCR_NS:  _s.fpccrNS  = v; break;
-      case REG_FPCAR_S:   _s.fpcarS   = v; break;
-      case REG_FPCAR_NS:  _s.fpcarNS  = v; break;
-      case REG_VTOR_S:    _s.vtorS    = v; break;
-      case REG_VTOR_NS:   _s.vtorNS   = v; break;
-      case REG_DEMCR:     _s.demcrS   = v; break;
-      case REG_DEMCR_NS:  _s.demcrNS  = v; break;
-      case REG_DHCSR:     _s.dhcsrS   = v; break;
-      case REG_DHCSR_NS:  _s.dhcsrNS  = v; break;
-      case REG_MMFSR_S:   _s.mmfsrS   = v; break;
-      case REG_MMFSR_NS:  _s.mmfsrNS  = v; break;
-      case REG_HFSR_S:    _s.hfsrS    = v; break;
-      case REG_HFSR_NS:   _s.hfsrNS   = v; break;
-      case REG_UFSR_S:    _s.ufsrS    = v; break;
-      case REG_UFSR_NS:   _s.ufsrNS   = v; break;
-      default:
-        abort();
-    }
-  }
-
-  std::tuple<uint32_t,uint32_t> InternalLoadMpuSecureRegion(size_t idx) override {
-    printf("Bus internal load MPU secure region %zu\n", idx);
-    return {0,0}; // {RBAR,RLAR}
-  }
-
-  std::tuple<uint32_t,uint32_t> InternalLoadMpuNonSecureRegion(size_t idx) override {
-    printf("Bus internal load MPU non-secure region %zu\n", idx);
-    return {0,0}; // {RBAR,RLAR}
-  }
-
-  std::tuple<uint32_t,uint32_t> InternalLoadSauRegion(size_t idx) override {
-    printf("Bus internal load SAU region %zu\n", idx);
-    return {0,0}; // {RBAR,RLAR}
-  }
-
-  int Load32(phys_t addr, uint32_t &v) override {
-    return 0;
-  }
-
-  int Load16(phys_t addr, uint16_t &v) override {
-    return 0;
-  }
-
-  int Load8(phys_t addr, uint8_t &v) override {
-    return 0;
-  }
-
-  int Store32(phys_t addr, uint32_t v) override {
-    return 0;
-  }
-
-  int Store16(phys_t addr, uint16_t v) override {
-    return 0;
-  }
-
-  int Store8(phys_t addr, uint8_t v) override {
-    return 0;
-  }
-
-private:
-  CorePeripheralState _s{};
-};
-
 struct RamDevice final :IDevice {
   RamDevice(phys_t base, size_t len) {
     _base = base;
@@ -5528,13 +5405,6 @@ struct RamDevice final :IDevice {
 
   void *GetBuffer() const { return _buf; }
   size_t GetSize() const { return _len; }
-
-  void InternalReset() override {}
-  uint32_t InternalLoad32(phys_t addr) override { return 0xFFFF'FFFF; }
-  void InternalStore32(phys_t addr, uint32_t v) override {}
-  std::tuple<uint32_t,uint32_t> InternalLoadMpuSecureRegion(size_t idx) override { return {0,0}; }
-  std::tuple<uint32_t,uint32_t> InternalLoadMpuNonSecureRegion(size_t idx) override { return {0,0}; }
-  std::tuple<uint32_t,uint32_t> InternalLoadSauRegion(size_t idx) override { return {0,0}; }
 
   bool Contains(phys_t addr) const {
     return addr >= _base && addr < _base + _len;
@@ -5603,13 +5473,6 @@ private:
 struct RemapDevice final :IDevice {
   RemapDevice(phys_t addr, size_t len, phys_t dstAddr, IDevice &dev) :_addr(addr), _dstAddr(dstAddr), _len(len), _dev(dev) {}
 
-  void InternalReset() override {}
-  uint32_t InternalLoad32(phys_t addr) override { return 0xFFFF'FFFF; }
-  void InternalStore32(phys_t addr, uint32_t v) override {}
-  std::tuple<uint32_t,uint32_t> InternalLoadMpuSecureRegion(size_t idx) override { return {0,0}; }
-  std::tuple<uint32_t,uint32_t> InternalLoadMpuNonSecureRegion(size_t idx) override { return {0,0}; }
-  std::tuple<uint32_t,uint32_t> InternalLoadSauRegion(size_t idx) override { return {0,0}; }
-
   bool Contains(phys_t addr, size_t n=1) const {
     return addr >= _addr && addr + (n-1) < _addr + _len;
   }
@@ -5663,28 +5526,6 @@ private:
 };
 
 struct STM32Device final :IDevice {
-  void InternalReset() override {
-    _core.InternalReset();
-  }
-
-  uint32_t InternalLoad32(phys_t addr) override {
-    return _core.InternalLoad32(addr);
-  }
-
-  void InternalStore32(phys_t addr, uint32_t v) override {
-    _core.InternalStore32(addr, v);
-  }
-
-  std::tuple<uint32_t,uint32_t> InternalLoadMpuSecureRegion(size_t idx) override {
-    return _core.InternalLoadMpuSecureRegion(0);
-  }
-  std::tuple<uint32_t,uint32_t> InternalLoadMpuNonSecureRegion(size_t idx) override {
-    return _core.InternalLoadMpuNonSecureRegion(0);
-  }
-  std::tuple<uint32_t,uint32_t> InternalLoadSauRegion(size_t idx) override {
-    return _core.InternalLoadSauRegion(0);
-  }
-
   int Load32(phys_t addr, uint32_t &v) override {
     auto dev = (IDevice*)_Resolve(addr);
     if (!dev) {
@@ -5796,7 +5637,6 @@ private:
       return nullptr;
   }
 
-  CorePeripheral      _core;
   RamDevice           _sram1{0x2000'0000, 48*1024};
   RamDevice           _sram2{0x2000'C000, 16*1024};
   RemapDevice         _sram2r{0x1000'0000, 16*1024, 0x2000'C000, _sram2};
