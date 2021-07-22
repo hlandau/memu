@@ -608,8 +608,9 @@ struct IDevice {
 /* Emulator {{{2
  * ========
  */
+template<typename Device=IDevice>
 struct Emulator {
-  Emulator(IDevice &dev) :_dev(dev) {
+  Emulator(Device &dev) :_dev(dev) {
     _TakeReset();
   }
 
@@ -5470,7 +5471,7 @@ private:
 private:
   CpuState _s{};
   CpuNest  _n{};
-  IDevice &_dev;
+  Device  &_dev;
 };
 
 /* Test Driver                                                             {{{1
