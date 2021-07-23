@@ -5599,39 +5599,7 @@ private:
     TRACEI(STM, T1, "n=%u registers=0x%x", n, registers);
 
     // ---- EXECUTE -------------------------------------------------
-    if (!_ConditionPassed())
-      return;
-
-    //EncodingSpecificOperations
-    uint32_t addr     = _GetR(n);
-    uint32_t endAddr  = _GetR(n) + 4*_BitCount(registers);
-
-    // Determine if the stack pointer limit should be checked.
-    uint32_t limit;
-    bool     applyLimit;
-    bool     doOperation;
-    if (n == 13 && wback && !GETBIT(registers, n)) {
-      std::tie(limit, applyLimit) = _LookUpSPLim(_LookUpSP());
-      doOperation                 = (!applyLimit || endAddr >= limit);
-    } else
-      doOperation = true;
-
-    for (int i=0; i<15; ++i) {
-      // Memory operation only performed if limit not violated.
-      if (GETBIT(registers, i) && doOperation) {
-        if (i == n && wback && i != _LowestSetBit(registers))
-          _MemA(addr, 4, UNKNOWN_VAL(0)); // encoding T1 only
-        else
-          _MemA(addr, 4, _GetR(i));
-
-        addr += 4;
-      }
-    }
-
-    // If the stack pointer is being updated a fault will be raised if the
-    // limit is violated.
-    if (wback)
-      _SetRSPCheck(n, endAddr);
+    _Exec_STM(n, registers, wback);
   }
 
   /* _DecodeExecute16_1001xx {{{4
@@ -5666,29 +5634,7 @@ private:
     bool     wback = false;
 
     // ---- EXECUTE -------------------------------------------------
-    if (!_ConditionPassed())
-      return;
-
-    //EncodingSpecificOperations
-    uint32_t offsetAddr = add ? _GetR(n) + imm32 : _GetR(n) - imm32;
-    uint32_t addr       = index ? offsetAddr : _GetR(n);
-
-    // Determine if the stack pointer limit should be checked.
-    uint32_t limit;
-    bool     applyLimit;
-    if (n == 13 && wback)
-      std::tie(limit, applyLimit) = _LookUpSPLim(_LookUpSP());
-    else
-      applyLimit = false;
-
-    // Memory operation only performed if limit not violated.
-    if (!applyLimit || offsetAddr >= limit)
-      _MemU(addr, 4, _GetR(t));
-
-    // If the stack pointer is being updated, a fault will be raised if the
-    // limit is violated.
-    if (wback)
-      _SetRSPCheck(n, offsetAddr);
+    _Exec_STR_immediate(t, n, imm32, index, add, wback);
   }
 
   /* _DecodeExecute16_010000 {{{4
@@ -5802,19 +5748,7 @@ private:
     TRACEI(ORR_reg, T1, "d/n=%u m=%u S=%u", d, m, setflags);
 
     // ---- EXECUTE -------------------------------------------------
-    if (!_ConditionPassed())
-      return;
-
-    //EncodingSpecificOperations
-    auto [shifted, carry] = _Shift_C(_GetR(m), shiftT, shiftN, GETBITSM(_s.xpsr, XPSR__C));
-    uint32_t result = _GetR(n) | shifted;
-    _SetR(d, result);
-    if (setflags) {
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__N, GETBIT(result, 31));
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__Z, _IsZeroBit(result));
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__C, carry);
-      // APSR.V unchanged
-    }
+    _Exec_ORR_register(d, n, m, setflags, shiftT, shiftN);
   }
 
   /* _DecodeExecute16_1000xx {{{4
@@ -5850,29 +5784,7 @@ private:
     TRACEI(STRH_imm, T1, "t=%u n=%u imm32=0x%x", t, n, imm32);
 
     // ---- EXECUTE -------------------------------------------------
-    if (!_ConditionPassed())
-      return;
-
-    //EncodingSpecificOperations
-    uint32_t offsetAddr = add ? _GetR(n) + imm32 : _GetR(n) - imm32;
-    uint32_t addr       = index ? offsetAddr : _GetR(n);
-
-    // Determine if the stack pointer limit should be checked.
-    uint32_t limit;
-    bool     applyLimit;
-    if (n == 13 && wback)
-      std::tie(limit, applyLimit) = _LookUpSPLim(_LookUpSP());
-    else
-      applyLimit = false;
-
-    // Memory operation only performed if limit not violated.
-    if (!applyLimit || offsetAddr >= limit)
-      _MemU(addr, 2, GETBITS(_GetR(t), 0,15));
-
-    // If the stack pointer is being updated a fault will be raised if the
-    // limit is violated.
-    if (wback)
-      _SetRSPCheck(n, offsetAddr);
+    _Exec_STRH_immediate(t, n, imm32, index, add, wback);
   }
 
   /* _DecodeExecute16_0101xx {{{4
@@ -5949,13 +5861,7 @@ private:
     uint32_t shiftN = 0;
 
     // ---- EXECUTE -------------------------------------------------
-    if (!_ConditionPassed())
-      return;
-
-    //EncodingSpecificOperations
-    uint32_t offset = _Shift(_GetR(m), shiftT, shiftN, GETBITSM(_s.xpsr, XPSR__C));
-    uint32_t addr   = _GetR(n) + offset;
-    _MemU(addr, 1, GETBITS(_GetR(t), 0, 7));
+    _Exec_STRB_register(t, n, m, index, add, wback, shiftT, shiftN);
   }
 
   /* _DecodeExecute16_010100_0 {{{4
@@ -5978,13 +5884,7 @@ private:
     TRACEI(STR_reg, T1, "t=%u n=%u m=%u", t, n, m);
 
     // ---- EXECUTE -------------------------------------------------
-    if (!_ConditionPassed())
-      return;
-
-    //EncodingSpecificOperations
-    uint32_t offset = _Shift(_GetR(m), shiftT, shiftN, GETBITSM(_s.xpsr, XPSR__C));
-    uint32_t addr   = _GetR(n) + offset;
-    _MemU(addr, 4, _GetR(t));
+    _Exec_STR_register(t, n, m, index, add, wback, shiftT, shiftN);
   }
 
   /* _DecodeExecute16_00xxxx {{{4
@@ -6050,22 +5950,7 @@ private:
     TRACEI(MOV_reg, T2, "d=%u m=%u S=%u shiftT=%u shiftN=%u", d, m, setflags, shiftT, shiftN);
 
     // ---- EXECUTE -------------------------------------------------
-    if (!_ConditionPassed())
-      return;
-
-    //EncodingSpecificOperations
-    auto [result, carry] = _Shift_C(_GetR(m), shiftT, shiftN, GETBITSM(_s.xpsr, XPSR__C));
-    if (d == 15)
-      _ALUWritePC(result); // setflags is always false here
-    else {
-      _SetRSPCheck(d, result);
-      if (setflags) {
-        _s.xpsr = CHGBITSM(_s.xpsr, XPSR__N, GETBIT(result,31));
-        _s.xpsr = CHGBITSM(_s.xpsr, XPSR__Z, _IsZeroBit(result));
-        _s.xpsr = CHGBITSM(_s.xpsr, XPSR__C, carry);
-        // APSR.V unchanged
-      }
-    }
+    _Exec_MOV_register(d, m, setflags, shiftT, shiftN);
   }
 
   /* _DecodeExecute16_001xxx {{{4
@@ -6119,18 +6004,7 @@ private:
     TRACEI(SUB_imm, T2, "d=%u n=%u S=%u imm32=0x%x", d, n, setflags, imm32);
 
     // ---- EXECUTE -------------------------------------------------
-    if (!_ConditionPassed())
-      return;
-
-    //EncodingSpecificOperations
-    auto [result, carry, overflow] = _AddWithCarry(_GetR(n), ~imm32, true);
-    _SetR(d, result);
-    if (setflags) {
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__N, GETBIT(result, 31));
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__Z, _IsZeroBit(result));
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__C, carry);
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__V, overflow);
-    }
+    _Exec_SUB_immediate(d, n, setflags, imm32);
   }
 
   /* _DecodeExecute16_00110x {{{4
@@ -6150,20 +6024,9 @@ private:
     TRACEI(ADD_imm, T2, "d/n=%u S=%u imm32=0x%x", d, setflags, imm32);
 
     // ---- EXECUTE -------------------------------------------------
-    if (!_ConditionPassed())
-      return;
-
-    //EncodingSpecificOperations
-    auto [result, carry, overflow] = _AddWithCarry(_GetR(n), imm32, false);
-    _SetR(d, result);
-    if (setflags) {
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__N, GETBIT(result,31));
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__Z, _IsZeroBit(result));
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__C, carry);
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__V, overflow);
-    }
+    _Exec_ADD_immediate(d, n, setflags, imm32);
   }
-   
+
   /* _DecodeExecute16_00100x {{{4
    * -----------------------
    */
@@ -6181,19 +6044,7 @@ private:
     TRACEI(MOV_imm, T1, "d=%u S=%u imm32=0x%x carry=%u", d, setflags, imm32, carry);
 
     // ---- EXECUTE -------------------------------------------------
-    if (!_ConditionPassed())
-      return;
-
-    //EncodingSpecificOperations
-    uint32_t result = imm32;
-    _SetR(d, result);
-
-    if (setflags) {
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__N, GETBIT(result, 31));
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__Z, _IsZeroBit(result));
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__C, carry);
-      // APSR.V unchanged
-    }
+    _Exec_MOV_immediate(d, setflags, imm32, carry);
   }
 
   /* _DecodeExecute16_00101x {{{4
@@ -6211,15 +6062,7 @@ private:
     TRACEI(CMP_imm, T1, "n=%u imm32=0x%x R[n]=0x%x", n, imm32, _GetR(n));
 
     // ---- EXECUTE -------------------------------------------------
-    if (!_ConditionPassed())
-      return;
-
-    //EncodingSpecificOperations
-    auto [result, carry, overflow] = _AddWithCarry(_GetR(n), ~imm32, true);
-    _s.xpsr = CHGBITSM(_s.xpsr, XPSR__N, GETBIT(result, 31));
-    _s.xpsr = CHGBITSM(_s.xpsr, XPSR__Z, _IsZeroBit(result));
-    _s.xpsr = CHGBITSM(_s.xpsr, XPSR__C, carry);
-    _s.xpsr = CHGBITSM(_s.xpsr, XPSR__V, overflow);
+    _Exec_CMP_immediate(n, imm32);
   }
 
   /* _DecodeExecute16_010001 {{{4
@@ -6279,14 +6122,7 @@ private:
     TRACEI(BX, T1, "m=%u allowNonSecure=%u R[m]=0x%x", m, allowNonSecure, _GetR(m));
 
     // ---- EXECUTE -------------------------------------------------
-    if (!_ConditionPassed())
-      return;
-
-    //EncodingSpecificOperations
-    auto exc = _BXWritePC(_GetR(m), allowNonSecure);
-    if (exc.fault != NoFault)
-      TRACE("  FAULT: %d\n", exc.fault);
-    _HandleException(exc);
+    _Exec_BX(m, allowNonSecure);
   }
 
   /* _DecodeExecute16_010001_11_1 {{{4
@@ -6313,45 +6149,7 @@ private:
     TRACEI(BLX, T1, "m=%u allowNonSecure=%u", m, allowNonSecure);
 
     // ---- EXECUTE -------------------------------------------------
-    if (!_ConditionPassed())
-      return;
-
-    //EncodingSpecificOperations
-    uint32_t target         = _GetR(m);
-    uint32_t nextInstrAddr  = (_GetPC()-2) | 1;
-
-    if (allowNonSecure && !(target & BIT(0))) {
-      if (!_IsAligned(_GetSP(), 8))
-        throw Exception(ExceptionType::UNPREDICTABLE);
-
-      uint32_t addr = _GetSP() - 8;
-   
-      uint32_t savedPSR = 0;
-      savedPSR = CHGBITSM(savedPSR, RETPSR__EXCEPTION, GETBITSM(_s.xpsr,      XPSR__EXCEPTION));
-      savedPSR = CHGBITSM(savedPSR, RETPSR__SFPA,      GETBITSM(_s.controlS,  CONTROL__SFPA  ));
-
-      // Only the stack locations, not the store order, are architected.
-      auto spName = _LookUpSP();
-      auto mode   = _CurrentMode();
-
-      auto                      exc = _Stack(addr, 0, spName, mode, nextInstrAddr);
-      if (exc.fault == NoFault) exc = _Stack(addr, 4, spName, mode, savedPSR);
-
-      _HandleException(exc);
-
-      // Stack pointer update will raise a fault if limit violated.
-      _SetSP(addr);
-      _SetLR(0xFEFF'FFFF);
-
-      // If in handler mode, IPSR must be non-zero. To prevent revealing which
-      // secure handler is calling non-secure code, IPSR is set to an invalid
-      // but non-zero value (namely the reset exception number).
-      if (mode == PEMode_Handler)
-        _s.xpsr = CHGBITSM(_s.xpsr, XPSR__EXCEPTION, 1);
-    } else
-      _SetLR(nextInstrAddr);
-
-    _BLXWritePC(target, allowNonSecure);
+    _Exec_BLX(m, allowNonSecure);
   }
 
   /* _DecodeExecute16_010001_10 {{{4
@@ -6377,21 +6175,7 @@ private:
     TRACEI(MOV_reg, T1, "d=%u m=%u", d, m);
 
     // ---- EXECUTE -------------------------------------------------
-    if (!_ConditionPassed())
-      return;
-
-    //EncodingSpecificOperations
-    auto [result, carry] = _Shift_C(_GetR(m), shiftT, shiftN, GETBITSM(_s.xpsr, XPSR__C));
-    if (d == 15)
-      _ALUWritePC(result); // setflags is always FALSE here
-    else {
-      _SetRSPCheck(d, result);
-      if (setflags) {
-        _s.xpsr = CHGBITSM(_s.xpsr, XPSR__N, !!(result & BIT(31)));
-        _s.xpsr = CHGBITSM(_s.xpsr, XPSR__Z, _IsZeroBit(result));
-        _s.xpsr = CHGBITSM(_s.xpsr, XPSR__C, carry);
-      }
-    }
+    _Exec_MOV_register(d, m, setflags, shiftT, shiftN);
   }
 
   /* _DecodeExecute16_01001_xx {{{4
@@ -6449,20 +6233,7 @@ private:
     TRACEI(LDR_lit, T1, "t=%u imm32=0x%x", t, imm32);
 
     // ---- EXECUTE -------------------------------------------------
-    if (!_ConditionPassed())
-      return;
-
-    //EncodingSpecificOperations
-    uint32_t base     = _Align(_GetPC(), 4);
-    uint32_t address  = add ? base + imm32 : base - imm32;
-    uint32_t data     = _MemU(address, 4);
-    if (t == 15) {
-      if (GETBITS(address, 0, 1) == 0b00)
-        _LoadWritePC(data, 0, 0, false, false);
-      else
-        throw Exception(ExceptionType::UNPREDICTABLE);
-    } else
-      _SetR(t, data);
+    _Exec_LDR_literal(t, imm32, add);
   }
 
   /* _DecodeExecute16_011xxx {{{4
@@ -6514,29 +6285,7 @@ private:
     bool     index = true, add = true, wback = false;
 
     // ---- EXECUTE -------------------------------------------------
-    if (!_ConditionPassed())
-      return;
-
-    //EncodingSpecificOperations
-    uint32_t offsetAddr = add ? _GetR(n) + imm32 : _GetR(n) - imm32;
-    uint32_t addr       = index ? offsetAddr : _GetR(n);
-
-    // Determine if the stack pointer limit should be checked.
-    uint32_t limit;
-    bool     applyLimit;
-    if (n == 13 && wback)
-      std::tie(limit, applyLimit) = _LookUpSPLim(_LookUpSP());
-    else
-      applyLimit = false;
-
-    // Memory operation only performed if limit not violated.
-    if (!applyLimit || offsetAddr >= limit)
-      _MemU(addr, 1, GETBITS(_GetR(t), 0, 7));
-
-    // If the stack pointer is being updated a fault will be raised
-    // if the limit is violated.
-    if (wback)
-      _SetRSPCheck(n, offsetAddr);
+    _Exec_STRB_immediate(t, n, imm32, index, add, wback);
   }
 
   /* _DecodeExecute16_01111x {{{4
@@ -6557,30 +6306,7 @@ private:
     TRACEI(LDRB_imm, T1, "t=%u n=%u imm32=0x%x", t, n, imm32);
 
     // ---- EXECUTE -------------------------------------------------
-    if (!_ConditionPassed())
-      return;
-
-    //EncodingSpecificOperations
-
-    uint32_t offsetAddr = add ? _GetR(n) + imm32 : _GetR(n) - imm32;
-    uint32_t addr       = index ? offsetAddr : _GetR(n);
-
-    // Determine if the stack pointer limit should be checked.
-    uint32_t limit;
-    bool applyLimit;
-    if (n == 13 && wback)
-      std::tie(limit, applyLimit) = _LookUpSPLim(_LookUpSP());
-    else
-      applyLimit = false;
-
-    // Memory operation only performed if limit not violated.
-    if (!applyLimit || offsetAddr >= limit)
-      _SetR(t, _ZeroExtend(_MemU(addr, 1), 32));
-
-    // If the stack pointer is benig updated a fault will be raised if the
-    // limit is violated.
-    if (wback)
-      _SetRSPCheck(n, offsetAddr);
+    _Exec_LDRB_immediate(t, n, imm32, index, add, wback);
   }
 
   /* _DecodeExecute16_01100x {{{4
@@ -6601,27 +6327,7 @@ private:
     TRACEI(STR_imm, T1, "t=%u n=%u imm32=0x%x", t, n, imm32);
 
     // ---- EXECUTE -------------------------------------------------
-    if (!_ConditionPassed())
-      return;
-
-    //EncodingSpecificOperations
-    uint32_t offsetAddr = add ? _GetR(n) + imm32 : _GetR(n) - imm32;
-    uint32_t addr       = index ? offsetAddr : _GetR(n);
-
-    // Determine if the stack pointer limit should be checked
-    uint32_t  limit;
-    bool      applyLimit;
-    if (n == 13 && wback)
-      std::tie(limit, applyLimit) = _LookUpSPLim(_LookUpSP());
-    else
-      applyLimit = false;
-
-    // Memory operation only performed if limit not violated
-    if (!applyLimit || offsetAddr >= limit)
-      _MemU(addr, 4, _GetR(t));
-
-    if (wback)
-      _SetRSPCheck(n, offsetAddr);
+    _Exec_STR_immediate(t, n, imm32, index, add, wback);
   }
 
   /* _DecodeExecute16_01101x {{{4
@@ -6642,39 +6348,7 @@ private:
     TRACEI(LDR_imm, T1, "t=%u n=%u imm32=0x%x", t, n, imm32);
 
     // ---- EXECUTE -------------------------------------------------
-    if (!_ConditionPassed())
-      return;
-
-    //EncodingSpecificOperations
-    uint32_t offsetAddr = add ? _GetR(n) + imm32 : _GetR(n) - imm32;
-    uint32_t addr       = index ? offsetAddr : _GetR(n);
-
-    // Determine if the stack pointer limit should be checked.
-    uint32_t limit;
-    bool applyLimit;
-    if (n == 13 && wback)
-      std::tie(limit, applyLimit) = _LookUpSPLim(_LookUpSP());
-    else
-      applyLimit = false;
-
-    // Memory operation only performed if limit not violated
-    uint32_t data = 0;
-    if (!applyLimit || offsetAddr >= limit)
-      data = _MemU(addr, 4);
-
-    // If the stack pointer is being updated a fault will be
-    // raised if the limit is violated
-    if (t == 15) {
-      if (GETBITS(addr, 0, 1) == 0b00)
-        _LoadWritePC(data, n, offsetAddr, wback, true);
-      else
-        CUNPREDICTABLE_UNALIGNED();
-    } else {
-      if (wback)
-        _SetRSPCheck(n, offsetAddr);
-
-      _SetR(t, data);
-    }
+    _Exec_LDR_immediate(t, n, imm32, index, add, wback);
   }
 
   /* _DecodeExecute16_1010xx {{{4
@@ -6704,12 +6378,7 @@ private:
     TRACEI(ADR, T1, "d=%u imm32=0x%x", d, imm32);
 
     // ---- EXECUTE -------------------------------------------------
-    if (!_ConditionPassed())
-      return;
-
-    //EncodingSpecificOperations
-    uint32_t result = add ? _Align(_GetPC(),4) + imm32 : _Align(_GetPC(),4) - imm32;
-    _SetR(d, result);
+    _Exec_ADR(d, imm32, add);
   }
 
   /* _DecodeExecute16_1010xx_1 {{{4
@@ -6823,8 +6492,7 @@ private:
     TRACEI(IT, T1, "firstCond=0x%x mask=0x%x", firstCond, mask);
 
     // ---- EXECUTE -------------------------------------------------
-    //EncodingSpecificOperations
-    _SetITSTATE((firstCond<<4) | mask);
+    _Exec_IT(firstCond, mask);
   }
 
   /* _DecodeExecute16_101100_00 {{{4
@@ -6857,19 +6525,7 @@ private:
     TRACEI(ADD_SP_plus_imm, T2, "d=%u imm32=0x%x oldSP=0x%x", d, imm32, _GetSP());
 
     // ---- EXECUTE -------------------------------------------------
-    if (!_ConditionPassed())
-      return;
-
-    //EncodingSpecificOperations
-    auto [result, carry, overflow] = _AddWithCarry(_GetSP(), imm32, false);
-    _SetRSPCheck(d, result);
-    TRACE("  newSP=0x%x\n", result);
-    if (setflags) {
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__N, GETBIT(result, 31));
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__Z, _IsZeroBit(result));
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__C, carry);
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__V, overflow);
-    }
+    _Exec_ADD_SP_plus_immediate(d, setflags, imm32);
   }
 
   /* _DecodeExecute16_101100_00_1 {{{4
@@ -6887,18 +6543,7 @@ private:
     TRACEI(SUB_SP_minus_imm, T1, "d=%u S=%u imm32=0x%x prevSP=0x%x", d, setflags, imm32, _GetSP());
 
     // ---- EXECUTE -------------------------------------------------
-    if (!_ConditionPassed())
-      return;
-
-    auto [result, carry, overflow] = _AddWithCarry(_GetSP(), ~imm32, true);
-    _SetRSPCheck(d, result);
-    TRACE("  newSP=0x%x\n", result);
-    if (setflags) {
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__N, GETBIT(result,31));
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__Z, _IsZeroBit(result));
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__C, carry);
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__V, overflow);
-    }
+    _Exec_SUB_SP_minus_immediate(d, setflags, imm32);
   }
 
   /* _DecodeExecute16_101111_11_0000 {{{4
@@ -6963,11 +6608,7 @@ private:
     TRACEI(WFI, T1, "");
 
     // ---- EXECUTE -------------------------------------------------
-    if (!_ConditionPassed())
-      return;
-
-    //EncodingSpecificOperations
-    _WaitForInterrupt();
+    _Exec_WFI();
   }
 
   /* _DecodeExecute16_1011x1_0 {{{4
@@ -6996,8 +6637,9 @@ private:
     uint32_t regList  = GETBITS(instr, 0, 7);
 
     uint32_t n          = 13;
-    bool     wback      = true;
     uint32_t registers  = regList | (P<<15);
+    bool     wback      = true;
+
     if (_BitCount(registers) < 1)
       CUNPREDICTABLE_UNDEFINED();
 
@@ -7007,68 +6649,7 @@ private:
     TRACEI(LDM, T3, "n=%u wback=%u registers=0x%x", n, wback, registers);
 
     // ---- EXECUTE -------------------------------------------------
-    if (!_ConditionPassed())
-      return;
-
-    //EncodingSpecificOperations
-    uint32_t addr = _GetR(n);
-    uint32_t limit;
-    bool     applyLimit;
-    if (n == 13 && wback) {
-      std::tie(limit, applyLimit) = _LookUpSPLim(_LookUpSP());
-      // If the memory operation is not performed as a result of a stack limit
-      // violation, and the write-back of the SP itself does not raise a stack
-      // limit violation, it is IMPLEMENTATION DEFINED whether a SPLIM
-      // exception is raised. It is recommended that any instruction which
-      // discards a memory access as a result of a stack limit violation, and
-      // where the write-back of the SP itself does not raise a stack limit
-      // violation, generates a SPLIM exception.
-      if (IMPL_DEF_SPLIM_EXCEPTION_ON_INVAL_MEM_ACCESS) {
-        if (applyLimit && addr < limit) {
-          if (_HaveMainExt())
-            InternalOr32(REG_UFSR, REG_UFSR__STKOF);
-          // If Main Extension is not implemented the fault always escalates to
-          // HardFault.
-          auto excInfo = _CreateException(UsageFault, false, UNKNOWN_VAL(false));
-          _HandleException(excInfo);
-        }
-      }
-    } else
-      applyLimit = false;
-
-    uint32_t newBaseVal = 0; // ???
-    for (int i=0; i<15; ++i) {
-      // If R[n] is the SP, memory operation only performed if limit not violated.
-      if (GETBIT(registers, i) && (!applyLimit || addr >= limit)) {
-        if (i != n)
-          _SetR(i, _MemA(addr, 4));
-        else
-          newBaseVal = _MemA(addr, 4);
-
-        addr += 4;
-      }
-    }
-
-    uint32_t newPCVal = 0; // ???
-    if (GETBIT(registers, 15) && (!applyLimit || addr >= limit))
-      newPCVal = _MemA(addr, 4);
-
-    // If the register list contains the register that holds the base address
-    // it must be updated after all memory reads have been performed. This
-    // prevents the base address being overwritten if one of the memory reads
-    // generates a fault.
-    if (GETBIT(registers, n))
-      wback = true;
-    else
-      newBaseVal = _GetR(n) + 4*_BitCount(registers);
-
-    // If the PC is in the register list update that now, which may raise a
-    // fault. Likewise, if R[n] is the SP, writing back may raise a fault due
-    // to SP limit violation.
-    if (GETBIT(registers, 15))
-      _LoadWritePC(newPCVal, n, newBaseVal, wback, false);
-    else if (wback)
-      _SetRSPCheck(n, newBaseVal);
+    _Exec_LDM(n, registers, wback);
   }
 
   /* _DecodeExecute16_101101 {{{4
@@ -7081,8 +6662,8 @@ private:
     uint32_t regList  = GETBITS(instr, 0, 7);
 
     uint32_t n          = 13;
-    bool     wback      = true;
     uint32_t registers  = regList | (M<<14);
+    bool     wback      = true;
 
     if (_BitCount(registers) < 1)
       CUNPREDICTABLE_UNDEFINED();
@@ -7090,28 +6671,7 @@ private:
     TRACEI(STMDB, T2, "n=%u registers=0x%x wback=%u", n, registers, wback);
 
     // ---- EXECUTE -------------------------------------------------
-    if (!_ConditionPassed())
-      return;
-
-    //EncodingSpecificOperations
-    uint32_t addr = _GetR(n) - 4*_BitCount(registers);
-
-    uint32_t limit;
-    bool applyLimit;
-    if (n == 13 && wback)
-      std::tie(limit, applyLimit) = _LookUpSPLim(_LookUpSP());
-    else
-      applyLimit = false;
-
-    for (int i=0; i<15; ++i)
-      // If R[n] is the SP, memory operation only performed if limit not violated
-      if (GETBIT(registers, i) && (!applyLimit || addr >= limit)) {
-        _MemA(addr, 4, _GetR(i));
-        addr += 4;
-      }
-
-    if (wback)
-      _SetRSPCheck(n, _GetR(n) - 4*_BitCount(registers));
+    _Exec_STMDB(n, registers, wback);
   }
 
   /* _DecodeExecute16_101101_10_01_1 {{{4
@@ -7144,21 +6704,7 @@ private:
     TRACEIU(CPS, T1, "enable=%u disable=%u PRI=%u FAULT=%u", enable, disable, affectPRI, affectFAULT);
 
     // ---- EXECUTE -------------------------------------------------
-    //EncodingSpecificOperations
-    if (_CurrentModeIsPrivileged()) {
-      if (enable) {
-        if (affectPRI)
-          _SetPRIMASK(CHGBITSM(_GetPRIMASK(), PRIMASK__PM, 0));
-        if (affectFAULT)
-          _SetFAULTMASK(CHGBITSM(_GetFAULTMASK(), FAULTMASK__FM, 0));
-      }
-      if (disable) {
-        if (affectPRI)
-          _SetPRIMASK(CHGBITSM(_GetPRIMASK(), PRIMASK__PM, 1));
-        if (affectFAULT)
-          _SetFAULTMASK(CHGBITSM(_GetFAULTMASK(), FAULTMASK__FM, 1));
-      }
-    }
+    _Exec_CPS(enable, disable, affectPRI, affectFAULT);
   }
 
   /* _DecodeExecute16_1101xx {{{4
@@ -7201,11 +6747,7 @@ private:
     TRACEI(B, T1, "imm32=0x%x cond=%u", imm32, cond);
 
     // ---- EXECUTE -------------------------------------------------
-    if (!_ConditionPassed())
-      return;
-
-    //EncodingSpecificOperations
-    _BranchWritePC(_GetPC() + imm32);
+    _Exec_B(imm32);
   }
 
   /* _DecodeExecute16_11100 {{{4
@@ -7223,11 +6765,7 @@ private:
     TRACEI(B, T2, "imm32=0x%x", imm32);
 
     // ---- EXECUTE -------------------------------------------------
-    if (!_ConditionPassed())
-      return;
-
-    //EncodingSpecificOperations
-    _BranchWritePC(_GetPC() + imm32);
+    _Exec_B(imm32);
   }
 
   /* Decode/Execute (32-Bit Instructions) {{{3
@@ -7547,19 +7085,7 @@ private:
       throw Exception(ExceptionType::UNPREDICTABLE);
 
     // ---- EXECUTE -------------------------------------------------
-    if (!_ConditionPassed())
-      return;
-
-    //EncodingSpecificOperations
-    auto [shifted, carry] = _Shift_C(_GetR(m), shiftT, shiftN, GETBITSM(_s.xpsr, XPSR__C));
-    uint32_t result = _GetR(n) & shifted;
-    _SetR(d, result);
-    if (setflags) {
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__N, GETBIT(result, 31));
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__Z, _IsZeroBit(result));
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__C, carry);
-      // APSR.V unchanged
-    }
+    _Exec_AND_register(d, n, m, setflags, shiftT, shiftN);
   }
 
   /* _DecodeExecute32_0101_0010_0_xxxx {{{4
@@ -7591,19 +7117,7 @@ private:
     TRACEI(ORR_reg, T2, "d=%u n=%u m=%u S=%u shiftT=%u shiftN=%u", d, n, m, setflags, shiftT, shiftN);
 
     // ---- EXECUTE -------------------------------------------------
-    if (!_ConditionPassed())
-      return;
-
-    //EncodingSpecificOperations
-    auto [shifted, carry] = _Shift_C(_GetR(m), shiftT, shiftN, GETBITSM(_s.xpsr, XPSR__C));
-    uint32_t result = _GetR(n) | shifted;
-    _SetR(d, result);
-    if (setflags) {
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__N, GETBIT(result,31));
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__Z, _IsZeroBit(result));
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__C, carry);
-      // APSR.V unchanged
-    }
+    _Exec_ORR_register(d, n, m, setflags, shiftT, shiftN);
   }
 
   /* _DecodeExecute32_10xx {{{4
@@ -7733,13 +7247,7 @@ private:
       throw Exception(ExceptionType::UNPREDICTABLE);
 
     // ---- EXECUTE -------------------------------------------------
-    if (!_ConditionPassed())
-      return;
-
-    //EncodingSpecificOperations
-    uint32_t nextInstrAddr = _GetPC();
-    _SetLR(nextInstrAddr | 1);
-    _BranchWritePC(_GetPC() + imm32);
+    _Exec_BL(imm32);
   }
 
   void _DecodeExecute32_1001_00_110_11(uint32_t instr, uint32_t pc) {
@@ -7795,11 +7303,7 @@ private:
     TRACEI(DSB, T1, "option=0x%x", option);
 
     // ---- EXECUTE -------------------------------------------------
-    if (!_ConditionPassed())
-      return;
-
-    //EncodingSpecificOperations
-    _DataSynchronizationBarrier(option);
+    _Exec_DSB(option);
   }
 
   /* _DecodeExecute32_1100_xxxxx {{{4
@@ -7950,29 +7454,7 @@ private:
       throw Exception(ExceptionType::UNPREDICTABLE);
 
     // ---- EXECUTE -------------------------------------------------
-    if (!_ConditionPassed())
-      return;
-
-    //EncodingSpecificOperations
-    uint32_t offsetAddr = add ? _GetR(n) + imm32 : _GetR(n) - imm32;
-    uint32_t addr       = index ? offsetAddr : _GetR(n);
-
-    // Determine if the stack pointer limit should be checked.
-    uint32_t limit;
-    bool     applyLimit;
-    if (n == 13 && wback)
-      std::tie(limit, applyLimit) = _LookUpSPLim(_LookUpSP());
-    else
-      applyLimit = false;
-
-    // Memory operation only performed if limit not violated.
-    if (!applyLimit || offsetAddr >= limit)
-      _MemU(addr, 1, GETBITS(_GetR(t), 0, 7));
-
-    // If the stack pointer is being updated a fault will be raised
-    // if the limit is violated.
-    if (wback)
-      _SetRSPCheck(n, offsetAddr);
+    _Exec_STRB_immediate(t, n, imm32, index, add, wback);
   }
 
   /* _DecodeExecute32_1100_01100_xxxx {{{4
@@ -8000,27 +7482,7 @@ private:
     TRACEI(STR_imm, T3, "t=%u n=%u imm32=0x%x", t, n, imm32);
 
     // ---- EXECUTE -------------------------------------------------
-    if (!_ConditionPassed())
-      return;
-
-    //EncodingSpecificOperations
-    uint32_t offsetAddr = add ? _GetR(n) + imm32 : _GetR(n) - imm32;
-    uint32_t addr       = index ? offsetAddr : _GetR(n);
-
-    // Determine if the stack pointer limit should be checked.
-    uint32_t limit;
-    bool     applyLimit;
-    if (n == 13 && wback)
-      std::tie(limit, applyLimit) = _LookUpSPLim(_LookUpSP());
-    else
-      applyLimit = false;
-
-    // Memory operation only performed if limit not violated.
-    if (!applyLimit || offsetAddr >= limit)
-      _MemU(addr, 4, _GetR(t));
-
-    if (wback)
-      _SetRSPCheck(n, offsetAddr);
+    _Exec_STR_immediate(t, n, imm32, index, add, wback);
   }
 
   /* _DecodeExecute32_1100_01101_xxxx {{{4
@@ -8048,39 +7510,7 @@ private:
     TRACEI(LDR_imm, T3, "t=%u n=%u imm32=0x%x", t, n, imm32);
 
     // ---- EXECUTE -------------------------------------------------
-    if (!_ConditionPassed())
-      return;
-
-    //EncodingSpecificOperations
-    uint32_t offsetAddr = add ? _GetR(n) + imm32 : _GetR(n) - imm32;
-    uint32_t addr       = index ? offsetAddr : _GetR(n);
-
-    // Determine if the stack pointer limit should be checked.
-    uint32_t limit;
-    bool     applyLimit;
-    if (n == 13 && wback)
-      std::tie(limit, applyLimit) = _LookUpSPLim(_LookUpSP());
-    else
-      applyLimit = false;
-
-    // Memory operation only performed if limit not violated
-    uint32_t data = 0;
-    if (!applyLimit || offsetAddr >= limit)
-      data = _MemU(addr, 4);
-
-    // If the stack pointer is being updated a fault will be raised
-    // if the limit is violated
-    if (t == 15) {
-      if (GETBITS(addr, 0, 1) == 0b00)
-        _LoadWritePC(data, n, offsetAddr, wback, true);
-      else
-        CUNPREDICTABLE_UNALIGNED();
-    } else {
-      if (wback)
-        _SetRSPCheck(n, offsetAddr);
-
-      _SetR(t, data);
-    }
+    _Exec_LDR_immediate(t, n, imm32, index, add, wback);
   }
 
   /* _DecodeExecute32_1100_00xxx_xxxx_000000 {{{4
@@ -8175,14 +7605,7 @@ private:
     TRACEI(LDRB_reg, T2, "t=%u n=%u m=%u shiftL=%u", t, n, m, shiftN);
 
     // ---- EXECUTE -------------------------------------------------
-    if (!_ConditionPassed())
-      return;
-
-    //EncodingSpecificOperations
-    uint32_t offset     = _Shift(_GetR(m), shiftT, shiftN, GETBITSM(_s.xpsr, XPSR__C));
-    uint32_t offsetAddr = add ? _GetR(n) + offset : _GetR(n) - offset;
-    uint32_t addr       = index ? offsetAddr : _GetR(n);
-    _SetR(t, _ZeroExtend(_MemU(addr, 1), 32));
+    _Exec_LDRB_register(t, n, m, index, add, wback, shiftT, shiftN);
   }
 
   /* _DecodeExecute32_1100_0xxxx_1111 {{{4
@@ -8251,20 +7674,7 @@ private:
     TRACEI(LDR_lit, T2, "t=%u imm32=0x%x add=%u", t, imm32, add);
 
     // ---- EXECUTE -------------------------------------------------
-    if (!_ConditionPassed())
-      return;
-
-    //EncodingSpecificOperations
-    uint32_t base = _Align(_GetPC(), 4);
-    uint32_t addr = add ? base + imm32 : base - imm32;
-    uint32_t data = _MemU(addr, 4);
-    if (t == 15) {
-      if (GETBITS(addr, 0, 1) == 0b00)
-        _LoadWritePC(data, 0, 0, false, false);
-      else
-        CUNPREDICTABLE_UNALIGNED();
-    } else
-      _SetR(t, data);
+    _Exec_LDR_literal(t, imm32, add);
   }
 
   /* _DecodeExecute32_0100 {{{4
@@ -8380,68 +7790,7 @@ private:
       throw Exception(ExceptionType::UNPREDICTABLE);
 
     // ---- EXECUTE -------------------------------------------------
-    if (!_ConditionPassed())
-      return;
-
-    //EncodingSpecificOperations
-    uint32_t addr = _GetR(n);
-    uint32_t limit;
-    bool     applyLimit;
-    if (n == 13 && wback) {
-      std::tie(limit, applyLimit) = _LookUpSPLim(_LookUpSP());
-      // If the memory operation is not performed as a result of a stack limit
-      // violation, and the write-back of the SP itself does not raise a stack
-      // limit violation, it is IMPLEMENTATION DEFINED whether a SPLIM
-      // exception is raised. It is recommended that any instruction which
-      // discards a memory access as a result of a stack limit violation, and
-      // where the write-back of the SP itself does not raise a stack limit
-      // violation, generates a SPLIM exception.
-      if (IMPL_DEF_SPLIM_EXCEPTION_ON_INVAL_MEM_ACCESS) {
-        if (applyLimit && addr < limit) {
-          if (_HaveMainExt())
-            InternalOr32(REG_UFSR, REG_UFSR__STKOF);
-          // If Main Extension is not implemented the fault always escalates to
-          // HardFault.
-          auto excInfo = _CreateException(UsageFault, false, UNKNOWN_VAL(false));
-          _HandleException(excInfo);
-        }
-      }
-    } else
-      applyLimit = false;
-
-    uint32_t newBaseVal = 0; // ???
-    for (int i=0; i<15; ++i) {
-      // If R[n] is the SP, memory operation only performed if limit not violated.
-      if (GETBIT(registers, i) && (!applyLimit || addr >= limit)) {
-        if (i != n)
-          _SetR(i, _MemA(addr, 4));
-        else
-          newBaseVal = _MemA(addr, 4);
-
-        addr += 4;
-      }
-    }
-
-    uint32_t newPCVal = 0; // ???
-    if (GETBIT(registers, 15) && (!applyLimit || addr >= limit))
-      newPCVal = _MemA(addr, 4);
-
-    // If the register list contains the register that holds the base address
-    // it must be updated after all memory reads have been performed. This
-    // prevents the base address being overwritten if one of the memory reads
-    // generates a fault.
-    if (GETBIT(registers, n))
-      wback = true;
-    else
-      newBaseVal = _GetR(n) + 4*_BitCount(registers);
-
-    // If the PC is in the register list update that now, which may raise a
-    // fault. Likewise, if R[n] is the SP, writing back may raise a fault due
-    // to SP limit violation.
-    if (GETBIT(registers, 15))
-      _LoadWritePC(newPCVal, n, newBaseVal, wback, false);
-    else if (wback)
-      _SetRSPCheck(n, newBaseVal);
+    _Exec_LDM(n, registers, wback);
   }
 
   /* _DecodeExecute32_0100_10x_00 {{{4
@@ -8471,27 +7820,7 @@ private:
     TRACEI(STMDB, T1, "n=%u registers=0x%x wback=%u", n, registers, wback);
 
     // ---- EXECUTE -------------------------------------------------
-    if (!_ConditionPassed())
-      return;
-
-    //EncodingSpecificOperations
-    uint32_t address = _GetR(n) - 4*_BitCount(registers);
-    uint32_t limit;
-    bool     applyLimit;
-    if (n == 13 && wback)
-      std::tie(limit, applyLimit) = _LookUpSPLim(_LookUpSP());
-    else
-      applyLimit = false;
-
-    for (int i=0; i<15; ++i) {
-      if (!!(registers & BIT(i)) && (!applyLimit || address >= limit)) {
-        _MemA(address, 4, _GetR(i));
-        address += 4;
-      }
-    }
-
-    if (wback)
-      _SetRSPCheck(n, _GetR(n) - 4*_BitCount(registers));
+    _Exec_STMDB(n, registers, wback);
   }
 
   /* _DecodeExecute32_0100_011 {{{4
@@ -8563,29 +7892,7 @@ private:
     TRACEI(LDRD_imm, T1, "t=%u t2=%u n=%u imm32=0x%x index=%u add=%u wback=%u", t, t2, n, imm32, index, add, wback);
 
     // ---- EXECUTE -------------------------------------------------
-    if (!_ConditionPassed())
-      return;
-
-    //EncodingSpecificOperations
-    uint32_t offsetAddr = add ? _GetR(n) + imm32 : _GetR(n) - imm32;
-    uint32_t address    = index ? offsetAddr : _GetR(n);
-
-    uint32_t limit;
-    bool     applyLimit;
-    if (n == 13 && wback)
-      std::tie(limit, applyLimit) = _LookUpSPLim(_LookUpSP());
-    else
-      applyLimit = false;
-
-    if (!applyLimit || offsetAddr >= limit) {
-      _SetR(t,  _MemA(address,   4));
-      _SetR(t2, _MemA(address+4, 4));
-    }
-
-    if (wback)
-      _SetRSPCheck(n, offsetAddr);
-
-    // TODO untested
+    _Exec_LDRD_immediate(t, t2, n, imm32, index, add, wback);
   }
 
   /* _DecodeExecute32_10x0_0 {{{4
@@ -8769,16 +8076,7 @@ private:
       throw Exception(ExceptionType::UNPREDICTABLE);
 
     // ---- EXECUTE -------------------------------------------------
-    if (!_ConditionPassed())
-      return;
-
-    //EncodingSpecificOperations
-    uint32_t result = _GetR(n) & imm32;
-
-    _s.xpsr = CHGBITSM(_s.xpsr, XPSR__N, GETBIT(result, 31));
-    _s.xpsr = CHGBITSM(_s.xpsr, XPSR__Z, _IsZeroBit(result));
-    _s.xpsr = CHGBITSM(_s.xpsr, XPSR__C, carry);
-    // APSR.V unchanged
+    _Exec_TST_immediate(n, imm32, carry);
   }
 
   /* _DecodeExecute32_10x0_0_1101_0_xxxx {{{4
@@ -8808,18 +8106,7 @@ private:
       throw Exception(ExceptionType::UNPREDICTABLE);
 
     // ---- EXECUTE -------------------------------------------------
-    if (!_ConditionPassed())
-      return;
-
-    //EncodingSpecificOperations
-    auto [result, carry, overflow] = _AddWithCarry(_GetR(n), ~imm32, true);
-    _SetR(d, result);
-    if (setflags) {
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__N, GETBIT(result,31));
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__Z, _IsZeroBit(result));
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__C, carry);
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__V, overflow);
-    }
+    _Exec_SUB_immediate(d, n, setflags, imm32);
   }
 
   /* _DecodeExecute32_10x0_0_1000_0_xxxx {{{4
@@ -8851,18 +8138,7 @@ private:
     TRACEI(ADD_imm, T3, "d=%u n=%u S=%u imm32=0x%x", d, n, setflags, imm32);
 
     // ---- EXECUTE -------------------------------------------------
-    if (!_ConditionPassed())
-      return;
-
-    //EncodingSpecificOperations
-    auto [result, carry, overflow] = _AddWithCarry(_GetR(n), imm32, false);
-    _SetR(d, result);
-    if (setflags) {
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__N, GETBIT(result,31));
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__Z, _IsZeroBit(result));
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__C, carry);
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__V, overflow);
-    }
+    _Exec_ADD_immediate(d, n, setflags, imm32);
   }
 
   /* _DecodeExecute32_10x0_0_0001 {{{4
@@ -8891,18 +8167,7 @@ private:
     TRACEI(BIC_imm, T1, "d=%u n=%u S=%u imm32=0x%x carry=%u", d, n, setflags, imm32, carry);
 
     // ---- EXECUTE -------------------------------------------------
-    if (!_ConditionPassed())
-      return;
-
-    //EncodingSpecificOperations
-    uint32_t result = _GetR(n) & ~imm32;
-    _SetR(d, result);
-    if (setflags) {
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__N, GETBIT(result,31));
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__Z, _IsZeroBit(result));
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__C, carry);
-      // APSR.V unchanged
-    }
+    _Exec_BIC_immediate(d, n, setflags, imm32, carry);
   }
 
   /* _DecodeExecute32_10x0_0_0010_0_xxxx {{{4
@@ -8932,18 +8197,7 @@ private:
     TRACEI(ORR_imm, T1, "d=%u n=%u S=%u imm32=0x%x carry=%u", d, n, setflags, imm32, carry);
 
     // ---- EXECUTE -------------------------------------------------
-    if (!_ConditionPassed())
-      return;
-
-    //EncodingSpecificOperations
-    uint32_t result = _GetR(n) | imm32;
-    _SetR(d, result);
-    if (setflags) {
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__N, GETBIT(result, 31));
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__Z, _IsZeroBit(result));
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__C, carry);
-      // APSR.V unchanged
-    }
+    _Exec_ORR_immediate(d, n, setflags, imm32, carry);
   }
 
   /* _DecodeExecute32_10x0_0_0010_0_1111 {{{4
@@ -8970,18 +8224,7 @@ private:
     TRACEI(MOV_imm, T2, "d=%u S=%u imm32=0x%x carry=%u", d, setflags, imm32, carry);
 
     // ---- EXECUTE -------------------------------------------------
-    if (!_ConditionPassed())
-      return;
-
-    //EncodingSpecificOperations
-    uint32_t result = imm32;
-    _SetR(d, result);
-    if (setflags) {
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__N, GETBIT(result,31));
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__Z, _IsZeroBit(result));
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__C, carry);
-      // APSR.V unchanged
-    }
+    _Exec_MOV_immediate(d, setflags, imm32, carry);
   }
 
   /* _DecodeExecute32_10x0_0_0000_0 {{{4
@@ -9011,19 +8254,7 @@ private:
     TRACEI(AND_imm, T1, "d=%u n=%u S=%u imm32=0x%x carry=%u", d, n, setflags, imm32, carry);
 
     // ---- EXECUTE -------------------------------------------------
-    if (!_ConditionPassed())
-      return;
-
-    //EncodingSpecificOperations
-    uint32_t result = _GetR(n) & imm32;
-    _SetR(d, result);
-
-    if (setflags) {
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__N, GETBIT(result,31));
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__Z, _IsZeroBit(result));
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__C, carry);
-      // APSR.V unchanged
-    }
+    _Exec_AND_immediate(d, n, setflags, imm32, carry);
   }
 
   /* _DecodeExecute32_10x1_0 {{{4
@@ -9100,18 +8331,7 @@ private:
     TRACEI(MOV_imm, T3, "d=%u imm32=0x%x", d, imm32);
 
     // ---- EXECUTE -------------------------------------------------
-    if (!_ConditionPassed())
-      return;
-
-    //EncodingSpecificOperations
-    uint32_t result = imm32;
-    _SetR(d, result);
-    if (setflags) {
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__N, GETBIT(result,31));
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__Z, _IsZeroBit(result));
-      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__C, carry);
-      // APSR.V unchanged
-    }
+    _Exec_MOV_immediate(d, setflags, imm32, carry);
   }
 
   /* _DecodeExecute32_10x1_0_1 {{{4
@@ -9214,14 +8434,7 @@ private:
     TRACEI(BFI, T1, "d=%u n=%u msbit=%u lsbit=%u", d, n, msbit, lsbit);
 
     // ---- EXECUTE -------------------------------------------------
-    if (!_ConditionPassed())
-      return;
-
-    //EncodingSpecificOperations
-    if (msbit >= lsbit) {
-      _SetR(d, CHGBITS(_GetR(d), lsbit, msbit, GETBITS(_GetR(n), 0, msbit-lsbit)));
-    } else
-      _SetR(d, UNKNOWN_VAL(0));
+    _Exec_BFI(d, n, msbit, lsbit);
   }
 
   /* _DecodeExecute32_1001_0_1_011_1111 {{{4
@@ -9251,6 +8464,122 @@ private:
     TRACEI(BFC, T1, "d=%u msbit=%u lsbit=%u", d, msbit, lsbit);
 
     // ---- EXECUTE -------------------------------------------------
+    _Exec_BFC(d, msbit, lsbit);
+  }
+
+  /* Instruction Execution {{{3
+   * =====================
+   */
+
+  /* _Exec_ADD_SP_plus_immediate {{{4
+   * ---------------------------
+   */
+  void _Exec_ADD_SP_plus_immediate(uint32_t d, bool setflags, uint32_t imm32) {
+    // ADD (SP plus immediate) § C2.4.3
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    auto [result, carry, overflow] = _AddWithCarry(_GetSP(), imm32, false);
+    _SetRSPCheck(d, result);
+    TRACE("  newSP=0x%x\n", result);
+    if (setflags) {
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__N, GETBIT(result, 31));
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__Z, _IsZeroBit(result));
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__C, carry);
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__V, overflow);
+    }
+  }
+
+  /* _Exec_ADD_immediate {{{4
+   * -------------------
+   */
+  void _Exec_ADD_immediate(uint32_t d, uint32_t n, bool setflags, uint32_t imm32) {
+    // ADD (immediate) § C2.4.5
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    auto [result, carry, overflow] = _AddWithCarry(_GetR(n), imm32, false);
+    _SetR(d, result);
+    if (setflags) {
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__N, GETBIT(result,31));
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__Z, _IsZeroBit(result));
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__C, carry);
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__V, overflow);
+    }
+  }
+
+  /* _Exec_ADR {{{4
+   * ---------
+   */
+  void _Exec_ADR(uint32_t d, uint32_t imm32, bool add) {
+    // ADR § C2.4.8
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    uint32_t result = add ? _Align(_GetPC(),4) + imm32 : _Align(_GetPC(),4) - imm32;
+    _SetR(d, result);
+  }
+
+  /* _Exec_AND_immediate {{{4
+   * -------------------
+   */
+  void _Exec_AND_immediate(uint32_t d, uint32_t n, bool setflags, uint32_t imm32, bool carry) {
+    // AND (immediate) § C2.4.9
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    uint32_t result = _GetR(n) & imm32;
+    _SetR(d, result);
+
+    if (setflags) {
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__N, GETBIT(result,31));
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__Z, _IsZeroBit(result));
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__C, carry);
+      // APSR.V unchanged
+    }
+  }
+
+  /* _Exec_AND_register {{{4
+   * ------------------
+   */
+  void _Exec_AND_register(uint32_t d, uint32_t n, uint32_t m, bool setflags, SRType shiftT, uint32_t shiftN) {
+    // AND (register) § C2.4.10
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    auto [shifted, carry] = _Shift_C(_GetR(m), shiftT, shiftN, GETBITSM(_s.xpsr, XPSR__C));
+    uint32_t result = _GetR(n) & shifted;
+    _SetR(d, result);
+    if (setflags) {
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__N, GETBIT(result, 31));
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__Z, _IsZeroBit(result));
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__C, carry);
+      // APSR.V unchanged
+    }
+  }
+
+  /* _Exec_B {{{4
+   * -------
+   */
+  void _Exec_B(uint32_t imm32) {
+    // B § C2.4.15
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    _BranchWritePC(_GetPC() + imm32);
+  }
+
+  /* _Exec_BFC {{{4
+   * ---------
+   */
+  void _Exec_BFC(uint32_t d, uint32_t msbit, uint32_t lsbit) {
+    // BFC § C2.4.16
     if (!_ConditionPassed())
       return;
 
@@ -9259,6 +8588,715 @@ private:
       _SetR(d, CHGBITS(_GetR(d), lsbit, msbit, 0));
     } else
       _SetR(d, UNKNOWN_VAL(0));
+  }
+
+  /* _Exec_BFI {{{4
+   * ---------
+   */
+  void _Exec_BFI(uint32_t d, uint32_t n, uint32_t msbit, uint32_t lsbit) {
+    // BFI § C2.4.17
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    if (msbit >= lsbit) {
+      _SetR(d, CHGBITS(_GetR(d), lsbit, msbit, GETBITS(_GetR(n), 0, msbit-lsbit)));
+    } else
+      _SetR(d, UNKNOWN_VAL(0));
+  }
+
+  /* _Exec_BIC_immediate {{{4
+   * -------------------
+   */
+  void _Exec_BIC_immediate(uint32_t d, uint32_t n, bool setflags, uint32_t imm32, bool carry) {
+    // BIC (immediate) § C2.4.18
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    uint32_t result = _GetR(n) & ~imm32;
+    _SetR(d, result);
+    if (setflags) {
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__N, GETBIT(result,31));
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__Z, _IsZeroBit(result));
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__C, carry);
+      // APSR.V unchanged
+    }
+  }
+
+  /* _Exec_BL {{{4
+   * --------
+   */
+  void _Exec_BL(uint32_t imm32) {
+    // BL § C2.4.21
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    uint32_t nextInstrAddr = _GetPC();
+    _SetLR(nextInstrAddr | 1);
+    _BranchWritePC(_GetPC() + imm32);
+  }
+
+  /* _Exec_BLX {{{4
+   * ---------
+   */
+  void _Exec_BLX(uint32_t m, bool allowNonSecure) {
+    // BLX, BLXNS § C2.4.22
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    uint32_t target         = _GetR(m);
+    uint32_t nextInstrAddr  = (_GetPC()-2) | 1;
+
+    if (allowNonSecure && !(target & BIT(0))) {
+      if (!_IsAligned(_GetSP(), 8))
+        throw Exception(ExceptionType::UNPREDICTABLE);
+
+      uint32_t addr = _GetSP() - 8;
+   
+      uint32_t savedPSR = 0;
+      savedPSR = CHGBITSM(savedPSR, RETPSR__EXCEPTION, GETBITSM(_s.xpsr,      XPSR__EXCEPTION));
+      savedPSR = CHGBITSM(savedPSR, RETPSR__SFPA,      GETBITSM(_s.controlS,  CONTROL__SFPA  ));
+
+      // Only the stack locations, not the store order, are architected.
+      auto spName = _LookUpSP();
+      auto mode   = _CurrentMode();
+
+      auto                      exc = _Stack(addr, 0, spName, mode, nextInstrAddr);
+      if (exc.fault == NoFault) exc = _Stack(addr, 4, spName, mode, savedPSR);
+
+      _HandleException(exc);
+
+      // Stack pointer update will raise a fault if limit violated.
+      _SetSP(addr);
+      _SetLR(0xFEFF'FFFF);
+
+      // If in handler mode, IPSR must be non-zero. To prevent revealing which
+      // secure handler is calling non-secure code, IPSR is set to an invalid
+      // but non-zero value (namely the reset exception number).
+      if (mode == PEMode_Handler)
+        _s.xpsr = CHGBITSM(_s.xpsr, XPSR__EXCEPTION, 1);
+    } else
+      _SetLR(nextInstrAddr);
+
+    _BLXWritePC(target, allowNonSecure);
+  }
+
+  /* _Exec_BX {{{4
+   * --------
+   */
+  void _Exec_BX(uint32_t m, bool allowNonSecure) {
+    // BX, BXNS § C2.4.23
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    auto exc = _BXWritePC(_GetR(m), allowNonSecure);
+    _HandleException(exc);
+  }
+
+  /* _Exec_CMP_immediate {{{4
+   * -------------------
+   */
+  void _Exec_CMP_immediate(uint32_t n, uint32_t imm32) {
+    // CMP (immediate) § C2.4.30
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    auto [result, carry, overflow] = _AddWithCarry(_GetR(n), ~imm32, true);
+    _s.xpsr = CHGBITSM(_s.xpsr, XPSR__N, GETBIT(result, 31));
+    _s.xpsr = CHGBITSM(_s.xpsr, XPSR__Z, _IsZeroBit(result));
+    _s.xpsr = CHGBITSM(_s.xpsr, XPSR__C, carry);
+    _s.xpsr = CHGBITSM(_s.xpsr, XPSR__V, overflow);
+  }
+
+  /* _Exec_CPS {{{4
+   * ---------
+   */
+  void _Exec_CPS(bool enable, bool disable, bool affectPRI, bool affectFAULT) {
+    // CPS § C2.4.32
+    //EncodingSpecificOperations
+    if (_CurrentModeIsPrivileged()) {
+      if (enable) {
+        if (affectPRI)
+          _SetPRIMASK(CHGBITSM(_GetPRIMASK(), PRIMASK__PM, 0));
+        if (affectFAULT)
+          _SetFAULTMASK(CHGBITSM(_GetFAULTMASK(), FAULTMASK__FM, 0));
+      }
+      if (disable) {
+        if (affectPRI)
+          _SetPRIMASK(CHGBITSM(_GetPRIMASK(), PRIMASK__PM, 1));
+        if (affectFAULT)
+          _SetFAULTMASK(CHGBITSM(_GetFAULTMASK(), FAULTMASK__FM, 1));
+      }
+    }
+  }
+
+  /* _Exec_DSB {{{4
+   * ---------
+   */
+  void _Exec_DSB(uint32_t option) {
+    // DSB § C2.4.35
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    _DataSynchronizationBarrier(option);
+  }
+
+  /* _Exec_IT {{{4
+   * --------
+   */
+  void _Exec_IT(uint32_t firstCond, uint32_t mask) {
+    // IT § C2.4.41
+    //EncodingSpecificOperations
+    _SetITSTATE((firstCond<<4) | mask);
+  }
+
+  /* _Exec_LDM {{{4
+   * ---------
+   */
+  void _Exec_LDM(uint32_t n, uint32_t registers, bool wback) {
+    // LDM, LDMIA, LDMFD § C2.4.50
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+
+    uint32_t addr = _GetR(n);
+    uint32_t limit;
+    bool     applyLimit;
+    if (n == 13 && wback) {
+      std::tie(limit, applyLimit) = _LookUpSPLim(_LookUpSP());
+      // If the memory operation is not performed as a result of a stack limit
+      // violation, and the write-back of the SP itself does not raise a stack
+      // limit violation, it is IMPLEMENTATION DEFINED whether a SPLIM
+      // exception is raised. It is recommended that any instruction which
+      // discards a memory access as a result of a stack limit violation, and
+      // where the write-back of the SP itself does not raise a stack limit
+      // violation, generates a SPLIM exception.
+      if (IMPL_DEF_SPLIM_EXCEPTION_ON_INVAL_MEM_ACCESS) {
+        if (applyLimit && addr < limit) {
+          if (_HaveMainExt())
+            InternalOr32(REG_UFSR, REG_UFSR__STKOF);
+          // If Main Extension is not implemented the fault always escalates to
+          // HardFault.
+          auto excInfo = _CreateException(UsageFault, false, UNKNOWN_VAL(false));
+          _HandleException(excInfo);
+        }
+      }
+    } else
+      applyLimit = false;
+
+    uint32_t newBaseVal = 0; // ???
+    for (int i=0; i<15; ++i) {
+      // If R[n] is the SP, memory operation only performed if limit not violated.
+      if (GETBIT(registers, i) && (!applyLimit || addr >= limit)) {
+        if (i != n)
+          _SetR(i, _MemA(addr, 4));
+        else
+          newBaseVal = _MemA(addr, 4);
+
+        addr += 4;
+      }
+    }
+
+    uint32_t newPCVal = 0; // ???
+    if (GETBIT(registers, 15) && (!applyLimit || addr >= limit))
+      newPCVal = _MemA(addr, 4);
+
+    // If the register list contains the register that holds the base address
+    // it must be updated after all memory reads have been performed. This
+    // prevents the base address being overwritten if one of the memory reads
+    // generates a fault.
+    if (GETBIT(registers, n))
+      wback = true;
+    else
+      newBaseVal = _GetR(n) + 4*_BitCount(registers);
+
+    // If the PC is in the register list update that now, which may raise a
+    // fault. Likewise, if R[n] is the SP, writing back may raise a fault due
+    // to SP limit violation.
+    if (GETBIT(registers, 15))
+      _LoadWritePC(newPCVal, n, newBaseVal, wback, false);
+    else if (wback)
+      _SetRSPCheck(n, newBaseVal);
+  }
+
+  /* _Exec_LDR_immediate {{{4
+   * -------------------
+   */
+  void _Exec_LDR_immediate(uint32_t t, uint32_t n, uint32_t imm32, bool index, bool add, bool wback) {
+    // LDR (immediate) § C2.4.52
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    uint32_t offsetAddr = add ? _GetR(n) + imm32 : _GetR(n) - imm32;
+    uint32_t addr       = index ? offsetAddr : _GetR(n);
+
+    // Determine if the stack pointer limit should be checked.
+    uint32_t limit;
+    bool applyLimit;
+    if (n == 13 && wback)
+      std::tie(limit, applyLimit) = _LookUpSPLim(_LookUpSP());
+    else
+      applyLimit = false;
+
+    // Memory operation only performed if limit not violated
+    uint32_t data = 0;
+    if (!applyLimit || offsetAddr >= limit)
+      data = _MemU(addr, 4);
+
+    // If the stack pointer is being updated a fault will be
+    // raised if the limit is violated
+    if (t == 15) {
+      if (GETBITS(addr, 0, 1) == 0b00)
+        _LoadWritePC(data, n, offsetAddr, wback, true);
+      else
+        CUNPREDICTABLE_UNALIGNED();
+    } else {
+      if (wback)
+        _SetRSPCheck(n, offsetAddr);
+
+      _SetR(t, data);
+    }
+  }
+
+  /* _Exec_LDR_literal {{{4
+   * -----------------
+   */
+  void _Exec_LDR_literal(uint32_t t, uint32_t imm32, bool add) {
+    // LDR (literal) § C2.4.53
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    uint32_t base     = _Align(_GetPC(), 4);
+    uint32_t address  = add ? base + imm32 : base - imm32;
+    uint32_t data     = _MemU(address, 4);
+    if (t == 15) {
+      if (GETBITS(address, 0, 1) == 0b00)
+        _LoadWritePC(data, 0, 0, false, false);
+      else
+        CUNPREDICTABLE_UNALIGNED();
+    } else
+      _SetR(t, data);
+  }
+
+  /* _Exec_LDRB_immediate {{{4
+   * --------------------
+   */
+  void _Exec_LDRB_immediate(uint32_t t, uint32_t n, uint32_t imm32, bool index, bool add, bool wback) {
+    // LDRB (immediate) § C2.4.55
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+
+    uint32_t offsetAddr = add ? _GetR(n) + imm32 : _GetR(n) - imm32;
+    uint32_t addr       = index ? offsetAddr : _GetR(n);
+
+    // Determine if the stack pointer limit should be checked.
+    uint32_t limit;
+    bool applyLimit;
+    if (n == 13 && wback)
+      std::tie(limit, applyLimit) = _LookUpSPLim(_LookUpSP());
+    else
+      applyLimit = false;
+
+    // Memory operation only performed if limit not violated.
+    if (!applyLimit || offsetAddr >= limit)
+      _SetR(t, _ZeroExtend(_MemU(addr, 1), 32));
+
+    // If the stack pointer is benig updated a fault will be raised if the
+    // limit is violated.
+    if (wback)
+      _SetRSPCheck(n, offsetAddr);
+  }
+
+  /* _Exec_LDRB_register {{{4
+   * -------------------
+   */
+  void _Exec_LDRB_register(uint32_t t, uint32_t n, uint32_t m, bool index, bool add, bool wback, SRType shiftT, uint32_t shiftN) {
+    // LDRB (register) § C2.4.57
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    uint32_t offset     = _Shift(_GetR(m), shiftT, shiftN, GETBITSM(_s.xpsr, XPSR__C));
+    uint32_t offsetAddr = add ? _GetR(n) + offset : _GetR(n) - offset;
+    uint32_t addr       = index ? offsetAddr : _GetR(n);
+    _SetR(t, _ZeroExtend(_MemU(addr, 1), 32));
+  }
+
+  /* _Exec_LDRD_immediate {{{4
+   * --------------------
+   */
+  void _Exec_LDRD_immediate(uint32_t t, uint32_t t2, uint32_t n, uint32_t imm32, bool index, bool add, bool wback) {
+    // LDRD (immediate) § C2.4.59
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    uint32_t offsetAddr = add ? _GetR(n) + imm32 : _GetR(n) - imm32;
+    uint32_t address    = index ? offsetAddr : _GetR(n);
+
+    uint32_t limit;
+    bool     applyLimit;
+    if (n == 13 && wback)
+      std::tie(limit, applyLimit) = _LookUpSPLim(_LookUpSP());
+    else
+      applyLimit = false;
+
+    if (!applyLimit || offsetAddr >= limit) {
+      _SetR(t,  _MemA(address,   4));
+      _SetR(t2, _MemA(address+4, 4));
+    }
+
+    if (wback)
+      _SetRSPCheck(n, offsetAddr);
+
+    // TODO untested
+  }
+
+  /* _Exec_MOV_immediate {{{4
+   * -------------------
+   */
+  void _Exec_MOV_immediate(uint32_t d, bool setflags, uint32_t imm32, bool carry) {
+    // MOV (immediate) § C2.4.89
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    uint32_t result = imm32;
+    _SetR(d, result);
+
+    if (setflags) {
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__N, GETBIT(result, 31));
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__Z, _IsZeroBit(result));
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__C, carry);
+      // APSR.V unchanged
+    }
+  }
+
+  /* _Exec_MOV_register {{{4
+   * ------------------
+   */
+  void _Exec_MOV_register(uint32_t d, uint32_t m, bool setflags, SRType shiftT, uint32_t shiftN) {
+    // MOV (register) § C2.4.90
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    auto [result, carry] = _Shift_C(_GetR(m), shiftT, shiftN, GETBITSM(_s.xpsr, XPSR__C));
+    if (d == 15)
+      _ALUWritePC(result); // setflags is always false here
+    else {
+      _SetRSPCheck(d, result);
+      if (setflags) {
+        _s.xpsr = CHGBITSM(_s.xpsr, XPSR__N, GETBIT(result,31));
+        _s.xpsr = CHGBITSM(_s.xpsr, XPSR__Z, _IsZeroBit(result));
+        _s.xpsr = CHGBITSM(_s.xpsr, XPSR__C, carry);
+        // APSR.V unchanged
+      }
+    }
+  }
+
+  /* _Exec_ORR_immediate {{{4
+   * -------------------
+   */
+  void _Exec_ORR_immediate(uint32_t d, uint32_t n, bool setflags, uint32_t imm32, bool carry) {
+    // ORR (immediate) § C2.4.103
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    uint32_t result = _GetR(n) | imm32;
+    _SetR(d, result);
+    if (setflags) {
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__N, GETBIT(result, 31));
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__Z, _IsZeroBit(result));
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__C, carry);
+      // APSR.V unchanged
+    }
+  }
+
+  /* _Exec_ORR_register {{{4
+   * ------------------
+   */
+  void _Exec_ORR_register(uint32_t d, uint32_t n, uint32_t m, bool setflags, SRType shiftT, uint32_t shiftN) {
+    // ORR (register) § C2.4.104
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    auto [shifted, carry] = _Shift_C(_GetR(m), shiftT, shiftN, GETBITSM(_s.xpsr, XPSR__C));
+    uint32_t result = _GetR(n) | shifted;
+    _SetR(d, result);
+    if (setflags) {
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__N, GETBIT(result, 31));
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__Z, _IsZeroBit(result));
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__C, carry);
+      // APSR.V unchanged
+    }
+  }
+
+  /* _Exec_STM {{{4
+   * ---------
+   */
+  void _Exec_STM(uint32_t n, uint32_t registers, bool wback) {
+    // STM, STMIA, STMEA § C2.4.181
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    uint32_t addr     = _GetR(n);
+    uint32_t endAddr  = _GetR(n) + 4*_BitCount(registers);
+
+    // Determine if the stack pointer limit should be checked.
+    uint32_t limit;
+    bool     applyLimit;
+    bool     doOperation;
+    if (n == 13 && wback && !GETBIT(registers, n)) {
+      std::tie(limit, applyLimit) = _LookUpSPLim(_LookUpSP());
+      doOperation                 = (!applyLimit || endAddr >= limit);
+    } else
+      doOperation = true;
+
+    for (int i=0; i<15; ++i) {
+      // Memory operation only performed if limit not violated.
+      if (GETBIT(registers, i) && doOperation) {
+        if (i == n && wback && i != _LowestSetBit(registers))
+          _MemA(addr, 4, UNKNOWN_VAL(0)); // encoding T1 only
+        else
+          _MemA(addr, 4, _GetR(i));
+
+        addr += 4;
+      }
+    }
+
+    // If the stack pointer is being updated a fault will be raised if the
+    // limit is violated.
+    if (wback)
+      _SetRSPCheck(n, endAddr);
+  }
+
+  /* _Exec_STMDB {{{4
+   * -----------
+   */
+  void _Exec_STMDB(uint32_t n, uint32_t registers, bool wback) {
+    // STMDB, STMFD § C2.4.182
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    uint32_t addr = _GetR(n) - 4*_BitCount(registers);
+
+    uint32_t limit;
+    bool applyLimit;
+    if (n == 13 && wback)
+      std::tie(limit, applyLimit) = _LookUpSPLim(_LookUpSP());
+    else
+      applyLimit = false;
+
+    for (int i=0; i<15; ++i)
+      // If R[n] is the SP, memory operation only performed if limit not violated
+      if (GETBIT(registers, i) && (!applyLimit || addr >= limit)) {
+        _MemA(addr, 4, _GetR(i));
+        addr += 4;
+      }
+
+    if (wback)
+      _SetRSPCheck(n, _GetR(n) - 4*_BitCount(registers));
+  }
+
+  /* _Exec_STR_immediate {{{4
+   * -------------------
+   */
+  void _Exec_STR_immediate(uint32_t t, uint32_t n, uint32_t imm32, bool index, bool add, bool wback) {
+    // STR (immediate) § C2.4.183
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    uint32_t offsetAddr = add ? _GetR(n) + imm32 : _GetR(n) - imm32;
+    uint32_t addr       = index ? offsetAddr : _GetR(n);
+
+    // Determine if the stack pointer limit should be checked.
+    uint32_t limit;
+    bool     applyLimit;
+    if (n == 13 && wback)
+      std::tie(limit, applyLimit) = _LookUpSPLim(_LookUpSP());
+    else
+      applyLimit = false;
+
+    // Memory operation only performed if limit not violated.
+    if (!applyLimit || offsetAddr >= limit)
+      _MemU(addr, 4, _GetR(t));
+
+    // If the stack pointer is being updated, a fault will be raised if the
+    // limit is violated.
+    if (wback)
+      _SetRSPCheck(n, offsetAddr);
+  }
+
+  /* _Exec_STR_register {{{4
+   * ------------------
+   */
+  void _Exec_STR_register(uint32_t t, uint32_t n, uint32_t m, bool index, bool add, bool wback, SRType shiftT, uint32_t shiftN) {
+    // STR (register) § C2.4.184
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    uint32_t offset = _Shift(_GetR(m), shiftT, shiftN, GETBITSM(_s.xpsr, XPSR__C));
+    uint32_t addr   = _GetR(n) + offset;
+    _MemU(addr, 4, _GetR(t));
+  }
+
+  /* _Exec_STRB_immediate {{{4
+   * --------------------
+   */
+  void _Exec_STRB_immediate(uint32_t t, uint32_t n, uint32_t imm32, bool index, bool add, bool wback) {
+    // STRB (immediate) § C2.4.185
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    uint32_t offsetAddr = add ? _GetR(n) + imm32 : _GetR(n) - imm32;
+    uint32_t addr       = index ? offsetAddr : _GetR(n);
+
+    // Determine if the stack pointer limit should be checked.
+    uint32_t limit;
+    bool     applyLimit;
+    if (n == 13 && wback)
+      std::tie(limit, applyLimit) = _LookUpSPLim(_LookUpSP());
+    else
+      applyLimit = false;
+
+    // Memory operation only performed if limit not violated.
+    if (!applyLimit || offsetAddr >= limit)
+      _MemU(addr, 1, GETBITS(_GetR(t), 0, 7));
+
+    // If the stack pointer is being updated a fault will be raised
+    // if the limit is violated.
+    if (wback)
+      _SetRSPCheck(n, offsetAddr);
+  }
+
+  /* _Exec_STRB_register {{{4
+   * -------------------
+   */
+  void _Exec_STRB_register(uint32_t t, uint32_t n, uint32_t m, bool index, bool add, bool wback, SRType shiftT, uint32_t shiftN) {
+    // STRB (register) § C2.4.186
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    uint32_t offset = _Shift(_GetR(m), shiftT, shiftN, GETBITSM(_s.xpsr, XPSR__C));
+    uint32_t addr   = _GetR(n) + offset;
+    _MemU(addr, 1, GETBITS(_GetR(t), 0, 7));
+  }
+
+  /* _Exec_STRH_immediate {{{4
+   * --------------------
+   */
+  void _Exec_STRH_immediate(uint32_t t, uint32_t n, uint32_t imm32, bool index, bool add, bool wback) {
+    // STRH (immediate) § C2.4.192
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    uint32_t offsetAddr = add ? _GetR(n) + imm32 : _GetR(n) - imm32;
+    uint32_t addr       = index ? offsetAddr : _GetR(n);
+
+    // Determine if the stack pointer limit should be checked.
+    uint32_t limit;
+    bool     applyLimit;
+    if (n == 13 && wback)
+      std::tie(limit, applyLimit) = _LookUpSPLim(_LookUpSP());
+    else
+      applyLimit = false;
+
+    // Memory operation only performed if limit not violated.
+    if (!applyLimit || offsetAddr >= limit)
+      _MemU(addr, 2, GETBITS(_GetR(t), 0,15));
+
+    // If the stack pointer is being updated a fault will be raised if the
+    // limit is violated.
+    if (wback)
+      _SetRSPCheck(n, offsetAddr);
+  }
+
+  /* _Exec_SUB_SP_minus_immediate {{{4
+   * ----------------------------
+   */
+  void _Exec_SUB_SP_minus_immediate(uint32_t d, bool setflags, uint32_t imm32) {
+    // SUB (SP minus immediate) § C2.4.196
+    if (!_ConditionPassed())
+      return;
+
+    auto [result, carry, overflow] = _AddWithCarry(_GetSP(), ~imm32, true);
+    _SetRSPCheck(d, result);
+    TRACE("  newSP=0x%x\n", result);
+    if (setflags) {
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__N, GETBIT(result,31));
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__Z, _IsZeroBit(result));
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__C, carry);
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__V, overflow);
+    }
+  }
+
+  /* _Exec_SUB_immediate {{{4
+   * -------------------
+   */
+  void _Exec_SUB_immediate(uint32_t d, uint32_t n, bool setflags, uint32_t imm32) {
+    // SUB (immediate) § C2.4.198
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    auto [result, carry, overflow] = _AddWithCarry(_GetR(n), ~imm32, true);
+    _SetR(d, result);
+    if (setflags) {
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__N, GETBIT(result, 31));
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__Z, _IsZeroBit(result));
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__C, carry);
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__V, overflow);
+    }
+  }
+
+  /* _Exec_TST_immediate {{{4
+   * -------------------
+   */
+  void _Exec_TST_immediate(uint32_t n, uint32_t imm32, bool carry) {
+    // TST (immediate) § C2.4.211
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    uint32_t result = _GetR(n) & imm32;
+
+    _s.xpsr = CHGBITSM(_s.xpsr, XPSR__N, GETBIT(result, 31));
+    _s.xpsr = CHGBITSM(_s.xpsr, XPSR__Z, _IsZeroBit(result));
+    _s.xpsr = CHGBITSM(_s.xpsr, XPSR__C, carry);
+    // APSR.V unchanged
+  }
+
+  /* _Exec_WFI {{{4
+   * ---------
+   */
+  void _Exec_WFI() {
+    // WFI § C2.4.305
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    _WaitForInterrupt();
   }
 
   // }}}3
