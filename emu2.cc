@@ -49,9 +49,12 @@
  *  _ClearExclusiveByAddress
  *  _SleepOnExit
  *  _WaitForInterrupt
+ *  _WaitForEvent
+ *  _SendEvent
+ *  DMB, DSB, ISB
  *  _SCS_UpdateStatusRegs
  *
- *  Instructions
+ *  32-bit Instructions
  */
 
 /* Simulator Debugging and Tracing Utilities {{{2
@@ -646,12 +649,12 @@ struct IDevice {
   virtual uint32_t DebugPins() const { return 0; }
 };
 
-/* SimpleEmulatorConfig {{{2
+/* SimpleSimulatorConfig {{{2
  * --------------------
- * SimpleEmulatorConfig implements the EmulatorConfig concept. Any object can
+ * SimpleSimulatorConfig implements the SimulatorConfig concept. Any object can
  * be used so long as it can be copied and it supports the methods shown below.
  */
-struct SimpleEmulatorConfig {
+struct SimpleSimulatorConfig {
   bool HaveMainExt() const { return this->main; }
   bool HaveSecurityExt() const { return this->security; }
 
@@ -672,12 +675,12 @@ struct SimpleEmulatorConfig {
   int       maxExc          = NUM_EXC-1;    // Maximum number of exceptions supported.
 };
 
-/* Emulator {{{2
- * ========
+/* Simulator {{{2
+ * =========
  */
-template<typename Device=IDevice, typename EmulatorConfig=SimpleEmulatorConfig>
-struct Emulator {
-  Emulator(Device &dev, const EmulatorConfig &cfg=EmulatorConfig()) :_dev(dev), _cfg(cfg) {
+template<typename Device=IDevice, typename SimulatorConfig=SimpleSimulatorConfig>
+struct Simulator {
+  Simulator(Device &dev, const SimulatorConfig &cfg=SimulatorConfig()) :_dev(dev), _cfg(cfg) {
     ASSERT(cfg.MaxExc() < NUM_EXC);
 
     _TakeReset();
@@ -11171,10 +11174,10 @@ private:
   // }}}3
 
 private:
-  CpuState       _s{};
-  CpuNest        _n{};
-  Device        &_dev;
-  EmulatorConfig _cfg;
+  CpuState        _s{};
+  CpuNest         _n{};
+  Device         &_dev;
+  SimulatorConfig _cfg;
 };
 
 /* Test Driver                                                             {{{1
@@ -11827,11 +11830,11 @@ int main(int argc, char **argv) {
 
   fclose(f);
 
-  Emulator emu(dev);
+  Simulator sim(dev);
 
-  for (;;) {
-    emu.TopLevel();
-  }
+  for (;;)
+    sim.TopLevel();
+
   return 0;
 }
 #endif
