@@ -1082,6 +1082,18 @@ private:
    */
   void _ClearEventRegister() { _s.event = false; }
 
+  /* _EventRegistered {{{4
+   * ----------------
+   */
+  bool _EventRegistered() { return _s.event; }
+
+  /* _SendEvent {{{4
+   * ----------
+   */
+  void _SendEvent() {
+    // TODO
+  }
+
   /* _InstructionSynchronizationBarrier {{{4
    * ----------------------------------
    */
@@ -1093,6 +1105,13 @@ private:
    * ---------------------------
    */
   void _DataSynchronizationBarrier(uint8_t option) {
+    // No-op.
+  }
+
+  /* _DataMemoryBarrier {{{4
+   * ------------------
+   */
+  void _DataMemoryBarrier(uint8_t option) {
     // No-op.
   }
 
@@ -1428,6 +1447,17 @@ private:
     bool     carryOut = !!(result & BIT(31));
 
     return {result, carryOut};
+  }
+
+  /* _ROR {{{4
+   * ----
+   */
+  static uint32_t _ROR(uint32_t x, int shift) {
+    if (!shift)
+      return x;
+
+    auto [result, _] = _ROR_C(x, shift);
+    return result;
   }
 
   /* _RRX_C {{{4
@@ -3956,6 +3986,12 @@ private:
     // TODO
   }
 
+  /* _WaitForEvent {{{4
+   * -------------
+   */
+  void _WaitForEvent() {
+    // TODO
+  }
   /* _IsIrqValid {{{4
    * -----------
    */
@@ -5425,6 +5461,44 @@ private:
     return CTZL(x);
   }
 
+  /* _DecodeRegShift {{{4
+   * ---------------
+   */
+  SRType _DecodeRegShift(uint32_t srType) {
+    switch (srType) {
+      case 0b00: return SRType_LSL;
+      case 0b01: return SRType_LSR;
+      case 0b10: return SRType_ASR;
+      case 0b11: return SRType_ROR;
+      default: abort();
+    }
+  }
+
+  /* _BKPTInstrDebugEvent {{{4
+   * --------------------
+   */
+  void _BKPTInstrDebugEvent() {
+    // TODO
+    // "Breakpoint causes a DebugMonitor exception or debug halt to occur depending on the configuration
+    //  of the debug support."
+  }
+
+  /* _Hint_Yield {{{4
+   * -----------
+   * Performs a Yield hint.
+   */
+  void _Hint_Yield() {
+    // TODO
+  }
+
+  /* _CallSupervisor {{{4
+   * ---------------
+   */
+  void _CallSupervisor() {
+    auto excInfo = _CreateException(SVCall, false, UNKNOWN_VAL(false));
+    _HandleException(excInfo);
+  }
+
   /* _DecodeExecute {{{3
    * --------------
    * This function is not defined by the ISA definition and must be generated
@@ -5560,337 +5634,15 @@ private:
         break;
 
       default:
-        TRACE("xx 0x%x\n", op0);
         abort();
     }
-  }
-
-  /* _DecodeExecute16_1100xx {{{4
-   * -----------------------
-   */
-  void _DecodeExecute16_1100xx(uint32_t instr, uint32_t pc) {
-    uint32_t L = GETBITS(instr,11,11);
-
-    if (!L) {
-      // STM, STMIA, STMEA
-      _DecodeExecute16_11000x(instr, pc);
-    } else {
-      // LDM, LDMIA, LDMFD
-      TODO_DEC();
-    }
-  }
-
-  /* _DecodeExecute16_11000x {{{4
-   * -----------------------
-   */
-  void _DecodeExecute16_11000x(uint32_t instr, uint32_t pc) {
-    // STM, STMIA, STMEA § C2.4.181 T1
-    // ---- DECODE --------------------------------------------------
-    uint32_t Rn       = GETBITS(instr, 8,10);
-    uint32_t regList  = GETBITS(instr, 0, 7);
-
-    uint32_t n          = Rn;
-    uint32_t registers  = regList;
-    bool     wback      = true;
-
-    if (_BitCount(registers) < 1)
-      CUNPREDICTABLE_UNDEFINED();
-
-    TRACEI(STM, T1, "n=%u registers=0x%x", n, registers);
-
-    // ---- EXECUTE -------------------------------------------------
-    _Exec_STM(n, registers, wback);
-  }
-
-  /* _DecodeExecute16_1001xx {{{4
-   * -----------------------
-   */
-  void _DecodeExecute16_1001xx(uint32_t instr, uint32_t pc) {
-    uint32_t L = GETBITS(instr,11,11);
-
-    if (!L) {
-      // STR (immediate)
-      _DecodeExecute16_10010x(instr, pc);
-    } else {
-      // LDR (immediate)
-      TODO_DEC();
-    }
-  }
-
-  /* _DecodeExecute16_10010x {{{4
-   * -----------------------
-   */
-  void _DecodeExecute16_10010x(uint32_t instr, uint32_t pc) {
-    // STR (immediate) § C2.4.183 T2
-    // ---- DECODE --------------------------------------------------
-    uint32_t Rt   = GETBITS(instr, 8,10);
-    uint32_t imm8 = GETBITS(instr, 0, 7);
-
-    uint32_t t     = Rt;
-    uint32_t n     = 13;
-    uint32_t imm32 = _ZeroExtend(imm8<<2, 32);
-    bool     index = true;
-    bool     add   = true;
-    bool     wback = false;
-
-    // ---- EXECUTE -------------------------------------------------
-    _Exec_STR_immediate(t, n, imm32, index, add, wback);
-  }
-
-  /* _DecodeExecute16_010000 {{{4
-   * -----------------------
-   */
-  void _DecodeExecute16_010000(uint32_t instr, uint32_t pc) {
-    uint32_t op = GETBITS(instr, 6, 9);
-
-    switch (op) {
-      case 0b0000:
-        // AND (register)
-        TODO_DEC();
-        break;
-
-      case 0b0001:
-        // EOR (register)
-        TODO_DEC();
-        break;
-
-      case 0b0010:
-        // MOV, MOVS (register-shifted register) - Logical shift left variant
-        TODO_DEC();
-        break;
-
-      case 0b0011:
-        // MOV, MOVS (register-shifted register) — Logical shift right variant
-        TODO_DEC();
-        break;
-
-      case 0b0100:
-        // MOV, MOVS (register-shifted register) — Arithmetic shift right variant
-        TODO_DEC();
-        break;
-
-      case 0b0101:
-        // ADC (register)
-        TODO_DEC();
-        break;
-
-      case 0b0110:
-        // SBC (register)
-        TODO_DEC();
-        break;
-
-      case 0b0111:
-        // MOV, MOVS (register-shifted register) — Rotate right variant
-        TODO_DEC();
-        break;
-
-      case 0b1000:
-        // TST (register)
-        TODO_DEC();
-        break;
-
-      case 0b1001:
-        // RSB (immediate)
-        TODO_DEC();
-        break;
-
-      case 0b1010:
-        // CMP (register)
-        TODO_DEC();
-        break;
-
-      case 0b1011:
-        // CMN (register)
-        TODO_DEC();
-        break;
-
-      case 0b1100:
-        // ORR (register)
-        _DecodeExecute16_010000_1100(instr, pc);
-        break;
-
-      case 0b1101:
-        // MUL
-        TODO_DEC();
-        break;
-
-      case 0b1110:
-        // BIC (register)
-        TODO_DEC();
-        break;
-
-      case 0b1111:
-        // MVN (register)
-        TODO_DEC();
-        break;
-
-      default:
-        abort();
-    }
-  }
-
-  /* _DecodeExecute16_010000_1100 {{{4
-   * ----------------------------
-   */
-  void _DecodeExecute16_010000_1100(uint32_t instr, uint32_t pc) {
-    // ORR (register) § C2.4.104 T1
-    // ---- DECODE --------------------------------------------------
-    uint32_t Rm   = GETBITS(instr, 3, 5);
-    uint32_t Rdn  = GETBITS(instr, 0, 2);
-
-    uint32_t d        = Rdn;
-    uint32_t n        = Rdn;
-    uint32_t m        = Rm;
-    bool     setflags = !_InITBlock();
-    auto     shiftT   = SRType_LSL;
-    uint32_t shiftN   = 0;
-
-    TRACEI(ORR_reg, T1, "d/n=%u m=%u S=%u", d, m, setflags);
-
-    // ---- EXECUTE -------------------------------------------------
-    _Exec_ORR_register(d, n, m, setflags, shiftT, shiftN);
-  }
-
-  /* _DecodeExecute16_1000xx {{{4
-   * -----------------------
-   */
-  void _DecodeExecute16_1000xx(uint32_t instr, uint32_t pc) {
-    uint32_t L = GETBITS(instr,11,11);
-
-    if (!L) {
-      // STRH (immediate)
-      _DecodeExecute16_10000x(instr, pc);
-    } else {
-      // LDRH (immediate)
-      TODO_DEC();
-    }
-  }
-
-  /* _DecodeExecute16_10000x {{{4
-   * -----------------------
-   */
-  void _DecodeExecute16_10000x(uint32_t instr, uint32_t pc) {
-    // STRH (immediate) § C2.4.192 T1
-    // ---- DECODE --------------------------------------------------
-    uint32_t imm5 = GETBITS(instr, 6,10);
-    uint32_t Rn   = GETBITS(instr, 3, 5);
-    uint32_t Rt   = GETBITS(instr, 0, 2);
-
-    uint32_t  t     = Rt;
-    uint32_t  n     = Rn;
-    uint32_t  imm32 = _ZeroExtend(imm5<<1, 32);
-    bool      index = true, add = true, wback = false;
-
-    TRACEI(STRH_imm, T1, "t=%u n=%u imm32=0x%x", t, n, imm32);
-
-    // ---- EXECUTE -------------------------------------------------
-    _Exec_STRH_immediate(t, n, imm32, index, add, wback);
-  }
-
-  /* _DecodeExecute16_0101xx {{{4
-   * -----------------------
-   */
-  void _DecodeExecute16_0101xx(uint32_t instr, uint32_t pc) {
-    uint32_t L = GETBITS(instr,11,11);
-    uint32_t B = GETBITS(instr,10,10);
-    uint32_t H = GETBITS(instr, 9, 9);
-
-    uint32_t L_B_H = (L<<2) | (B<<1) | H;
-
-    switch (L_B_H) {
-      case 0b0'0'0:
-        // STR (register)
-        _DecodeExecute16_010100_0(instr, pc);
-        break;
-
-      case 0b0'0'1:
-        // STRH (register)
-        TODO_DEC();
-        break;
-
-      case 0b0'1'0:
-        // STRB (register)
-        _DecodeExecute16_010101_0(instr, pc);
-        break;
-
-      case 0b0'1'1:
-        // LDRSB (register)
-        TODO_DEC();
-        break;
-
-      case 0b1'0'0:
-        // LDR (register)
-        TODO_DEC();
-        break;
-
-      case 0b1'0'1:
-        // LDRH (register)
-        TODO_DEC();
-        break;
-
-      case 0b1'1'0:
-        // LDRB (register)
-        TODO_DEC();
-        break;
-
-      case 0b1'1'1:
-        // LDRSH (register)
-        TODO_DEC();
-        break;
-
-      default:
-        abort();
-    }
-  }
-
-  /* _DecodeExecute16_010101_0 {{{4
-   * -------------------------
-   */
-  void _DecodeExecute16_010101_0(uint32_t instr, uint32_t pc) {
-    // STRB (register) § C2.4.186 T1
-    // ---- DECODE --------------------------------------------------
-    uint32_t Rt = GETBITS(instr, 0, 2);
-    uint32_t Rn = GETBITS(instr, 3, 5);
-    uint32_t Rm = GETBITS(instr, 6, 8);
-
-    uint32_t t      = Rt;
-    uint32_t n      = Rn;
-    uint32_t m      = Rm;
-    bool     index  = true, add = true, wback = false;
-    auto     shiftT = SRType_LSL;
-    uint32_t shiftN = 0;
-
-    // ---- EXECUTE -------------------------------------------------
-    _Exec_STRB_register(t, n, m, index, add, wback, shiftT, shiftN);
-  }
-
-  /* _DecodeExecute16_010100_0 {{{4
-   * -------------------------
-   */
-  void _DecodeExecute16_010100_0(uint32_t instr, uint32_t pc) {
-    // STR (register) § C2.4.184 T1
-    // ---- DECODE --------------------------------------------------
-    uint32_t Rm = GETBITS(instr, 6, 8);
-    uint32_t Rn = GETBITS(instr, 3, 5);
-    uint32_t Rt = GETBITS(instr, 0, 2);
-
-    uint32_t  t = Rt;
-    uint32_t  n = Rn;
-    uint32_t  m = Rm;
-    bool      index = true, add = true, wback = false;
-    auto      shiftT = SRType_LSL;
-    uint32_t  shiftN = 0;
-
-    TRACEI(STR_reg, T1, "t=%u n=%u m=%u", t, n, m);
-
-    // ---- EXECUTE -------------------------------------------------
-    _Exec_STR_register(t, n, m, index, add, wback, shiftT, shiftN);
   }
 
   /* _DecodeExecute16_00xxxx {{{4
    * -----------------------
    */
   void _DecodeExecute16_00xxxx(uint32_t instr, uint32_t pc) {
+    // Shift (immediate), add, subtract, move and compare
     uint32_t op0 = GETBITS(instr,13,13);
     uint32_t op1 = GETBITS(instr,11,12);
     uint32_t op2 = GETBITS(instr,10,10);
@@ -5899,10 +5651,10 @@ private:
       case 0b0'11:
         if (!op2) {
           // Add, subtract (three low registers)
-          TODO_DEC();
+          _DecodeExecute16_000110(instr, pc);
         } else {
           // Add, subtract (two low registers and immediate)
-          TODO_DEC();
+          _DecodeExecute16_000111(instr, pc);
         }
         break;
 
@@ -5953,78 +5705,124 @@ private:
     _Exec_MOV_register(d, m, setflags, shiftT, shiftN);
   }
 
-  /* _DecodeExecute16_001xxx {{{4
+  /* _DecodeExecute16_000110 {{{4
    * -----------------------
    */
-  void _DecodeExecute16_001xxx(uint32_t instr, uint32_t pc) {
-    uint32_t op   = GETBITS(instr,11,12);
-    uint32_t Rd   = GETBITS(instr, 8,10);
-    uint32_t imm8 = GETBITS(instr, 0, 7);
+  void _DecodeExecute16_000110(uint32_t instr, uint32_t pc) {
+    // Add, subtract (three low registers)
+    uint32_t S = GETBITS(instr, 9, 9);
 
-    switch (op) {
-      case 0b00:
-        // MOV (immediate)
-        _DecodeExecute16_00100x(instr, pc);
-        break;
-
-      case 0b01:
-        // CMP (immediate)
-        _DecodeExecute16_00101x(instr, pc);
-        break;
-
-      case 0b10:
-        // ADD (immediate)
-        _DecodeExecute16_00110x(instr, pc);
-        break;
-
-      case 0b11:
-        // SUB (immediate)
-        _DecodeExecute16_00111x(instr, pc);
-        break;
-
-      default:
-        abort();
+    if (!S) {
+      // ADD (register)
+      _DecodeExecute16_000110_0(instr, pc);
+    } else {
+      // SUB (register)
+      _DecodeExecute16_000110_1(instr, pc);
     }
   }
 
-  /* _DecodeExecute16_00111x {{{4
-   * -----------------------
+  /* _DecodeExecute16_000110_0 {{{4
+   * -------------------------
    */
-  void _DecodeExecute16_00111x(uint32_t instr, uint32_t pc) {
-    // SUB (immediate) § C2.4.198 T2
+  void _DecodeExecute16_000110_0(uint32_t instr, uint32_t pc) {
+    // ADD (register) § C2.4.7 T1
     // ---- DECODE --------------------------------------------------
-    uint32_t Rdn  = GETBITS(instr, 8,10);
-    uint32_t imm8 = GETBITS(instr, 0, 7);
+    uint32_t Rm = GETBITS(instr, 6, 8);
+    uint32_t Rn = GETBITS(instr, 3, 5);
+    uint32_t Rd = GETBITS(instr, 0, 2);
 
-    uint32_t d        = Rdn;
-    uint32_t n        = Rdn;
+    uint32_t d        = Rd;
+    uint32_t n        = Rn;
+    uint32_t m        = Rm;
     bool     setflags = !_InITBlock();
-    uint32_t imm32    = _ZeroExtend(imm8, 32);
+    SRType   shiftT   = SRType_LSL;
+    uint32_t shiftN   = 0;
 
-    TRACEI(SUB_imm, T2, "d=%u n=%u S=%u imm32=0x%x", d, n, setflags, imm32);
+    TRACEI(ADD_reg, T1, "d=%u n=%u m=%u S=%u shiftT=%u shiftN=%u", d, n, m, setflags, shiftT, shiftN);
 
     // ---- EXECUTE -------------------------------------------------
-    _Exec_SUB_immediate(d, n, setflags, imm32);
+    _Exec_ADD_register(d, n, m, setflags, shiftT, shiftN);
   }
 
-  /* _DecodeExecute16_00110x {{{4
+  /* _DecodeExecute16_000110_1 {{{4
+   * -------------------------
+   */
+  void _DecodeExecute16_000110_1(uint32_t instr, uint32_t pc) {
+    // SUB (register) § C2.4.200 T1
+    // ---- DECODE --------------------------------------------------
+    uint32_t Rm = GETBITS(instr, 6, 8);
+    uint32_t Rn = GETBITS(instr, 3, 5);
+    uint32_t Rd = GETBITS(instr, 0, 2);
+
+    uint32_t d        = Rd;
+    uint32_t n        = Rn;
+    uint32_t m        = Rm;
+    bool     setflags = !_InITBlock();
+    SRType   shiftT   = SRType_LSL;
+    uint32_t shiftN   = 0;
+
+    TRACEI(SUB_reg, T1, "d=%u n=%u m=%u S=%u shiftT=%u shiftN=%u", d, n, m, setflags, shiftT, shiftN);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_SUB_register(d, n, m, setflags, shiftT, shiftN);
+  }
+
+  /* _DecodeExecute16_000111 {{{4
    * -----------------------
    */
-  void _DecodeExecute16_00110x(uint32_t instr, uint32_t pc) {
-    // ADD (immediate) § C2.4.5 T2
+  void _DecodeExecute16_000111(uint32_t instr, uint32_t pc) {
+    // Add, subtract (two low registers and immediate)
+    uint32_t S = GETBITS(instr, 9, 9);
+
+    if (!S) {
+      // ADD (immediate)
+      _DecodeExecute16_000111_0(instr, pc);
+    } else {
+      // SUB (immediate)
+      _DecodeExecute16_000111_1(instr, pc);
+    }
+  }
+
+  /* _DecodeExecute16_000111_0 {{{4
+   * -------------------------
+   */
+  void _DecodeExecute16_000111_0(uint32_t instr, uint32_t pc) {
+    // ADD (immediate) § C2.4.5 T1
     // ---- DECODE --------------------------------------------------
-    uint32_t Rdn  = GETBITS(instr, 8,10);
-    uint32_t imm8 = GETBITS(instr, 0, 7);
+    uint32_t imm3 = GETBITS(instr, 6, 8);
+    uint32_t Rn   = GETBITS(instr, 3, 5);
+    uint32_t Rd   = GETBITS(instr, 0, 2);
 
-    uint32_t d        = Rdn;
-    uint32_t n        = Rdn;
+    uint32_t d        = Rd;
+    uint32_t n        = Rn;
     bool     setflags = !_InITBlock();
-    uint32_t imm32    = _ZeroExtend(imm8, 32);
+    uint32_t imm32    = _ZeroExtend(imm3, 32);
 
-    TRACEI(ADD_imm, T2, "d/n=%u S=%u imm32=0x%x", d, setflags, imm32);
+    TRACEI(ADD_imm, T1, "d=%u n=%u S=%u imm32=0x%x", d, n, setflags, imm32);
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_ADD_immediate(d, n, setflags, imm32);
+  }
+
+  /* _DecodeExecute16_000111_1 {{{4
+   * -------------------------
+   */
+  void _DecodeExecute16_000111_1(uint32_t instr, uint32_t pc) {
+    // SUB (immediate) § C2.4.198 T1
+    // ---- DECODE --------------------------------------------------
+    uint32_t imm3 = GETBITS(instr, 6, 8);
+    uint32_t Rn   = GETBITS(instr, 3, 5);
+    uint32_t Rd   = GETBITS(instr, 0, 2);
+
+    uint32_t d        = Rd;
+    uint32_t n        = Rn;
+    bool     setflags = !_InITBlock();
+    uint32_t imm32    = _ZeroExtend(imm3, 32);
+
+    TRACEI(SUB_imm, T1, "d=%u n=%u S=%u imm32=0x%x", d, n, setflags, imm32);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_SUB_immediate(d, n, setflags, imm32);
   }
 
   /* _DecodeExecute16_00100x {{{4
@@ -6065,10 +5863,455 @@ private:
     _Exec_CMP_immediate(n, imm32);
   }
 
+  /* _DecodeExecute16_00110x {{{4
+   * -----------------------
+   */
+  void _DecodeExecute16_00110x(uint32_t instr, uint32_t pc) {
+    // ADD (immediate) § C2.4.5 T2
+    // ---- DECODE --------------------------------------------------
+    uint32_t Rdn  = GETBITS(instr, 8,10);
+    uint32_t imm8 = GETBITS(instr, 0, 7);
+
+    uint32_t d        = Rdn;
+    uint32_t n        = Rdn;
+    bool     setflags = !_InITBlock();
+    uint32_t imm32    = _ZeroExtend(imm8, 32);
+
+    TRACEI(ADD_imm, T2, "d/n=%u S=%u imm32=0x%x", d, setflags, imm32);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_ADD_immediate(d, n, setflags, imm32);
+  }
+
+  /* _DecodeExecute16_00111x {{{4
+   * -----------------------
+   */
+  void _DecodeExecute16_00111x(uint32_t instr, uint32_t pc) {
+    // SUB (immediate) § C2.4.198 T2
+    // ---- DECODE --------------------------------------------------
+    uint32_t Rdn  = GETBITS(instr, 8,10);
+    uint32_t imm8 = GETBITS(instr, 0, 7);
+
+    uint32_t d        = Rdn;
+    uint32_t n        = Rdn;
+    bool     setflags = !_InITBlock();
+    uint32_t imm32    = _ZeroExtend(imm8, 32);
+
+    TRACEI(SUB_imm, T2, "d=%u n=%u S=%u imm32=0x%x", d, n, setflags, imm32);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_SUB_immediate(d, n, setflags, imm32);
+  }
+
+  /* _DecodeExecute16_001xxx {{{4
+   * -----------------------
+   */
+  void _DecodeExecute16_001xxx(uint32_t instr, uint32_t pc) {
+    uint32_t op   = GETBITS(instr,11,12);
+    uint32_t Rd   = GETBITS(instr, 8,10);
+    uint32_t imm8 = GETBITS(instr, 0, 7);
+
+    switch (op) {
+      case 0b00:
+        // MOV (immediate)
+        _DecodeExecute16_00100x(instr, pc);
+        break;
+
+      case 0b01:
+        // CMP (immediate)
+        _DecodeExecute16_00101x(instr, pc);
+        break;
+
+      case 0b10:
+        // ADD (immediate)
+        _DecodeExecute16_00110x(instr, pc);
+        break;
+
+      case 0b11:
+        // SUB (immediate)
+        _DecodeExecute16_00111x(instr, pc);
+        break;
+
+      default:
+        abort();
+    }
+  }
+
+  /* _DecodeExecute16_010000 {{{4
+   * -----------------------
+   */
+  void _DecodeExecute16_010000(uint32_t instr, uint32_t pc) {
+    // Data processing (two low registers)
+    uint32_t op = GETBITS(instr, 6, 9);
+
+    switch (op) {
+      case 0b0000:
+        // AND (register)
+        _DecodeExecute16_010000_0000(instr, pc);
+        break;
+
+      case 0b0001:
+        // EOR (register)
+        _DecodeExecute16_010000_0001(instr, pc);
+        break;
+
+      case 0b0010:
+        // MOV, MOVS (register-shifted register) - Logical shift left variant
+        _DecodeExecute16_010000_0xxx_MOVsh(instr, pc);
+        break;
+
+      case 0b0011:
+        // MOV, MOVS (register-shifted register) — Logical shift right variant
+        _DecodeExecute16_010000_0xxx_MOVsh(instr, pc);
+        break;
+
+      case 0b0100:
+        // MOV, MOVS (register-shifted register) — Arithmetic shift right variant
+        _DecodeExecute16_010000_0xxx_MOVsh(instr, pc);
+        break;
+
+      case 0b0101:
+        // ADC (register)
+        _DecodeExecute16_010000_0101(instr, pc);
+        break;
+
+      case 0b0110:
+        // SBC (register)
+        _DecodeExecute16_010000_0110(instr, pc);
+        break;
+
+      case 0b0111:
+        // MOV, MOVS (register-shifted register) — Rotate right variant
+        _DecodeExecute16_010000_0xxx_MOVsh(instr, pc);
+        break;
+
+      case 0b1000:
+        // TST (register)
+        _DecodeExecute16_010000_1000(instr, pc);
+        break;
+
+      case 0b1001:
+        // RSB (immediate)
+        _DecodeExecute16_010000_1001(instr, pc);
+        break;
+
+      case 0b1010:
+        // CMP (register)
+        _DecodeExecute16_010000_1010(instr, pc);
+        break;
+
+      case 0b1011:
+        // CMN (register)
+        _DecodeExecute16_010000_1011(instr, pc);
+        break;
+
+      case 0b1100:
+        // ORR (register)
+        _DecodeExecute16_010000_1100(instr, pc);
+        break;
+
+      case 0b1101:
+        // MUL
+        _DecodeExecute16_010000_1101(instr, pc);
+        break;
+
+      case 0b1110:
+        // BIC (register)
+        _DecodeExecute16_010000_1110(instr, pc);
+        break;
+
+      case 0b1111:
+        // MVN (register)
+        _DecodeExecute16_010000_1111(instr, pc);
+        break;
+
+      default:
+        abort();
+    }
+  }
+
+  /* _DecodeExecute16_010000_0000 {{{4
+   * ----------------------------
+   */
+  void _DecodeExecute16_010000_0000(uint32_t instr, uint32_t pc) {
+    // AND (register) § C2.4.10 T1
+    // ---- DECODE --------------------------------------------------
+    uint32_t Rm   = GETBITS(instr, 3, 5);
+    uint32_t Rdn  = GETBITS(instr, 0, 2);
+
+    uint32_t d        = Rdn;
+    uint32_t n        = Rdn;
+    uint32_t m        = Rm;
+    bool     setflags = !_InITBlock();
+    SRType   shiftT   = SRType_LSL;
+    uint32_t shiftN   = 0;
+
+    TRACEI(AND_reg, T1, "d=%u n=%u m=%u S=%u shiftT=%u shiftN=%u", d, n, m, setflags, shiftT, shiftN);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_AND_register(d, n, m, setflags, shiftT, shiftN);
+  }
+
+  /* _DecodeExecute16_010000_0001 {{{4
+   * ----------------------------
+   */
+  void _DecodeExecute16_010000_0001(uint32_t instr, uint32_t pc) {
+    // EOR (register) § C2.4.37 T1
+    // ---- DECODE --------------------------------------------------
+    uint32_t Rm   = GETBITS(instr, 3, 5);
+    uint32_t Rdn  = GETBITS(instr, 0, 2);
+
+    uint32_t d        = Rdn;
+    uint32_t n        = Rdn;
+    uint32_t m        = Rm;
+    bool     setflags = !_InITBlock();
+    SRType   shiftT   = SRType_LSL;
+    uint32_t shiftN   = 0;
+
+    TRACEI(EOR_reg, T1, "d=%u n=%u m=%u S=%u shiftT=%u shiftN=%u", d, n, m, setflags, shiftT, shiftN);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_EOR_register(d, n, m, setflags, shiftT, shiftN);
+  }
+
+  /* _DecodeExecute16_010000_0xxx_MOVsh {{{4
+   * ----------------------------------
+   */
+  void _DecodeExecute16_010000_0xxx_MOVsh(uint32_t instr, uint32_t pc) {
+    // MOV, MOVS (register-shifted register) § C2.4.91 T1
+    // ---- DECODE --------------------------------------------------
+    uint32_t op   = GETBITS(instr, 6, 9);
+    uint32_t Rs   = GETBITS(instr, 3, 5);
+    uint32_t Rdm  = GETBITS(instr, 0, 2);
+
+    ASSERT(op == 0b0010 || op == 0b0011 || op == 0b0100 || op == 0b0111);
+
+    uint32_t d = Rdm;
+    uint32_t m = Rdm;
+    uint32_t s = Rs;
+    bool setflags = !_InITBlock();
+    SRType shiftT = _DecodeRegShift((GETBIT(op, 2)<<1) | GETBIT(op, 0));
+
+    TRACEI(MOV_reg_shifted_reg, T1, "d=%u m=%u s=%u S=%u shiftT=%u", d, m, s, setflags, shiftT);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_MOV_MOVS_register_shifted_register(d, m, s, setflags, shiftT);
+  }
+
+  /* _DecodeExecute16_010000_0101 {{{4
+   * ----------------------------
+   */
+  void _DecodeExecute16_010000_0101(uint32_t instr, uint32_t pc) {
+    // ADC (register) § C2.4.2 T1
+    // ---- DECODE --------------------------------------------------
+    uint32_t Rm   = GETBITS(instr, 3, 5);
+    uint32_t Rdn  = GETBITS(instr, 0, 2);
+
+    uint32_t d        = Rdn;
+    uint32_t n        = Rdn;
+    uint32_t m        = Rm;
+    bool     setflags = !_InITBlock();
+    SRType   shiftT   = SRType_LSL;
+    uint32_t shiftN   = 0;
+
+    TRACEI(ADC_reg, T1, "d=%u n=%u m=%u S=%u shiftT=%u shiftN=%u", d, n, m, setflags, shiftT, shiftN);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_ADC_register(d, n, m, setflags, shiftT, shiftN);
+  }
+
+  /* _DecodeExecute16_010000_0110 {{{4
+   * ----------------------------
+   */
+  void _DecodeExecute16_010000_0110(uint32_t instr, uint32_t pc) {
+    // SBC (register) § C2.4.141 T1
+    // ---- DECODE --------------------------------------------------
+    uint32_t Rm   = GETBITS(instr, 3, 5);
+    uint32_t Rdn  = GETBITS(instr, 0, 2);
+
+    uint32_t d        = Rdn;
+    uint32_t n        = Rdn;
+    uint32_t m        = Rm;
+    bool     setflags = !_InITBlock();
+    SRType   shiftT   = SRType_LSL;
+    uint32_t shiftN   = 0;
+
+    TRACEI(SBC_reg, T1, "d=%u n=%u m=%u S=%u shiftT=%u shiftN=%u", d, n, m, setflags, shiftT, shiftN);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_SBC_register(d, n, m, setflags, shiftT, shiftN);
+  }
+
+  /* _DecodeExecute16_010000_1000 {{{4
+   * ----------------------------
+   */
+  void _DecodeExecute16_010000_1000(uint32_t instr, uint32_t pc) {
+    // TST (register) § C2.4.212 T1
+    // ---- DECODE --------------------------------------------------
+    uint32_t Rm = GETBITS(instr, 3, 5);
+    uint32_t Rn = GETBITS(instr, 0, 2);
+
+    uint32_t n        = Rn;
+    uint32_t m        = Rm;
+    SRType   shiftT   = SRType_LSL;
+    uint32_t shiftN   = 0;
+
+    TRACEI(TST_reg, T1, "n=%u m=%u shiftT=%u shiftN=%u", n, m, shiftT, shiftN);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_TST_register(n, m, shiftT, shiftN);
+  }
+
+  /* _DecodeExecute16_010000_1001 {{{4
+   * ----------------------------
+   */
+  void _DecodeExecute16_010000_1001(uint32_t instr, uint32_t pc) {
+    // RSB (immediate) § C2.4.135 T1
+    // ---- DECODE --------------------------------------------------
+    uint32_t Rn = GETBITS(instr, 3, 5);
+    uint32_t Rd = GETBITS(instr, 0, 2);
+
+    uint32_t d        = Rd;
+    uint32_t n        = Rn;
+    bool     setflags = !_InITBlock();
+    uint32_t imm32    = 0;
+
+    TRACEI(RSB_imm, T1, "d=%u n=%u S=%u imm32=0x%x", d, n, setflags, imm32);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_RSB_immediate(d, n, setflags, imm32);
+  }
+
+  /* _DecodeExecute16_010000_1010 {{{4
+   * ----------------------------
+   */
+  void _DecodeExecute16_010000_1010(uint32_t instr, uint32_t pc) {
+    // CMP (register) § C2.4.31 T1
+    // ---- DECODE --------------------------------------------------
+    uint32_t Rm = GETBITS(instr, 3, 5);
+    uint32_t Rn = GETBITS(instr, 0, 2);
+
+    uint32_t n        = Rn;
+    uint32_t m        = Rm;
+    SRType   shiftT   = SRType_LSL;
+    uint32_t shiftN   = 0;
+
+    TRACEI(CMP_reg, T1, "n=%u m=%u shiftT=%u shiftN=%u", n, m, shiftT, shiftN);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_CMP_register(n, m, shiftT, shiftN);
+  }
+
+  /* _DecodeExecute16_010000_1011 {{{4
+   * ----------------------------
+   */
+  void _DecodeExecute16_010000_1011(uint32_t instr, uint32_t pc) {
+    // CMN (register) § C2.4.29 T1
+    // ---- DECODE --------------------------------------------------
+    uint32_t Rm = GETBITS(instr, 3, 5);
+    uint32_t Rn = GETBITS(instr, 0, 2);
+
+    uint32_t n        = Rn;
+    uint32_t m        = Rm;
+    SRType   shiftT   = SRType_LSL;
+    uint32_t shiftN   = 0;
+
+    TRACEI(CMN_reg, T1, "n=%u m=%u shiftT=%u shiftN=%u", n, m, shiftT, shiftN);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_CMN_register(n, m, shiftT, shiftN);
+  }
+
+  /* _DecodeExecute16_010000_1100 {{{4
+   * ----------------------------
+   */
+  void _DecodeExecute16_010000_1100(uint32_t instr, uint32_t pc) {
+    // ORR (register) § C2.4.104 T1
+    // ---- DECODE --------------------------------------------------
+    uint32_t Rm   = GETBITS(instr, 3, 5);
+    uint32_t Rdn  = GETBITS(instr, 0, 2);
+
+    uint32_t d        = Rdn;
+    uint32_t n        = Rdn;
+    uint32_t m        = Rm;
+    bool     setflags = !_InITBlock();
+    auto     shiftT   = SRType_LSL;
+    uint32_t shiftN   = 0;
+
+    TRACEI(ORR_reg, T1, "d/n=%u m=%u S=%u", d, m, setflags);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_ORR_register(d, n, m, setflags, shiftT, shiftN);
+  }
+
+  /* _DecodeExecute16_010000_1101 {{{4
+   * ----------------------------
+   */
+  void _DecodeExecute16_010000_1101(uint32_t instr, uint32_t pc) {
+    // MUL § C2.4.97 T1
+    // ---- DECODE --------------------------------------------------
+    uint32_t Rn   = GETBITS(instr, 3, 5);
+    uint32_t Rdm  = GETBITS(instr, 0, 2);
+
+    uint32_t d        = Rdm;
+    uint32_t n        = Rn;
+    uint32_t m        = Rdm;
+    bool     setflags = !_InITBlock();
+
+    TRACEI(MUL, T1, "d=%u n=%u m=%u S=%u", d, n, m, setflags);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_MUL(d, n, m, setflags);
+  }
+
+  /* _DecodeExecute16_010000_1110 {{{4
+   * ----------------------------
+   */
+  void _DecodeExecute16_010000_1110(uint32_t instr, uint32_t pc) {
+    // BIC (register) § C2.4.19 T1
+    // ---- DECODE --------------------------------------------------
+    uint32_t Rm   = GETBITS(instr, 3, 5);
+    uint32_t Rdn  = GETBITS(instr, 0, 2);
+
+    uint32_t d        = Rdn;
+    uint32_t n        = Rdn;
+    uint32_t m        = Rm;
+    bool     setflags = !_InITBlock();
+    SRType   shiftT   = SRType_LSL;
+    uint32_t shiftN   = 0;
+
+    TRACEI(BIC_reg, T1, "d=%u n=%u m=%u S=%u shiftT=%u shiftN=%u", d, n, m, setflags, shiftT, shiftN);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_BIC_register(d, n, m, setflags, shiftT, shiftN);
+  }
+
+  /* _DecodeExecute16_010000_1111 {{{4
+   * ----------------------------
+   */
+  void _DecodeExecute16_010000_1111(uint32_t instr, uint32_t pc) {
+    // MVN (register) § C2.4.99 T1
+    // ---- DECODE --------------------------------------------------
+    uint32_t Rm   = GETBITS(instr, 3, 5);
+    uint32_t Rd   = GETBITS(instr, 0, 2);
+
+    uint32_t d        = Rd;
+    uint32_t m        = Rm;
+    bool     setflags = !_InITBlock();
+    SRType   shiftT   = SRType_LSL;
+    uint32_t shiftN   = 0;
+
+    TRACEI(MVN_reg, T1, "d=%u m=%u S=%u shiftT=%u shiftN=%u", d, m, setflags, shiftT, shiftN);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_MVN_register(d, m, setflags, shiftT, shiftN);
+  }
+
   /* _DecodeExecute16_010001 {{{4
    * -----------------------
    */
   void _DecodeExecute16_010001(uint32_t instr, uint32_t pc) {
+    // Special data instructions and branch and exchange
     uint32_t op0 = GETBITS(instr, 8, 9);
     switch (op0) {
       case 0b11:
@@ -6087,6 +6330,7 @@ private:
    * --------------------------
    */
   void _DecodeExecute16_010001_11(uint32_t instr, uint32_t pc) {
+    // Branch and exchange
     uint32_t L = GETBITS(instr, 7, 7);
 
     if (!L) {
@@ -6178,33 +6422,34 @@ private:
     _Exec_MOV_register(d, m, setflags, shiftT, shiftN);
   }
 
-  /* _DecodeExecute16_01001_xx {{{4
-   * -------------------------
+  /* _DecodeExecute16_010001_xx {{{4
+   * --------------------------
    */
   void _DecodeExecute16_010001_xx(uint32_t instr, uint32_t pc) {
+    // Add, subtract, compare, move (two high registers)
     uint32_t op   = GETBITS(instr, 8, 9);
     uint32_t D    = GETBITS(instr, 7, 7);
     uint32_t Rs   = GETBITS(instr, 3, 6);
     uint32_t Rd   = GETBITS(instr, 0, 2);
-    uint32_t DRd  = (D<<3) | Rd;
+    uint32_t D_Rd = (D<<3) | Rd;
 
     switch (op) {
       case 0b00:
         if (Rs == 0b1101) {
           // ADD (SP plus register) - T1
-          TODO_DEC();
-        } else if (DRd == 0b1101) {
+          _DecodeExecute16_010001_00_a(instr, pc);
+        } else if (D_Rd == 0b1101) {
           // ADD (SP plus register) — T2
-          TODO_DEC();
+          _DecodeExecute16_010001_00_b(instr, pc);
         } else {
           // ADD (register)
-          TODO_DEC();
+          _DecodeExecute16_010001_00_c(instr, pc);
         }
         break;
 
       case 0b01:
         // CMP (register)
-        TODO_DEC();
+        _DecodeExecute16_010001_01(instr, pc);
         break;
 
       case 0b10:
@@ -6215,6 +6460,115 @@ private:
       default:
         abort();
     }
+  }
+
+  /* _DecodeExecute16_010001_00_a {{{4
+   * ----------------------------
+   */
+  void _DecodeExecute16_010001_00_a(uint32_t instr, uint32_t pc) {
+    // ADD (SP plus register) § C2.4.4 T1
+    // ---- DECODE --------------------------------------------------
+    uint32_t DM     = GETBITS(instr, 7, 7);
+    uint32_t Rdm    = GETBITS(instr, 0, 2);
+    uint32_t DM_Rdm = (DM<<3) | Rdm;
+
+    uint32_t d        = DM_Rdm;
+    uint32_t m        = DM_Rdm;
+    bool     setflags = false;
+
+    if (d == 15 && _InITBlock() && !_LastInITBlock())
+      throw Exception(ExceptionType::UNPREDICTABLE);
+
+    SRType   shiftT   = SRType_LSL;
+    uint32_t shiftN   = 0;
+
+    TRACEI(ADD_SP_plus_reg, T1, "d=%u m=%u S=%u shiftT=%u shiftN=%u", d, m, setflags, shiftT, shiftN);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_ADD_SP_plus_register(d, m, setflags, shiftT, shiftN);
+  }
+
+  /* _DecodeExecute16_010001_00_b {{{4
+   * ----------------------------
+   */
+  void _DecodeExecute16_010001_00_b(uint32_t instr, uint32_t pc) {
+    // ADD (SP plus register) § C2.4.4 T2
+    // ---- DECODE --------------------------------------------------
+    uint32_t Rm     = GETBITS(instr, 3, 6);
+
+    ASSERT(Rm != 0b1101);
+
+    uint32_t d        = 13;
+    uint32_t m        = Rm;
+    bool     setflags = false;
+    SRType   shiftT   = SRType_LSL;
+    uint32_t shiftN   = 0;
+
+    TRACEI(ADD_SP_plus_reg, T2, "d=%u m=%u S=%u shiftT=%u shiftN=%u", d, m, setflags, shiftT, shiftN);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_ADD_SP_plus_register(d, m, setflags, shiftT, shiftN);
+  }
+
+  /* _DecodeExecute16_010001_00_c {{{4
+   * ----------------------------
+   */
+  void _DecodeExecute16_010001_00_c(uint32_t instr, uint32_t pc) {
+    // ADD (register) § C2.4.7 T2
+    // ---- DECODE --------------------------------------------------
+    uint32_t DN   = GETBITS(instr, 7, 7);
+    uint32_t Rm   = GETBITS(instr, 3, 6);
+    uint32_t Rdn  = GETBITS(instr, 0, 2);
+
+    uint32_t DN_Rdn = (DN<<3) | Rdn;
+
+    ASSERT(!(DN_Rdn == 0b1101 || Rm == 0b1101));
+
+    uint32_t d        = DN_Rdn;
+    uint32_t n        = DN_Rdn;
+    uint32_t m        = Rm;
+    bool     setflags = false;
+    SRType   shiftT   = SRType_LSL;
+    uint32_t shiftN   = 0;
+
+    if (d == 15 && _InITBlock() && !_LastInITBlock())
+      throw Exception(ExceptionType::UNPREDICTABLE);
+
+    if (d == 15 && m == 15)
+      throw Exception(ExceptionType::UNPREDICTABLE);
+
+    TRACEI(ADD_reg, T2, "d=%u n=%u m=%u S=%u shiftT=%u shiftN=%u", d, n, m, setflags, shiftT, shiftN);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_ADD_register(d, n, m, setflags, shiftT, shiftN);
+  }
+
+  /* _DecodeExecute16_010001_01 {{{4
+   * --------------------------
+   */
+  void _DecodeExecute16_010001_01(uint32_t instr, uint32_t pc) {
+    // CMP (register) § C2.4.31 T2
+    // ---- DECODE --------------------------------------------------
+    uint32_t N    = GETBITS(instr, 7, 7);
+    uint32_t Rm   = GETBITS(instr, 3, 6);
+    uint32_t Rn   = GETBITS(instr, 0, 2);
+    uint32_t N_Rn = (N<<3) | Rn;
+
+    uint32_t n      = N_Rn;
+    uint32_t m      = Rm;
+    SRType   shiftT = SRType_LSL;
+    uint32_t shiftN = 0;
+
+    if (n < 8 && m < 8)
+      CUNPREDICTABLE_UNDEFINED();
+
+    if (n == 15 || m == 15)
+      throw Exception(ExceptionType::UNPREDICTABLE);
+
+    TRACEI(CMP_reg, T2, "n=%u m=%u shiftT=%u shiftN=%u", n, m, shiftT, shiftN);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_CMP_register(n, m, shiftT, shiftN);
   }
 
   /* _DecodeExecute16_01001x {{{4
@@ -6236,10 +6590,252 @@ private:
     _Exec_LDR_literal(t, imm32, add);
   }
 
+  /* _DecodeExecute16_0101xx {{{4
+   * -----------------------
+   */
+  void _DecodeExecute16_0101xx(uint32_t instr, uint32_t pc) {
+    // Load/store (register offset)
+    uint32_t L = GETBITS(instr,11,11);
+    uint32_t B = GETBITS(instr,10,10);
+    uint32_t H = GETBITS(instr, 9, 9);
+
+    uint32_t L_B_H = (L<<2) | (B<<1) | H;
+
+    switch (L_B_H) {
+      case 0b0'0'0:
+        // STR (register)
+        _DecodeExecute16_010100_0(instr, pc);
+        break;
+
+      case 0b0'0'1:
+        // STRH (register)
+        _DecodeExecute16_010100_1(instr, pc);
+        break;
+
+      case 0b0'1'0:
+        // STRB (register)
+        _DecodeExecute16_010101_0(instr, pc);
+        break;
+
+      case 0b0'1'1:
+        // LDRSB (register)
+        _DecodeExecute16_010101_1(instr, pc);
+        break;
+
+      case 0b1'0'0:
+        // LDR (register)
+        _DecodeExecute16_010110_0(instr, pc);
+        break;
+
+      case 0b1'0'1:
+        // LDRH (register)
+        _DecodeExecute16_010110_1(instr, pc);
+        break;
+
+      case 0b1'1'0:
+        // LDRB (register)
+        _DecodeExecute16_010111_0(instr, pc);
+        break;
+
+      case 0b1'1'1:
+        // LDRSH (register)
+        _DecodeExecute16_010111_1(instr, pc);
+        break;
+
+      default:
+        abort();
+    }
+  }
+
+  /* _DecodeExecute16_010100_0 {{{4
+   * -------------------------
+   */
+  void _DecodeExecute16_010100_0(uint32_t instr, uint32_t pc) {
+    // STR (register) § C2.4.184 T1
+    // ---- DECODE --------------------------------------------------
+    uint32_t Rm = GETBITS(instr, 6, 8);
+    uint32_t Rn = GETBITS(instr, 3, 5);
+    uint32_t Rt = GETBITS(instr, 0, 2);
+
+    uint32_t  t = Rt;
+    uint32_t  n = Rn;
+    uint32_t  m = Rm;
+    bool      index = true, add = true, wback = false;
+    auto      shiftT = SRType_LSL;
+    uint32_t  shiftN = 0;
+
+    TRACEI(STR_reg, T1, "t=%u n=%u m=%u", t, n, m);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_STR_register(t, n, m, index, add, wback, shiftT, shiftN);
+  }
+
+  /* _DecodeExecute16_010100_1 {{{4
+   * -------------------------
+   */
+  void _DecodeExecute16_010100_1(uint32_t instr, uint32_t pc) {
+    // STRH (register) § C2.4.193 T1
+    // ---- DECODE --------------------------------------------------
+    uint32_t Rm = GETBITS(instr, 6, 8);
+    uint32_t Rn = GETBITS(instr, 3, 5);
+    uint32_t Rt = GETBITS(instr, 0, 2);
+
+    uint32_t  t = Rt;
+    uint32_t  n = Rn;
+    uint32_t  m = Rm;
+    bool      index = true, add = true, wback = false;
+    auto      shiftT = SRType_LSL;
+    uint32_t  shiftN = 0;
+
+    TRACEI(STRH_reg, T1, "t=%u n=%u m=%u", t, n, m);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_STRH_register(t, n, m, index, add, wback, shiftT, shiftN);
+  }
+
+  /* _DecodeExecute16_010101_0 {{{4
+   * -------------------------
+   */
+  void _DecodeExecute16_010101_0(uint32_t instr, uint32_t pc) {
+    // STRB (register) § C2.4.186 T1
+    // ---- DECODE --------------------------------------------------
+    uint32_t Rt = GETBITS(instr, 0, 2);
+    uint32_t Rn = GETBITS(instr, 3, 5);
+    uint32_t Rm = GETBITS(instr, 6, 8);
+
+    uint32_t t      = Rt;
+    uint32_t n      = Rn;
+    uint32_t m      = Rm;
+    bool     index  = true, add = true, wback = false;
+    auto     shiftT = SRType_LSL;
+    uint32_t shiftN = 0;
+
+    TRACEI(STRB_reg, T1, "t=%u n=%u m=%u index=%u add=%u wback=%u shiftT=%u shiftN=%u", t, n, m, index, add, wback, shiftT, shiftN);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_STRB_register(t, n, m, index, add, wback, shiftT, shiftN);
+  }
+
+  /* _DecodeExecute16_010101_1 {{{4
+   * -------------------------
+   */
+  void _DecodeExecute16_010101_1(uint32_t instr, uint32_t pc) {
+    // LDRSB (register) § C2.4.70 T1
+    // ---- DECODE --------------------------------------------------
+    uint32_t Rt = GETBITS(instr, 0, 2);
+    uint32_t Rn = GETBITS(instr, 3, 5);
+    uint32_t Rm = GETBITS(instr, 6, 8);
+
+    uint32_t t      = Rt;
+    uint32_t n      = Rn;
+    uint32_t m      = Rm;
+    bool     index  = true, add = true, wback = false;
+    auto     shiftT = SRType_LSL;
+    uint32_t shiftN = 0;
+
+    TRACEI(LDRSB_reg, T1, "t=%u n=%u m=%u index=%u add=%u wback=%u shiftT=%u shiftN=%u", t, n, m, index, add, wback, shiftT, shiftN);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_LDRSB_register(t, n, m, index, add, wback, shiftT, shiftN);
+  }
+
+  /* _DecodeExecute16_010110_0 {{{4
+   * -------------------------
+   */
+  void _DecodeExecute16_010110_0(uint32_t instr, uint32_t pc) {
+    // LDR (register) § C2.4.54 T1
+    // ---- DECODE --------------------------------------------------
+    uint32_t Rt = GETBITS(instr, 0, 2);
+    uint32_t Rn = GETBITS(instr, 3, 5);
+    uint32_t Rm = GETBITS(instr, 6, 8);
+
+    uint32_t t      = Rt;
+    uint32_t n      = Rn;
+    uint32_t m      = Rm;
+    bool     index  = true, add = true, wback = false;
+    auto     shiftT = SRType_LSL;
+    uint32_t shiftN = 0;
+
+    TRACEI(LDR_reg, T1, "t=%u n=%u m=%u index=%u add=%u wback=%u shiftT=%u shiftN=%u", t, n, m, index, add, wback, shiftT, shiftN);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_LDR_register(t, n, m, index, add, wback, shiftT, shiftN);
+  }
+
+  /* _DecodeExecute16_010110_1 {{{4
+   * -------------------------
+   */
+  void _DecodeExecute16_010110_1(uint32_t instr, uint32_t pc) {
+    // LDRH (register) § C2.4.66 T1
+    // ---- DECODE --------------------------------------------------
+    uint32_t Rt = GETBITS(instr, 0, 2);
+    uint32_t Rn = GETBITS(instr, 3, 5);
+    uint32_t Rm = GETBITS(instr, 6, 8);
+
+    uint32_t t      = Rt;
+    uint32_t n      = Rn;
+    uint32_t m      = Rm;
+    bool     index  = true, add = true, wback = false;
+    auto     shiftT = SRType_LSL;
+    uint32_t shiftN = 0;
+
+    TRACEI(LDRH_reg, T1, "t=%u n=%u m=%u index=%u add=%u wback=%u shiftT=%u shiftN=%u", t, n, m, index, add, wback, shiftT, shiftN);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_LDRH_register(t, n, m, index, add, wback, shiftT, shiftN);
+  }
+
+  /* _DecodeExecute16_010111_0 {{{4
+   * -------------------------
+   */
+  void _DecodeExecute16_010111_0(uint32_t instr, uint32_t pc) {
+    // LDRB (register) § C2.4.57 T1
+    // ---- DECODE --------------------------------------------------
+    uint32_t Rt = GETBITS(instr, 0, 2);
+    uint32_t Rn = GETBITS(instr, 3, 5);
+    uint32_t Rm = GETBITS(instr, 6, 8);
+
+    uint32_t t      = Rt;
+    uint32_t n      = Rn;
+    uint32_t m      = Rm;
+    bool     index  = true, add = true, wback = false;
+    auto     shiftT = SRType_LSL;
+    uint32_t shiftN = 0;
+
+    TRACEI(LDRB_reg, T1, "t=%u n=%u m=%u index=%u add=%u wback=%u shiftT=%u shiftN=%u", t, n, m, index, add, wback, shiftT, shiftN);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_LDRB_register(t, n, m, index, add, wback, shiftT, shiftN);
+  }
+
+  /* _DecodeExecute16_010111_1 {{{4
+   * -------------------------
+   */
+  void _DecodeExecute16_010111_1(uint32_t instr, uint32_t pc) {
+    // LDRSH (register) § C2.4.74 T1
+    // ---- DECODE --------------------------------------------------
+    uint32_t Rt = GETBITS(instr, 0, 2);
+    uint32_t Rn = GETBITS(instr, 3, 5);
+    uint32_t Rm = GETBITS(instr, 6, 8);
+
+    uint32_t t      = Rt;
+    uint32_t n      = Rn;
+    uint32_t m      = Rm;
+    bool     index  = true, add = true, wback = false;
+    auto     shiftT = SRType_LSL;
+    uint32_t shiftN = 0;
+
+    TRACEI(LDRSH_reg, T1, "t=%u n=%u m=%u index=%u add=%u wback=%u shiftT=%u shiftN=%u", t, n, m, index, add, wback, shiftT, shiftN);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_LDRSH_register(t, n, m, index, add, wback, shiftT, shiftN);
+  }
+
   /* _DecodeExecute16_011xxx {{{4
    * -----------------------
    */
   void _DecodeExecute16_011xxx(uint32_t instr, uint32_t pc) {
+    // Load/store word/byte (immediate offset)
     uint32_t B = GETBITS(instr,12,12);
     uint32_t L = GETBITS(instr,11,11);
 
@@ -6283,6 +6879,8 @@ private:
     uint32_t n     = Rn;
     uint32_t imm32 = _ZeroExtend(imm5, 32);
     bool     index = true, add = true, wback = false;
+
+    TRACEI(STRB_imm, T1, "t=%u n=%u imm32=0x%x index=%u add=%u wback=%u", t, n, imm32, index, add, wback);
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_STRB_immediate(t, n, imm32, index, add, wback);
@@ -6351,10 +6949,129 @@ private:
     _Exec_LDR_immediate(t, n, imm32, index, add, wback);
   }
 
+  /* _DecodeExecute16_1000xx {{{4
+   * -----------------------
+   */
+  void _DecodeExecute16_1000xx(uint32_t instr, uint32_t pc) {
+    // Load/store halfword (immediate offset)
+    uint32_t L = GETBITS(instr,11,11);
+
+    if (!L) {
+      // STRH (immediate)
+      _DecodeExecute16_10000x(instr, pc);
+    } else {
+      // LDRH (immediate)
+      _DecodeExecute16_10001x(instr, pc);
+    }
+  }
+
+  /* _DecodeExecute16_10000x {{{4
+   * -----------------------
+   */
+  void _DecodeExecute16_10000x(uint32_t instr, uint32_t pc) {
+    // STRH (immediate) § C2.4.192 T1
+    // ---- DECODE --------------------------------------------------
+    uint32_t imm5 = GETBITS(instr, 6,10);
+    uint32_t Rn   = GETBITS(instr, 3, 5);
+    uint32_t Rt   = GETBITS(instr, 0, 2);
+
+    uint32_t  t     = Rt;
+    uint32_t  n     = Rn;
+    uint32_t  imm32 = _ZeroExtend(imm5<<1, 32);
+    bool      index = true, add = true, wback = false;
+
+    TRACEI(STRH_imm, T1, "t=%u n=%u imm32=0x%x", t, n, imm32);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_STRH_immediate(t, n, imm32, index, add, wback);
+  }
+
+  /* _DecodeExecute16_10001x {{{4
+   * -----------------------
+   */
+  void _DecodeExecute16_10001x(uint32_t instr, uint32_t pc) {
+    // LDRH (immediate) § C2.4.64 T1
+    // ---- DECODE --------------------------------------------------
+    uint32_t imm5 = GETBITS(instr, 6,10);
+    uint32_t Rn   = GETBITS(instr, 3, 5);
+    uint32_t Rt   = GETBITS(instr, 0, 2);
+
+    uint32_t  t     = Rt;
+    uint32_t  n     = Rn;
+    uint32_t  imm32 = _ZeroExtend(imm5<<1, 32);
+    bool      index = true, add = true, wback = false;
+
+    TRACEI(LDRH_imm, T1, "t=%u n=%u imm32=0x%x", t, n, imm32);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_LDRH_immediate(t, n, imm32, index, add, wback);
+  }
+
+  /* _DecodeExecute16_1001xx {{{4
+   * -----------------------
+   */
+  void _DecodeExecute16_1001xx(uint32_t instr, uint32_t pc) {
+    // Load/store (SP-relative)
+    uint32_t L = GETBITS(instr,11,11);
+
+    if (!L) {
+      // STR (immediate)
+      _DecodeExecute16_10010x(instr, pc);
+    } else {
+      // LDR (immediate)
+      _DecodeExecute16_10011x(instr, pc);
+    }
+  }
+
+  /* _DecodeExecute16_10010x {{{4
+   * -----------------------
+   */
+  void _DecodeExecute16_10010x(uint32_t instr, uint32_t pc) {
+    // STR (immediate) § C2.4.183 T2
+    // ---- DECODE --------------------------------------------------
+    uint32_t Rt   = GETBITS(instr, 8,10);
+    uint32_t imm8 = GETBITS(instr, 0, 7);
+
+    uint32_t t     = Rt;
+    uint32_t n     = 13;
+    uint32_t imm32 = _ZeroExtend(imm8<<2, 32);
+    bool     index = true;
+    bool     add   = true;
+    bool     wback = false;
+
+    TRACEI(STR_imm, T2, "t=%u n=%u imm32=0x%x index=%u add=%u wback=%u", t, n, imm32, index, add, wback);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_STR_immediate(t, n, imm32, index, add, wback);
+  }
+
+  /* _DecodeExecute16_10011x {{{4
+   * -----------------------
+   */
+  void _DecodeExecute16_10011x(uint32_t instr, uint32_t pc) {
+    // LDR (immediate) § C2.4.52 T2
+    // ---- DECODE --------------------------------------------------
+    uint32_t Rt   = GETBITS(instr, 8,10);
+    uint32_t imm8 = GETBITS(instr, 0, 7);
+
+    uint32_t t     = Rt;
+    uint32_t n     = 13;
+    uint32_t imm32 = _ZeroExtend(imm8<<2, 32);
+    bool     index = true;
+    bool     add   = true;
+    bool     wback = false;
+
+    TRACEI(LDR_imm, T2, "t=%u n=%u imm32=0x%x index=%u add=%u wback=%u", t, n, imm32, index, add, wback);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_LDR_immediate(t, n, imm32, index, add, wback);
+  }
+
   /* _DecodeExecute16_1010xx {{{4
    * -----------------------
    */
   void _DecodeExecute16_1010xx(uint32_t instr, uint32_t pc) {
+    // Add PC/SP (immediate)
     if (!(instr & BIT(16+11)))
       // ADR
       _DecodeExecute16_1010xx_0(instr, pc);
@@ -6385,13 +7102,26 @@ private:
    * -------------------------
    */
   void _DecodeExecute16_1010xx_1(uint32_t instr, uint32_t pc) {
-    TODO_DEC();
+    // ADD (SP plus immediate) § C2.4.3 T1
+    // ---- DECODE --------------------------------------------------
+    uint32_t Rd   = GETBITS(instr, 8,10);
+    uint32_t imm8 = GETBITS(instr, 0, 7);
+
+    uint32_t d        = Rd;
+    bool     setflags = false;
+    uint32_t imm32    = _ZeroExtend(imm8<<2, 32);
+
+    TRACEI(ADD_SP_plus_imm, T1, "d=%u S=%u imm32=0x%x", d, setflags, imm32);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_ADD_SP_plus_immediate(d, setflags, imm32);
   }
 
   /* _DecodeExecute16_1011xx {{{4
    * -----------------------
    */
   void _DecodeExecute16_1011xx(uint32_t instr, uint32_t pc) {
+    // Miscellaneous 16-bit instructions
     uint32_t op0 = GETBITS(instr, 8,11);
     uint32_t op1 = GETBITS(instr, 6, 7);
     uint32_t op2 = GETBITS(instr, 5, 5);
@@ -6405,7 +7135,7 @@ private:
 
       case 0b0010:
         // Extend
-        TODO_DEC();
+        _DecodeExecute16_101100_10(instr, pc);
         break;
 
       case 0b0110:
@@ -6430,13 +7160,13 @@ private:
           UNDEFINED_DEC();
         } else {
           // Reverse bytes
-          TODO_DEC();
+          _DecodeExecute16_101110_10(instr, pc);
         }
         break;
 
       case 0b1110:
         // BKPT
-        TODO_DEC();
+        _DecodeExecute16_101111_10(instr, pc);
         break;
 
       case 0b1111:
@@ -6454,7 +7184,7 @@ private:
       case 0b1001:
       case 0b1011:
         // CBNZ, CBZ
-        TODO_DEC();
+        _DecodeExecute16_1011x0_xx(instr, pc);
         break;
 
       case 0b0100:
@@ -6470,29 +7200,254 @@ private:
     }
   }
 
-  /* _DecodeExecute16_101111_11_xxxx {{{4
-   * -------------------------------
+  /* _DecodeExecute16_1011x0_xx {{{4
+   * --------------------------
    */
-  void _DecodeExecute16_101111_11_xxxx(uint32_t instr, uint32_t pc) {
-    // IT § C2.4.41 T1
+  void _DecodeExecute16_1011x0_xx(uint32_t instr, uint32_t pc) {
+    // CBNZ, CBZ § C2.4.24 T1
     // ---- DECODE --------------------------------------------------
-    uint32_t firstCond = GETBITS(instr, 4, 7);
-    uint32_t mask      = GETBITS(instr, 0, 3);
+    uint32_t op   = GETBITS(instr,11,11);
+    uint32_t i    = GETBITS(instr, 9, 9);
+    uint32_t imm5 = GETBITS(instr, 3, 7);
+    uint32_t Rn   = GETBITS(instr, 0, 2);
 
-    ASSERT(mask != 0b0000);
-    if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
-
-    if (firstCond == 0b1111 || (firstCond == 0b1110 && _BitCount(mask) != 1))
-      CUNPREDICTABLE_UNDEFINED();
+    uint32_t n        = Rn;
+    uint32_t imm32    = _ZeroExtend((i << 6) | (imm5 << 1), 32);
+    bool     nonzero  = !!op;
 
     if (_InITBlock())
       throw Exception(ExceptionType::UNPREDICTABLE);
 
-    TRACEI(IT, T1, "firstCond=0x%x mask=0x%x", firstCond, mask);
+    TRACEI(CBNZ_CBZ, T1, "n=%u imm32=0x%x nonzero=%u", n, imm32, nonzero);
 
     // ---- EXECUTE -------------------------------------------------
-    _Exec_IT(firstCond, mask);
+    _Exec_CBNZ_CBZ(n, imm32, nonzero);
+  }
+
+  /* _DecodeExecute16_101111_10 {{{4
+   * --------------------------
+   */
+  void _DecodeExecute16_101111_10(uint32_t instr, uint32_t pc) {
+    // BKPT § C2.4.20 T1
+    // ---- DECODE --------------------------------------------------
+    uint32_t imm8 = GETBITS(instr, 0, 7);
+
+    uint32_t imm32 = _ZeroExtend(imm8, 32);
+    // imm32 is for assembly/disassembly only and is ignored by hardware.
+
+    TRACEI(BKPT, T1, "imm32=0x%x", imm32);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_BKPT();
+  }
+
+  /* _DecodeExecute16_101110_10 {{{4
+   * --------------------------
+   */
+  void _DecodeExecute16_101110_10(uint32_t instr, uint32_t pc) {
+    // Reverse bytes
+    uint32_t op = GETBITS(instr, 6, 7);
+
+    switch (op) {
+      case 0b00:
+        // REV
+        _DecodeExecute16_101110_10_00(instr, pc);
+        break;
+
+      case 0b01:
+        // REV16
+        _DecodeExecute16_101110_10_01(instr, pc);
+        break;
+
+      case 0b11:
+        // REVSH
+        _DecodeExecute16_101110_10_11(instr, pc);
+        break;
+
+      default:
+        abort();
+    }
+  }
+
+  /* _DecodeExecute16_101110_10_00 {{{4
+   * -----------------------------
+   */
+  void _DecodeExecute16_101110_10_00(uint32_t instr, uint32_t pc) {
+    // REV § C2.4.126 T1
+    // ---- DECODE --------------------------------------------------
+    uint32_t Rm = GETBITS(instr, 3, 5);
+    uint32_t Rd = GETBITS(instr, 0, 2);
+
+    uint32_t d = Rd;
+    uint32_t m = Rm;
+
+    TRACEI(REV, T1, "d=%u m=%u", d, m);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_REV(d, m);
+  }
+
+  /* _DecodeExecute16_101110_10_01 {{{4
+   * -----------------------------
+   */
+  void _DecodeExecute16_101110_10_01(uint32_t instr, uint32_t pc) {
+    // REV16 § C2.4.127 T1
+    // ---- DECODE --------------------------------------------------
+    uint32_t Rm = GETBITS(instr, 3, 5);
+    uint32_t Rd = GETBITS(instr, 0, 2);
+
+    uint32_t d = Rd;
+    uint32_t m = Rm;
+
+    TRACEI(REV16, T1, "d=%u m=%u", d, m);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_REV16(d, m);
+  }
+
+  /* _DecodeExecute16_101110_10_11 {{{4
+   * -----------------------------
+   */
+  void _DecodeExecute16_101110_10_11(uint32_t instr, uint32_t pc) {
+    // REVSH § C2.4.128 T1
+    // ---- DECODE --------------------------------------------------
+    uint32_t Rm = GETBITS(instr, 3, 5);
+    uint32_t Rd = GETBITS(instr, 0, 2);
+
+    uint32_t d = Rd;
+    uint32_t m = Rm;
+
+    TRACEI(REVSH, T1, "d=%u m=%u", d, m);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_REVSH(d, m);
+  }
+
+  /* _DecodeExecute16_101100_10 {{{4
+   * --------------------------
+   */
+  void _DecodeExecute16_101100_10(uint32_t instr, uint32_t pc) {
+    // Extend
+    uint32_t U = GETBITS(instr, 7, 7);
+    uint32_t B = GETBITS(instr, 6, 6);
+    uint32_t U_B = (U<<1) | B;
+
+    switch (U_B) {
+      case 0b0'0:
+        // SXTH
+        _DecodeExecute16_101100_10_00(instr, pc);
+        break;
+
+      case 0b0'1:
+        // SXTB
+        _DecodeExecute16_101100_10_01(instr, pc);
+        break;
+
+      case 0b1'0:
+        // UXTH
+        _DecodeExecute16_101100_10_10(instr, pc);
+        break;
+
+      case 0b1'1:
+        // UXTB
+        _DecodeExecute16_101100_10_11(instr, pc);
+        break;
+
+      default:
+        abort();
+    }
+  }
+
+  /* _DecodeExecute16_101100_10_00 {{{4
+   * -----------------------------
+   */
+  void _DecodeExecute16_101100_10_00(uint32_t instr, uint32_t pc) {
+    // SXTH § C2.4.207 T1
+    // ---- DECODE --------------------------------------------------
+    uint32_t Rd = GETBITS(instr, 0, 2);
+    uint32_t Rm = GETBITS(instr, 3, 5);
+
+    uint32_t d        = Rd;
+    uint32_t m        = Rm;
+    uint32_t rotation = 0;
+
+    TRACEI(SXTH, T1, "d=%u m=%u rotation=%u", d, m, rotation);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_SXTH(d, m, rotation);
+  }
+
+  /* _DecodeExecute16_101100_10_01 {{{4
+   * -----------------------------
+   */
+  void _DecodeExecute16_101100_10_01(uint32_t instr, uint32_t pc) {
+    // SXTB § C2.4.205 T1
+    // ---- DECODE --------------------------------------------------
+    uint32_t Rd = GETBITS(instr, 0, 2);
+    uint32_t Rm = GETBITS(instr, 3, 5);
+
+    uint32_t d        = Rd;
+    uint32_t m        = Rm;
+    uint32_t rotation = 0;
+
+    TRACEI(SXTB, T1, "d=%u m=%u rotation=%u", d, m, rotation);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_SXTB(d, m, rotation);
+  }
+
+  /* _DecodeExecute16_101100_10_10 {{{4
+   * -----------------------------
+   */
+  void _DecodeExecute16_101100_10_10(uint32_t instr, uint32_t pc) {
+    // UXTH § C2.4.247 T1
+    // ---- DECODE --------------------------------------------------
+    uint32_t Rd = GETBITS(instr, 0, 2);
+    uint32_t Rm = GETBITS(instr, 3, 5);
+
+    uint32_t d        = Rd;
+    uint32_t m        = Rm;
+    uint32_t rotation = 0;
+
+    TRACEI(UXTH, T1, "d=%u m=%u rotation=%u", d, m, rotation);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_UXTH(d, m, rotation);
+  }
+
+  /* _DecodeExecute16_101100_10_11 {{{4
+   * -----------------------------
+   */
+  void _DecodeExecute16_101100_10_11(uint32_t instr, uint32_t pc) {
+    // UXTB § C2.4.245 T1
+    // ---- DECODE --------------------------------------------------
+    uint32_t Rd = GETBITS(instr, 0, 2);
+    uint32_t Rm = GETBITS(instr, 3, 5);
+
+    uint32_t d        = Rd;
+    uint32_t m        = Rm;
+    uint32_t rotation = 0;
+
+    TRACEI(UXTB, T1, "d=%u m=%u rotation=%u", d, m, rotation);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_UXTB(d, m, rotation);
+  }
+
+  /* _DecodeExecute16_1011x1_0 {{{4
+   * -------------------------
+   */
+  void _DecodeExecute16_1011x1_0(uint32_t instr, uint32_t pc) {
+    uint32_t L = GETBITS(instr,11,11);
+    uint32_t P = GETBITS(instr, 8, 8);
+
+    if (!L) {
+      // STMDB, STMFD
+      _DecodeExecute16_101101(instr, pc);
+    } else {
+      // LDM, LDMIA, LDMFD
+      _DecodeExecute16_101111(instr, pc);
+    }
   }
 
   /* _DecodeExecute16_101100_00 {{{4
@@ -6544,112 +7499,6 @@ private:
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_SUB_SP_minus_immediate(d, setflags, imm32);
-  }
-
-  /* _DecodeExecute16_101111_11_0000 {{{4
-   * -------------------------------
-   */
-  void _DecodeExecute16_101111_11_0000(uint32_t instr, uint32_t pc) {
-    uint32_t hint = GETBITS(instr, 4, 7);
-
-    switch (hint) {
-      case 0b0000:
-        // NOP
-        TODO_DEC();
-        break;
-
-      case 0b0001:
-        // YIELD
-        TODO_DEC();
-        break;
-
-      case 0b0010:
-        // WFE
-        TODO_DEC();
-        break;
-
-      case 0b0011:
-        // WFI
-        _DecodeExecute16_101111_11_0000_0011(instr, pc);
-        break;
-
-      case 0b0100:
-        // SEV
-        TODO_DEC();
-        break;
-
-      case 0b0101:
-      case 0b0110:
-      case 0b0111:
-      case 0b1000:
-      case 0b1001:
-      case 0b1010:
-      case 0b1011:
-      case 0b1100:
-      case 0b1101:
-      case 0b1110:
-      case 0b1111:
-        // Reserved hint, behaves as NOP.
-        TODO_DEC();
-        break;
-
-      default:
-        abort();
-    }
-  }
-
-  /* _DecodeExecute16_101111_11_0000_0011 {{{4
-   * ------------------------------------
-   */
-  void _DecodeExecute16_101111_11_0000_0011(uint32_t instr, uint32_t pc) {
-    // WFI § C2.4.305 T1
-    // ---- DECODE --------------------------------------------------
-
-    TRACEI(WFI, T1, "");
-
-    // ---- EXECUTE -------------------------------------------------
-    _Exec_WFI();
-  }
-
-  /* _DecodeExecute16_1011x1_0 {{{4
-   * -------------------------
-   */
-  void _DecodeExecute16_1011x1_0(uint32_t instr, uint32_t pc) {
-    uint32_t L = GETBITS(instr,11,11);
-    uint32_t P = GETBITS(instr, 8, 8);
-
-    if (!L) {
-      // STMDB, STMFD
-      _DecodeExecute16_101101(instr, pc);
-    } else {
-      // LDM, LDMIA, LDMFD
-      _DecodeExecute16_101111(instr, pc);
-    }
-  }
-
-  /* _DecodeExecute16_101111 {{{4
-   * -----------------------
-   */
-  void _DecodeExecute16_101111(uint32_t instr, uint32_t pc) {
-    // LDM, LDMIA, LDMFD § C2.4.50 T3
-    // ---- DECODE --------------------------------------------------
-    uint32_t P        = GETBITS(instr, 8, 8);
-    uint32_t regList  = GETBITS(instr, 0, 7);
-
-    uint32_t n          = 13;
-    uint32_t registers  = regList | (P<<15);
-    bool     wback      = true;
-
-    if (_BitCount(registers) < 1)
-      CUNPREDICTABLE_UNDEFINED();
-
-    if (GETBIT(registers,15) && _InITBlock() && !_LastInITBlock())
-      throw Exception(ExceptionType::UNDEFINED);
-
-    TRACEI(LDM, T3, "n=%u wback=%u registers=0x%x", n, wback, registers);
-
-    // ---- EXECUTE -------------------------------------------------
-    _Exec_LDM(n, registers, wback);
   }
 
   /* _DecodeExecute16_101101 {{{4
@@ -6707,17 +7556,257 @@ private:
     _Exec_CPS(enable, disable, affectPRI, affectFAULT);
   }
 
+  /* _DecodeExecute16_101111 {{{4
+   * -----------------------
+   */
+  void _DecodeExecute16_101111(uint32_t instr, uint32_t pc) {
+    // LDM, LDMIA, LDMFD § C2.4.50 T3
+    // ---- DECODE --------------------------------------------------
+    uint32_t P        = GETBITS(instr, 8, 8);
+    uint32_t regList  = GETBITS(instr, 0, 7);
+
+    uint32_t n          = 13;
+    uint32_t registers  = regList | (P<<15);
+    bool     wback      = true;
+
+    if (_BitCount(registers) < 1)
+      CUNPREDICTABLE_UNDEFINED();
+
+    if (GETBIT(registers,15) && _InITBlock() && !_LastInITBlock())
+      throw Exception(ExceptionType::UNDEFINED);
+
+    TRACEI(LDM, T3, "n=%u wback=%u registers=0x%x", n, wback, registers);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_LDM(n, registers, wback);
+  }
+
+  /* _DecodeExecute16_101111_11_xxxx {{{4
+   * -------------------------------
+   */
+  void _DecodeExecute16_101111_11_xxxx(uint32_t instr, uint32_t pc) {
+    // IT § C2.4.41 T1
+    // ---- DECODE --------------------------------------------------
+    uint32_t firstCond = GETBITS(instr, 4, 7);
+    uint32_t mask      = GETBITS(instr, 0, 3);
+
+    ASSERT(mask != 0b0000);
+    if (!_HaveMainExt())
+      throw Exception(ExceptionType::UNDEFINED);
+
+    if (firstCond == 0b1111 || (firstCond == 0b1110 && _BitCount(mask) != 1))
+      CUNPREDICTABLE_UNDEFINED();
+
+    if (_InITBlock())
+      throw Exception(ExceptionType::UNPREDICTABLE);
+
+    TRACEI(IT, T1, "firstCond=0x%x mask=0x%x", firstCond, mask);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_IT(firstCond, mask);
+  }
+
+  /* _DecodeExecute16_101111_11_0000 {{{4
+   * -------------------------------
+   */
+  void _DecodeExecute16_101111_11_0000(uint32_t instr, uint32_t pc) {
+    uint32_t hint = GETBITS(instr, 4, 7);
+
+    switch (hint) {
+      case 0b0000:
+        // NOP
+        _DecodeExecute16_101111_11_0000_0000(instr, pc);
+        break;
+
+      case 0b0001:
+        // YIELD
+        _DecodeExecute16_101111_11_0000_0001(instr, pc);
+        break;
+
+      case 0b0010:
+        // WFE
+        _DecodeExecute16_101111_11_0000_0010(instr, pc);
+        break;
+
+      case 0b0011:
+        // WFI
+        _DecodeExecute16_101111_11_0000_0011(instr, pc);
+        break;
+
+      case 0b0100:
+        // SEV
+        _DecodeExecute16_101111_11_0000_0100(instr, pc);
+        break;
+
+      case 0b0101:
+      case 0b0110:
+      case 0b0111:
+      case 0b1000:
+      case 0b1001:
+      case 0b1010:
+      case 0b1011:
+      case 0b1100:
+      case 0b1101:
+      case 0b1110:
+      case 0b1111:
+        // Reserved hint, behaves as NOP.
+        _DecodeExecute16_101111_11_0000_xxxx(instr, pc);
+        break;
+
+      default:
+        abort();
+    }
+  }
+
+  /* _DecodeExecute16_101111_11_0000_0000 {{{4
+   * ------------------------------------
+   */
+  void _DecodeExecute16_101111_11_0000_0000(uint32_t instr, uint32_t pc) {
+    // NOP § C2.4.100 T1
+    // ---- DECODE --------------------------------------------------
+
+    TRACEI(NOP, T1, "");
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_NOP();
+  }
+
+  /* _DecodeExecute16_101111_11_0000_0001 {{{4
+   * ------------------------------------
+   */
+  void _DecodeExecute16_101111_11_0000_0001(uint32_t instr, uint32_t pc) {
+    // YIELD § C2.4.306 T1
+    // ---- DECODE --------------------------------------------------
+
+    TRACEI(YIELD, T1, "");
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_YIELD();
+  }
+
+  /* _DecodeExecute16_101111_11_0000_0010 {{{4
+   * ------------------------------------
+   */
+  void _DecodeExecute16_101111_11_0000_0010(uint32_t instr, uint32_t pc) {
+    // WFE § C2.4.304 T1
+    // ---- DECODE --------------------------------------------------
+
+    TRACEI(WFE, T1, "");
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_WFE();
+  }
+
+  /* _DecodeExecute16_101111_11_0000_0011 {{{4
+   * ------------------------------------
+   */
+  void _DecodeExecute16_101111_11_0000_0011(uint32_t instr, uint32_t pc) {
+    // WFI § C2.4.305 T1
+    // ---- DECODE --------------------------------------------------
+
+    TRACEI(WFI, T1, "");
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_WFI();
+  }
+
+  /* _DecodeExecute16_101111_11_0000_0100 {{{4
+   * ------------------------------------
+   */
+  void _DecodeExecute16_101111_11_0000_0100(uint32_t instr, uint32_t pc) {
+    // SEV § C2.4.145 T1
+    // ---- DECODE --------------------------------------------------
+
+    TRACEI(SEV, T1, "");
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_SEV();
+  }
+
+  /* _DecodeExecute16_101111_11_0000_xxxx {{{4
+   * ------------------------------------
+   */
+  void _DecodeExecute16_101111_11_0000_xxxx(uint32_t instr, uint32_t pc) {
+    // Reserved hint, behaves as NOP.
+    // ---- DECODE --------------------------------------------------
+
+    TRACEI(RSVD_HINT, UNK, "");
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_NOP();
+  }
+
+  /* _DecodeExecute16_1100xx {{{4
+   * -----------------------
+   */
+  void _DecodeExecute16_1100xx(uint32_t instr, uint32_t pc) {
+    uint32_t L = GETBITS(instr,11,11);
+
+    if (!L) {
+      // STM, STMIA, STMEA
+      _DecodeExecute16_11000x(instr, pc);
+    } else {
+      // LDM, LDMIA, LDMFD
+      _DecodeExecute16_11001x(instr, pc);
+    }
+  }
+
+  /* _DecodeExecute16_11000x {{{4
+   * -----------------------
+   */
+  void _DecodeExecute16_11000x(uint32_t instr, uint32_t pc) {
+    // STM, STMIA, STMEA § C2.4.181 T1
+    // ---- DECODE --------------------------------------------------
+    uint32_t Rn       = GETBITS(instr, 8,10);
+    uint32_t regList  = GETBITS(instr, 0, 7);
+
+    uint32_t n          = Rn;
+    uint32_t registers  = regList;
+    bool     wback      = true;
+
+    if (_BitCount(registers) < 1)
+      CUNPREDICTABLE_UNDEFINED();
+
+    TRACEI(STM, T1, "n=%u registers=0x%x", n, registers);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_STM(n, registers, wback);
+  }
+
+  /* _DecodeExecute16_11001x {{{4
+   * -----------------------
+   */
+  void _DecodeExecute16_11001x(uint32_t instr, uint32_t pc) {
+    // LDM, LDMIA, LDMFD § C2.4.50 T1
+    // ---- DECODE --------------------------------------------------
+    uint32_t Rn       = GETBITS(instr, 8,10);
+    uint32_t regList  = GETBITS(instr, 0, 7);
+
+    uint32_t n          = Rn;
+    uint32_t registers  = regList;
+    bool     wback      = !GETBIT(registers, n);
+
+    if (_BitCount(registers) < 1)
+      CUNPREDICTABLE_UNDEFINED();
+
+    TRACEI(LDM, T1, "n=%u registers=0x%x wback=%u", n, registers, wback);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_LDM(n, registers, wback);
+  }
+
   /* _DecodeExecute16_1101xx {{{4
    * -----------------------
    */
   void _DecodeExecute16_1101xx(uint32_t instr, uint32_t pc) {
+    // Conditional branch, and Supervisor Call
     uint32_t op0 = GETBITS(instr, 8,11);
 
     switch (op0) {
       case 0b1110:
       case 0b1111:
         // Exception generation
-        TODO_DEC();
+        _DecodeExecute16_110111_1x(instr, pc);
         break;
 
       default:
@@ -6725,6 +7814,60 @@ private:
         _DecodeExecute16_1101xx_xx(instr, pc);
         break;
     }
+  }
+
+  /* _DecodeExecute16_110111_1x {{{4
+   * --------------------------
+   */
+  void _DecodeExecute16_110111_1x(uint32_t instr, uint32_t pc) {
+    // Exception generation
+    uint32_t S = GETBITS(instr, 8, 8);
+
+    if (!S) {
+      // UDF
+      _DecodeExecute16_110111_10(instr, pc);
+    } else {
+      // SVC
+      _DecodeExecute16_110111_11(instr, pc);
+    }
+  }
+  
+  /* _DecodeExecute16_110111_10 {{{4
+   * --------------------------
+   */
+  void _DecodeExecute16_110111_10(uint32_t instr, uint32_t pc) {
+    // UDF § C2.4.218 T1
+    // ---- DECODE --------------------------------------------------
+    uint32_t imm8 = GETBITS(instr, 0, 7);
+
+    uint32_t imm32 = _ZeroExtend(imm8, 32);
+
+    // imm32 is for assembly and disassembly only, and is ignored by hardware.
+
+    TRACEI(UDF, T1, "");
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_UDF();
+  }
+
+  /* _DecodeExecute32_110111_11 {{{4
+   * --------------------------
+   */
+  void _DecodeExecute16_110111_11(uint32_t instr, uint32_t pc) {
+    // SVC § C2.4.201 T1
+    // ---- DECODE --------------------------------------------------
+    uint32_t imm8 = GETBITS(instr, 0, 7);
+
+    uint32_t imm32 = _ZeroExtend(imm8, 32);
+
+    // imm32 is for assembly/disassebly. SVC handlers in some
+    // systems interpret imm8 in software, for example to determine
+    // the required service.
+
+    TRACEI(SVC, T1, "imm32=0x%x", imm32);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_SVC();
   }
 
   /* _DecodeExecute16_1101xx_xx {{{4
@@ -6790,7 +7933,7 @@ private:
         break;
 
       case 0b0100:
-        // Load/store (multiple, dual, exclusive, acquire-release)
+        // Load/store (multiple, dual, exclusive, acquire-release), table branch
         _DecodeExecute32_0100(instr, pc);
         break;
 
@@ -6843,6 +7986,226 @@ private:
       default:
         abort();
     }
+  }
+
+  /* _DecodeExecute32_0100 {{{4
+   * ---------------------
+   */
+  void _DecodeExecute32_0100(uint32_t instr, uint32_t pc) {
+    // Load/store (multiple, dual, exclusive, acquire-release), table branch
+    uint32_t op0 = GETBITS(instr>>16, 8, 8);
+    uint32_t op1 = GETBITS(instr>>16, 5, 6);
+    switch ((op0<<2)|op1) {
+      case 0b0'00:
+      case 0b0'01:
+      case 0b1'00:
+      case 0b1'01:
+        // Load/store multiple
+        _DecodeExecute32_0100_x0x(instr, pc);
+        break;
+
+      case 0b0'10:
+        // Load/store exclusive, load-acquire/store-release, table branch
+        TODO_DEC();
+        break;
+
+      case 0b0'11:
+        // Load/store dual (post-indexed)
+        _DecodeExecute32_0100_011(instr, pc);
+        break;
+
+      case 0b1'10:
+        // Load/store dual (literal and immediate)
+        TODO_DEC();
+        break;
+
+      case 0b1'11:
+        // Load/store dual (pre-indexed), secure gateway
+        TODO_DEC();
+        break;
+
+      default:
+        abort();
+    }
+  }
+
+  /* _DecodeExecute32_0100_x0x {{{4
+   * -------------------------
+   */
+  void _DecodeExecute32_0100_x0x(uint32_t instr, uint32_t pc) {
+    // Load/store multiple
+    uint32_t opc = GETBITS(instr>>16, 7, 8);
+    uint32_t L   = GETBITS(instr>>16, 4, 4);
+    switch ((opc<<1)|L) {
+      case 0b00'0:
+      case 0b00'1:
+        // Unallocated
+        UNDEFINED_DEC();
+        break;
+
+      case 0b01'0:
+        // STM, STMIA, STMEA
+        TODO_DEC();
+        break;
+
+      case 0b01'1:
+        // LDM, LDMIA, LDMFD
+        _DecodeExecute32_0100_00x_11(instr, pc);
+        break;
+
+      case 0b10'0:
+        // STMDB, STMFD
+        _DecodeExecute32_0100_10x_00(instr, pc);
+        break;
+
+      case 0b10'1:
+        // LDMDB, LDMEA
+        TODO_DEC();
+        break;
+
+      case 0b11'0:
+      case 0b11'1:
+        // Unallocated
+        UNDEFINED_DEC();
+        break;
+
+      default:
+        abort();
+    }
+  }
+  
+  /* _DecodeExecute32_0100_00x_11 {{{4
+   * ----------------------------
+   */
+  void _DecodeExecute32_0100_00x_11(uint32_t instr, uint32_t pc) {
+    // LDM, LDMIA, LDMFD § C2.4.50 T2
+    // ---- DECODE --------------------------------------------------
+    uint32_t W        = GETBITS(instr>>16, 4, 4);
+    uint32_t Rn       = GETBITS(instr>>16, 0, 3);
+    uint32_t P        = GETBITS(instr    ,15,15);
+    uint32_t M        = GETBITS(instr    ,14,14);
+    uint32_t regList  = GETBITS(instr    , 0,12);
+
+    if (!_HaveMainExt())
+      throw Exception(ExceptionType::UNDEFINED);
+
+    uint32_t n          = Rn;
+    uint32_t registers  = (P<<15) | (M<<14) | regList;
+    bool     wback      = !!W;
+
+    if (n == 15 || _BitCount(registers) < 2 || (P && M))
+      CUNPREDICTABLE_UNDEFINED();
+
+    if (GETBIT(registers, 15) && _InITBlock() && !_LastInITBlock())
+      throw Exception(ExceptionType::UNPREDICTABLE);
+
+    if (wback && GETBIT(registers, n))
+      throw Exception(ExceptionType::UNPREDICTABLE);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_LDM(n, registers, wback);
+  }
+
+  /* _DecodeExecute32_0100_10x_00 {{{4
+   * ----------------------------
+   */
+  void _DecodeExecute32_0100_10x_00(uint32_t instr, uint32_t pc) {
+    // STMDB, STMFD § C2.4.182 T1
+    // ---- DECODE --------------------------------------------------
+    uint32_t W        = GETBITS(instr>>16, 5, 5);
+    uint32_t Rn       = GETBITS(instr>>16, 0, 3);
+    uint32_t M        = GETBITS(instr    ,14,14);
+    uint32_t regList  = GETBITS(instr    , 0,12);
+
+    if (!_HaveMainExt())
+      throw Exception(ExceptionType::UNDEFINED);
+
+    uint32_t  n         = Rn;
+    uint32_t  registers = regList | (M<<14);
+    bool      wback     = !!W;
+
+    if (n == 15 || _BitCount(registers) < 2)
+      CUNPREDICTABLE_UNDEFINED();
+
+    if (wback && !!(registers & BIT(n)))
+      CUNPREDICTABLE_UNDEFINED();
+
+    TRACEI(STMDB, T1, "n=%u registers=0x%x wback=%u", n, registers, wback);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_STMDB(n, registers, wback);
+  }
+
+  /* _DecodeExecute32_0100_011 {{{4
+   * -------------------------
+   */
+  void _DecodeExecute32_0100_011(uint32_t instr, uint32_t pc) {
+    uint32_t op0 = GETBITS(instr>>16, 0, 3);
+    switch (op0) {
+      case 0b1111:
+        throw Exception(ExceptionType::UNPREDICTABLE);
+
+      default:
+        // Load/store dual (immediate, post-indexed)
+        return _DecodeExecute32_0100_011_LS(instr, pc);
+    }
+  }
+
+  /* _DecodeExecute32_0100_011_LS {{{4
+   * ----------------------------
+   */
+  void _DecodeExecute32_0100_011_LS(uint32_t instr, uint32_t pc) {
+    if (instr & BIT(16+4))
+      // STRD (immediate)
+      return _DecodeExecute32_0100_011_LS_STRD(instr, pc);
+    else
+      // LDRD (immediate)
+      return _DecodeExecute32_0100_011_LS_LDRD(instr, pc);
+  }
+
+  /* _DecodeExecute32_0100_011_LS_STRD {{{4
+   * ---------------------------------
+   */
+  void _DecodeExecute32_0100_011_LS_STRD(uint32_t instr, uint32_t pc) {
+    TODO_DEC();
+  }
+
+  /* _DecodeExecute32_0100_011_LS_LDRD {{{4
+   * ---------------------------------
+   */
+  void _DecodeExecute32_0100_011_LS_LDRD(uint32_t instr, uint32_t pc) {
+    // LDRD (immediate) § C2.4.59 T1
+    // ---- DECODE --------------------------------------------------
+    uint32_t P    = GETBITS(instr>>16, 8, 8);
+    uint32_t U    = GETBITS(instr>>16, 7, 7);
+    uint32_t W    = GETBITS(instr>>16, 5, 5);
+    uint32_t Rn   = GETBITS(instr>>16, 0, 3);
+    uint32_t Rt   = GETBITS(instr    ,12,15);
+    uint32_t Rt2  = GETBITS(instr    , 8,11);
+    uint32_t imm8 = GETBITS(instr    , 0, 7);
+
+    if (!P && !W) {
+      // RELATED ENCODINGS
+      ASSERT(false);
+    }
+
+    ASSERT(Rn != 0b1111);
+
+    if (!_HaveMainExt())
+      throw Exception(ExceptionType::UNDEFINED);
+
+    uint32_t t = Rt, t2 = Rt2, n = Rn, imm32 = _ZeroExtend(imm8<<2, 32);
+    bool index = !!P, add = !!U, wback = !!W;
+    if (wback && (n == t || n == t2))
+      CUNPREDICTABLE_UNDEFINED();
+
+    if ((t == 13 || t == 15) || (t2 == 13 || t2 == 15) || t == t2)
+      CUNPREDICTABLE_UNDEFINED();
+
+    TRACEI(LDRD_imm, T1, "t=%u t2=%u n=%u imm32=0x%x index=%u add=%u wback=%u", t, t2, n, imm32, index, add, wback);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_LDRD_immediate(t, t2, n, imm32, index, add, wback);
   }
 
   /* _DecodeExecute32_0101 {{{4
@@ -7184,6 +8547,7 @@ private:
               }
             } else {
               // Unallocated
+              UNDEFINED_DEC();
             }
           } else {
             if (!op0) {
@@ -7230,6 +8594,9 @@ private:
     }
   }
 
+  /* _DecodeExecute32_10xx_11 {{{4
+   * ------------------------
+   */
   void _DecodeExecute32_10xx_11(uint32_t instr, uint32_t pc) {
     // BL § C2.4.21 T1
     // ---- DECODE --------------------------------------------------
@@ -7248,651 +8615,6 @@ private:
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_BL(imm32);
-  }
-
-  void _DecodeExecute32_1001_00_110_11(uint32_t instr, uint32_t pc) {
-    uint32_t opc = GETBITS(instr, 4, 7);
-
-    switch (opc) {
-      case 0b0000:
-      case 0b0001:
-      case 0b0011:
-      case 0b0111:
-      case 0b1000:
-      case 0b1001:
-      case 0b1010:
-      case 0b1011:
-      case 0b1100:
-      case 0b1101:
-      case 0b1110:
-      case 0b1111:
-        // Unallocated
-        UNDEFINED_DEC();
-        break;
-
-      case 0b0010:
-        // CLREX
-        TODO_DEC();
-        break;
-
-      case 0b0100:
-        // DSB
-        _DecodeExecute32_1001_00_110_11_0100(instr, pc);
-        break;
-
-      case 0b0101:
-        // DMB
-        TODO_DEC();
-        break;
-
-      case 0b0110:
-        // ISB
-        TODO_DEC();
-        break;
-
-      default:
-        abort();
-    }
-  }
-
-  void _DecodeExecute32_1001_00_110_11_0100(uint32_t instr, uint32_t pc) {
-    // DSB § C2.4.35 T1
-    // ---- DECODE --------------------------------------------------
-    uint32_t option = GETBITS(instr, 0, 3);
-
-    TRACEI(DSB, T1, "option=0x%x", option);
-
-    // ---- EXECUTE -------------------------------------------------
-    _Exec_DSB(option);
-  }
-
-  /* _DecodeExecute32_1100_xxxxx {{{4
-   * ---------------------------
-   */
-  void _DecodeExecute32_1100_xxxxx(uint32_t instr, uint32_t pc) {
-    uint32_t op0 = GETBITS(instr>>16, 7, 8);
-    uint32_t op1 = GETBITS(instr>>16, 4, 4);
-    uint32_t op2 = GETBITS(instr>>16, 0, 3);
-    uint32_t op3 = GETBITS(instr    , 6,11);
-
-    if (op2 == 0b1111) {
-      if (!(op0 & BIT(1))) {
-        // Load, unsigned (literal)
-        _DecodeExecute32_1100_0xxxx_1111(instr, pc);
-      } else {
-        if (!op1) {
-          // ???
-          TODO_DEC();
-        } else {
-          // Load, signed (literal)
-          TODO_DEC();
-        }
-      }
-    } else
-      switch (op0) {
-        case 0b00:
-          if (!op3) {
-            // Load/store, unsigned (register offset)
-            _DecodeExecute32_1100_00xxx_xxxx_000000(instr, pc);
-          } else if (  op3 == 0b000001
-                    || (op3 & 0b111110) == 0b000010
-                    || (op3 & 0b111100) == 0b000100
-                    || (op3 & 0b111000) == 0b001000
-                    || (op3 & 0b110000) == 0b010000
-                    || (op3 & 0b110100) == 0b100000) {
-            // Unallocated
-            UNDEFINED_DEC();
-          } else if ((op3 & 0b110100) == 0b100100) {
-            // Load/store, unsigned (immediate, post-indexed)
-            TODO_DEC();
-          } else if ((op3 & 0b111100) == 0b110000) {
-            // Load/store, unsigned (negative immediate)
-            TODO_DEC();
-          } else if ((op3 & 0b111100) == 0b111000) {
-            // Load/store, unsigned (unprivileged)
-            TODO_DEC();
-          } else if ((op3 & 0b110100) == 0b110100) {
-            // Load/store, unsigned (immediate, pre-indexed)
-            TODO_DEC();
-          } else
-            abort();
-          break;
-
-        case 0b01:
-          // Load/store, unsigned (positive immediate)
-          _DecodeExecute32_1100_01xxx_xxxx(instr, pc);
-          break;
-
-        case 0b10:
-          TODO_DEC();
-          break;
-
-        case 0b11:
-          TODO_DEC();
-          break;
-      }
-  }
-
-  /* _DecodeExecute32_1100_01xxx_xxxx {{{4
-   * --------------------------------
-   */
-  void _DecodeExecute32_1100_01xxx_xxxx(uint32_t instr, uint32_t pc) {
-    uint32_t size = GETBITS(instr>>16, 5, 6);
-    uint32_t L    = GETBITS(instr>>16, 4, 4);
-    uint32_t Rt   = GETBITS(instr    ,12,15);
-
-    uint32_t size_L = (size<<1) | L;
-    switch (size_L) {
-      case 0b00'0:
-        // STRB (immediate)
-        _DecodeExecute32_1100_01000_xxxx(instr, pc);
-        break;
-
-      case 0b00'1:
-        if (Rt != 0b1111) {
-          // LDRB (immediate)
-          TODO_DEC();
-        } else {
-          // PLD, PLDW (immediate) — Preload read variant
-          TODO_DEC();
-        }
-        break;
-
-      case 0b01'0:
-        // STRH (immediate)
-        TODO_DEC();
-        break;
-
-      case 0b01'1:
-        if (Rt != 0b1111) {
-          // LDRH (immediate)
-          TODO_DEC();
-        } else {
-          // PLD, PLDW (immediate) — Preload write variant
-          TODO_DEC();
-        }
-        break;
-
-      case 0b10'0:
-        // STR (immediate)
-        _DecodeExecute32_1100_01100_xxxx(instr, pc);
-        break;
-
-      case 0b10'1:
-        // LDR (immediate)
-        _DecodeExecute32_1100_01101_xxxx(instr, pc);
-        break;
-
-      default:
-        abort();
-    }
-  }
-
-  /* _DecodeExecute32_1100_01000_xxxx {{{4
-   * --------------------------------
-   */
-  void _DecodeExecute32_1100_01000_xxxx(uint32_t instr, uint32_t pc) {
-    // STRB (immediate) § C2.4.185 T2
-    ASSERT(GETBIT(instr>>16, 7));
-    // ---- DECODE --------------------------------------------------
-    uint32_t Rn     = GETBITS(instr>>16, 0, 3);
-    uint32_t Rt     = GETBITS(instr    ,12,15);
-    uint32_t imm12  = GETBITS(instr    , 0,11);
-
-    if (Rn == 0b1111)
-      throw Exception(ExceptionType::UNDEFINED);
-
-    if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
-
-    uint32_t t     = Rt;
-    uint32_t n     = Rn;
-    uint32_t imm32 = _ZeroExtend(imm12, 32);
-    bool     index = true, add = true, wback = false;
-
-    if (t == 13 || t == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
-
-    // ---- EXECUTE -------------------------------------------------
-    _Exec_STRB_immediate(t, n, imm32, index, add, wback);
-  }
-
-  /* _DecodeExecute32_1100_01100_xxxx {{{4
-   * --------------------------------
-   */
-  void _DecodeExecute32_1100_01100_xxxx(uint32_t instr, uint32_t pc) {
-    // STR (immediate) § C2.4.183 T3
-    // ---- DECODE --------------------------------------------------
-    uint32_t Rn     = GETBITS(instr>>16, 0, 3);
-    uint32_t Rt     = GETBITS(instr    ,12,15);
-    uint32_t imm12  = GETBITS(instr    , 0,11);
-
-    ASSERT(Rn != 0b1111);
-    if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
-
-    uint32_t  t     = Rt;
-    uint32_t  n     = Rn;
-    uint32_t  imm32 = _ZeroExtend(imm12, 32);
-    bool      index = true, add = true, wback = false;
-
-    if (t == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
-
-    TRACEI(STR_imm, T3, "t=%u n=%u imm32=0x%x", t, n, imm32);
-
-    // ---- EXECUTE -------------------------------------------------
-    _Exec_STR_immediate(t, n, imm32, index, add, wback);
-  }
-
-  /* _DecodeExecute32_1100_01101_xxxx {{{4
-   * --------------------------------
-   */
-  void _DecodeExecute32_1100_01101_xxxx(uint32_t instr, uint32_t pc) {
-    // LDR (immediate) § C2.4.52 T3
-    // ---- DECODE --------------------------------------------------
-    uint32_t Rn     = GETBITS(instr>>16, 0, 3);
-    uint32_t Rt     = GETBITS(instr    ,12,15);
-    uint32_t imm12  = GETBITS(instr    , 0,11);
-
-    ASSERT(Rn != 0b1111);
-    if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
-
-    uint32_t  t     = Rt;
-    uint32_t  n     = Rn;
-    uint32_t  imm32 = _ZeroExtend(imm12, 32);
-    bool      index = true, add = true, wback = false;
-
-    if (t == 15 && _InITBlock() && !_LastInITBlock())
-      throw Exception(ExceptionType::UNPREDICTABLE);
-
-    TRACEI(LDR_imm, T3, "t=%u n=%u imm32=0x%x", t, n, imm32);
-
-    // ---- EXECUTE -------------------------------------------------
-    _Exec_LDR_immediate(t, n, imm32, index, add, wback);
-  }
-
-  /* _DecodeExecute32_1100_00xxx_xxxx_000000 {{{4
-   * ---------------------------------------
-   */
-  void _DecodeExecute32_1100_00xxx_xxxx_000000(uint32_t instr, uint32_t pc) {
-    uint32_t size = GETBITS(instr>>16, 5, 6);
-    uint32_t L    = GETBITS(instr>>16, 4, 4);
-    uint32_t Rn   = GETBITS(instr>>16, 0, 3);
-    uint32_t Rt   = GETBITS(instr    ,12,15);
-
-    ASSERT(Rn != 0b1111);
-
-    switch ((size<<1)|L) {
-      case 0b00'0:
-        // STRB (register)
-        TODO_DEC();
-        break;
-
-      case 0b00'1:
-        if (Rt != 0b1111) {
-          // LDRB (register)
-          _DecodeExecute32_1100_00001_xxxx_000000(instr, pc);
-        } else {
-          // PLD (register) — Preload read variant
-          TODO_DEC();
-        }
-        break;
-
-      case 0b01'0:
-        // STRH (register)
-        TODO_DEC();
-        break;
-
-      case 0b01'1:
-        if (Rt != 0b1111) {
-          // LDRH (register)
-          TODO_DEC();
-        } else {
-          // PLD (register) — Preload write variant
-          TODO_DEC();
-        }
-        break;
-
-      case 0b10'0:
-        // STR (register)
-        TODO_DEC();
-        break;
-
-      case 0b10'1:
-        // LDR (register)
-        TODO_DEC();
-        break;
-
-      case 0b11'0:
-      case 0b11'1:
-        // Unallocated
-        UNDEFINED_DEC();
-        break;
-
-      default:
-        abort();
-    }
-  }
-
-  /* _DecodeExecute32_1100_00001_xxxx_000000 {{{4
-   * ---------------------------------------
-   */
-  void _DecodeExecute32_1100_00001_xxxx_000000(uint32_t instr, uint32_t pc) {
-    // LDRB (register) § C2.4.57 T2
-    // ---- DECODE --------------------------------------------------
-    uint32_t Rn   = GETBITS(instr>>16, 0, 3);
-    uint32_t Rt   = GETBITS(instr    ,12,15);
-    uint32_t imm2 = GETBITS(instr    , 4, 5);
-    uint32_t Rm   = GETBITS(instr    , 0, 3);
-
-    ASSERT(Rt != 0b1111);
-    ASSERT(Rn != 0b1111);
-    if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
-
-    uint32_t  t = Rt;
-    uint32_t  n = Rn;
-    uint32_t  m = Rm;
-    bool      index = true, add = true, wback = false;
-    SRType    shiftT = SRType_LSL;
-    uint32_t  shiftN = imm2;
-
-    if (t == 13 || (m == 13 || m == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
-
-    TRACEI(LDRB_reg, T2, "t=%u n=%u m=%u shiftL=%u", t, n, m, shiftN);
-
-    // ---- EXECUTE -------------------------------------------------
-    _Exec_LDRB_register(t, n, m, index, add, wback, shiftT, shiftN);
-  }
-
-  /* _DecodeExecute32_1100_0xxxx_1111 {{{4
-   * --------------------------------
-   */
-  void _DecodeExecute32_1100_0xxxx_1111(uint32_t instr, uint32_t pc) {
-    uint32_t U    = GETBITS(instr>>16, 7, 7);
-    uint32_t size = GETBITS(instr>>16, 5, 6);
-    uint32_t L    = GETBITS(instr>>16, 4, 4);
-    uint32_t Rt   = GETBITS(instr    ,12,15);
-
-    switch ((size<<1)|L) {
-      case 0b00'1:
-        if (Rt != 0b1111) {
-          // LDRB (literal)
-          TODO_DEC();
-        } else {
-          // PLD (literal)
-          TODO_DEC();
-        }
-        break;
-
-      case 0b01'1:
-        if (Rt != 0b1111) {
-          // LDRH (literal)
-          TODO_DEC();
-        } else
-          abort();
-        break;
-
-      case 0b10'1:
-        // LDR (literal)
-        _DecodeExecute32_1100_0x101_1111(instr, pc);
-        break;
-
-      case 0b11'0:
-      case 0b11'1:
-        UNDEFINED_DEC();
-        break;
-
-      default:
-        abort();
-    }
-  }
-
-  /* _DecodeExecute32_1100_0x101_1111 {{{4
-   * --------------------------------
-   */
-  void _DecodeExecute32_1100_0x101_1111(uint32_t instr, uint32_t pc) {
-    // LDR (literal) § C2.4.53 T2
-    // ---- DECODE --------------------------------------------------
-    uint32_t Rt     = GETBITS(instr    ,12,15);
-    uint32_t imm12  = GETBITS(instr    , 0,11);
-    uint32_t U      = GETBITS(instr>>16, 7, 7);
-
-    if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
-
-    uint32_t t      = Rt;
-    uint32_t imm32  = _ZeroExtend(imm12, 32);
-    bool     add    = !!U;
-
-    if (t == 15 && _InITBlock() && !_LastInITBlock())
-      throw Exception(ExceptionType::UNPREDICTABLE);
-
-    TRACEI(LDR_lit, T2, "t=%u imm32=0x%x add=%u", t, imm32, add);
-
-    // ---- EXECUTE -------------------------------------------------
-    _Exec_LDR_literal(t, imm32, add);
-  }
-
-  /* _DecodeExecute32_0100 {{{4
-   * ---------------------
-   */
-  void _DecodeExecute32_0100(uint32_t instr, uint32_t pc) {
-    uint32_t op0 = GETBITS(instr>>16, 8, 8);
-    uint32_t op1 = GETBITS(instr>>16, 5, 6);
-    switch ((op0<<2)|op1) {
-      case 0b0'00:
-      case 0b0'01:
-      case 0b1'00:
-      case 0b1'01:
-        // Load/store multiple
-        _DecodeExecute32_0100_x0x(instr, pc);
-        break;
-
-      case 0b0'10:
-        // Load/store exclusive, load-acquire/store-release, table branch
-        TODO_DEC();
-        break;
-
-      case 0b0'11:
-        // Load/store dual (post-indexed)
-        _DecodeExecute32_0100_011(instr, pc);
-        break;
-
-      case 0b1'10:
-        // Load/store dual (literal and immediate)
-        TODO_DEC();
-        break;
-
-      case 0b1'11:
-        // Load/store dual (pre-indexed), secure gateway
-        TODO_DEC();
-        break;
-
-      default:
-        abort();
-    }
-  }
-
-  /* _DecodeExecute32_0100_x0x {{{4
-   * -------------------------
-   */
-  void _DecodeExecute32_0100_x0x(uint32_t instr, uint32_t pc) {
-    uint32_t opc = GETBITS(instr>>16, 7, 8);
-    uint32_t L   = GETBITS(instr>>16, 4, 4);
-    switch ((opc<<1)|L) {
-      case 0b00'0:
-      case 0b00'1:
-        // Unallocated
-        UNDEFINED_DEC();
-        break;
-
-      case 0b01'0:
-        // STM, STMIA, STMEA
-        TODO_DEC();
-        break;
-
-      case 0b01'1:
-        // LDM, LDMIA, LDMFD
-        _DecodeExecute32_0100_00x_11(instr, pc);
-        break;
-
-      case 0b10'0:
-        // STMDB, STMFD
-        _DecodeExecute32_0100_10x_00(instr, pc);
-        break;
-
-      case 0b10'1:
-        // LDMDB, LDMEA
-        TODO_DEC();
-        break;
-
-      case 0b11'0:
-      case 0b11'1:
-        // Unallocated
-        UNDEFINED_DEC();
-        break;
-
-      default:
-        abort();
-    }
-  }
-  
-  /* _DecodeExecute32_0100_00x_11 {{{4
-   * ----------------------------
-   */
-  void _DecodeExecute32_0100_00x_11(uint32_t instr, uint32_t pc) {
-    // LDM, LDMIA, LDMFD § C2.4.50 T2
-    // ---- DECODE --------------------------------------------------
-    uint32_t W        = GETBITS(instr>>16, 4, 4);
-    uint32_t Rn       = GETBITS(instr>>16, 0, 3);
-    uint32_t P        = GETBITS(instr    ,15,15);
-    uint32_t M        = GETBITS(instr    ,14,14);
-    uint32_t regList  = GETBITS(instr    , 0,12);
-
-    if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
-
-    uint32_t n          = Rn;
-    uint32_t registers  = (P<<15) | (M<<14) | regList;
-    bool     wback      = !!W;
-
-    if (n == 15 || _BitCount(registers) < 2 || (P && M))
-      CUNPREDICTABLE_UNDEFINED();
-
-    if (GETBIT(registers, 15) && _InITBlock() && !_LastInITBlock())
-      throw Exception(ExceptionType::UNPREDICTABLE);
-
-    if (wback && GETBIT(registers, n))
-      throw Exception(ExceptionType::UNPREDICTABLE);
-
-    // ---- EXECUTE -------------------------------------------------
-    _Exec_LDM(n, registers, wback);
-  }
-
-  /* _DecodeExecute32_0100_10x_00 {{{4
-   * ----------------------------
-   */
-  void _DecodeExecute32_0100_10x_00(uint32_t instr, uint32_t pc) {
-    // STMDB, STMFD § C2.4.182 T1
-    // ---- DECODE --------------------------------------------------
-    uint32_t W        = GETBITS(instr>>16, 5, 5);
-    uint32_t Rn       = GETBITS(instr>>16, 0, 3);
-    uint32_t M        = GETBITS(instr    ,14,14);
-    uint32_t regList  = GETBITS(instr    , 0,12);
-
-    if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
-
-    uint32_t  n         = Rn;
-    uint32_t  registers = regList | (M<<14);
-    bool      wback     = !!W;
-
-    if (n == 15 || _BitCount(registers) < 2)
-      CUNPREDICTABLE_UNDEFINED();
-
-    if (wback && !!(registers & BIT(n)))
-      CUNPREDICTABLE_UNDEFINED();
-
-    TRACEI(STMDB, T1, "n=%u registers=0x%x wback=%u", n, registers, wback);
-
-    // ---- EXECUTE -------------------------------------------------
-    _Exec_STMDB(n, registers, wback);
-  }
-
-  /* _DecodeExecute32_0100_011 {{{4
-   * -------------------------
-   */
-  void _DecodeExecute32_0100_011(uint32_t instr, uint32_t pc) {
-    uint32_t op0 = GETBITS(instr>>16, 0, 3);
-    switch (op0) {
-      case 0b1111:
-        throw Exception(ExceptionType::UNPREDICTABLE);
-
-      default:
-        // Load/store dual (immediate, post-indexed)
-        return _DecodeExecute32_0100_011_LS(instr, pc);
-    }
-  }
-
-  /* _DecodeExecute32_0100_011_LS {{{4
-   * ----------------------------
-   */
-  void _DecodeExecute32_0100_011_LS(uint32_t instr, uint32_t pc) {
-    if (instr & BIT(16+4))
-      // STRD (immediate)
-      return _DecodeExecute32_0100_011_LS_STRD(instr, pc);
-    else
-      // LDRD (immediate)
-      return _DecodeExecute32_0100_011_LS_LDRD(instr, pc);
-  }
-
-  /* _DecodeExecute32_0100_011_LS_STRD {{{4
-   * ---------------------------------
-   */
-  void _DecodeExecute32_0100_011_LS_STRD(uint32_t instr, uint32_t pc) {
-    TODO_DEC();
-  }
-
-  /* _DecodeExecute32_0100_011_LS_LDRD {{{4
-   * ---------------------------------
-   */
-  void _DecodeExecute32_0100_011_LS_LDRD(uint32_t instr, uint32_t pc) {
-    // LDRD (immediate) § C2.4.59 T1
-    // ---- DECODE --------------------------------------------------
-    uint32_t P    = GETBITS(instr>>16, 8, 8);
-    uint32_t U    = GETBITS(instr>>16, 7, 7);
-    uint32_t W    = GETBITS(instr>>16, 5, 5);
-    uint32_t Rn   = GETBITS(instr>>16, 0, 3);
-    uint32_t Rt   = GETBITS(instr    ,12,15);
-    uint32_t Rt2  = GETBITS(instr    , 8,11);
-    uint32_t imm8 = GETBITS(instr    , 0, 7);
-
-    if (!P && !W) {
-      // RELATED ENCODINGS
-      ASSERT(false);
-    }
-
-    ASSERT(Rn != 0b1111);
-
-    if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
-
-    uint32_t t = Rt, t2 = Rt2, n = Rn, imm32 = _ZeroExtend(imm8<<2, 32);
-    bool index = !!P, add = !!U, wback = !!W;
-    if (wback && (n == t || n == t2))
-      CUNPREDICTABLE_UNDEFINED();
-
-    if ((t == 13 || t == 15) || (t2 == 13 || t2 == 15) || t == t2)
-      CUNPREDICTABLE_UNDEFINED();
-
-    TRACEI(LDRD_imm, T1, "t=%u t2=%u n=%u imm32=0x%x index=%u add=%u wback=%u", t, t2, n, imm32, index, add, wback);
-
-    // ---- EXECUTE -------------------------------------------------
-    _Exec_LDRD_immediate(t, t2, n, imm32, index, add, wback);
   }
 
   /* _DecodeExecute32_10x0_0 {{{4
@@ -8405,6 +9127,109 @@ private:
     }
   }
 
+  /* _DecodeExecute32_1001_00_110_11 {{{4
+   * -------------------------------
+   */
+  void _DecodeExecute32_1001_00_110_11(uint32_t instr, uint32_t pc) {
+    // Miscellaneous system
+    uint32_t opc = GETBITS(instr, 4, 7);
+
+    switch (opc) {
+      case 0b0000:
+      case 0b0001:
+      case 0b0011:
+      case 0b0111:
+      case 0b1000:
+      case 0b1001:
+      case 0b1010:
+      case 0b1011:
+      case 0b1100:
+      case 0b1101:
+      case 0b1110:
+      case 0b1111:
+        // Unallocated
+        UNDEFINED_DEC();
+        break;
+
+      case 0b0010:
+        // CLREX
+        _DecodeExecute32_1001_00_110_11_0010(instr, pc);
+        break;
+
+      case 0b0100:
+        // DSB
+        _DecodeExecute32_1001_00_110_11_0100(instr, pc);
+        break;
+
+      case 0b0101:
+        // DMB
+        _DecodeExecute32_1001_00_110_11_0101(instr, pc);
+        break;
+
+      case 0b0110:
+        // ISB
+        _DecodeExecute32_1001_00_110_11_0110(instr, pc);
+        break;
+
+      default:
+        abort();
+    }
+  }
+  
+  /* _DecodeExecute32_1001_00_110_11_0010 {{{4
+   * ------------------------------------
+   */
+  void _DecodeExecute32_1001_00_110_11_0010(uint32_t instr, uint32_t pc) {
+    // CLREX § C2.4.26 T1
+    // ---- DECODE --------------------------------------------------
+    // No additional decoding required.
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_CLREX();
+  }
+
+  /* _DecodeExecute32_1001_00_110_11_0100 {{{4
+   * ------------------------------------
+   */
+  void _DecodeExecute32_1001_00_110_11_0100(uint32_t instr, uint32_t pc) {
+    // DSB § C2.4.35 T1
+    // ---- DECODE --------------------------------------------------
+    uint32_t option = GETBITS(instr, 0, 3);
+
+    TRACEI(DSB, T1, "option=0x%x", option);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_DSB(option);
+  }
+
+  /* _DecodeExecute32_1001_00_110_11_0101 {{{4
+   * ------------------------------------
+   */
+  void _DecodeExecute32_1001_00_110_11_0101(uint32_t instr, uint32_t pc) {
+    // DMB § C2.4.34 T1
+    // ---- DECODE --------------------------------------------------
+    uint32_t option = GETBITS(instr, 0, 3);
+
+    TRACEI(DMB, T1, "option=0x%x", option);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_DMB(option);
+  }
+
+  /* _DecodeExecute32_1001_00_110_11_0110 {{{4
+   * ------------------------------------
+   */
+  void _DecodeExecute32_1001_00_110_11_0110(uint32_t instr, uint32_t pc) {
+    // ISB § C2.4.40 T1
+    // ---- DECODE --------------------------------------------------
+    uint32_t option = GETBITS(instr, 0, 3);
+
+    TRACEI(ISB, T1, "option=0x%x", option);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_ISB(option);
+  }
+
   /* _DecodeExecute32_1001_0_1_011_xxxx {{{4
    * ----------------------------------
    */
@@ -8467,9 +9292,400 @@ private:
     _Exec_BFC(d, msbit, lsbit);
   }
 
+  /* _DecodeExecute32_1100_xxxxx {{{4
+   * ---------------------------
+   */
+  void _DecodeExecute32_1100_xxxxx(uint32_t instr, uint32_t pc) {
+    uint32_t op0 = GETBITS(instr>>16, 7, 8);
+    uint32_t op1 = GETBITS(instr>>16, 4, 4);
+    uint32_t op2 = GETBITS(instr>>16, 0, 3);
+    uint32_t op3 = GETBITS(instr    , 6,11);
+
+    if (op2 == 0b1111) {
+      if (!(op0 & BIT(1))) {
+        // Load, unsigned (literal)
+        _DecodeExecute32_1100_0xxxx_1111(instr, pc);
+      } else {
+        if (!op1) {
+          // ???
+          TODO_DEC();
+        } else {
+          // Load, signed (literal)
+          TODO_DEC();
+        }
+      }
+    } else
+      switch (op0) {
+        case 0b00:
+          if (!op3) {
+            // Load/store, unsigned (register offset)
+            _DecodeExecute32_1100_00xxx_xxxx_000000(instr, pc);
+          } else if (  op3 == 0b000001
+                    || (op3 & 0b111110) == 0b000010
+                    || (op3 & 0b111100) == 0b000100
+                    || (op3 & 0b111000) == 0b001000
+                    || (op3 & 0b110000) == 0b010000
+                    || (op3 & 0b110100) == 0b100000) {
+            // Unallocated
+            UNDEFINED_DEC();
+          } else if ((op3 & 0b110100) == 0b100100) {
+            // Load/store, unsigned (immediate, post-indexed)
+            TODO_DEC();
+          } else if ((op3 & 0b111100) == 0b110000) {
+            // Load/store, unsigned (negative immediate)
+            TODO_DEC();
+          } else if ((op3 & 0b111100) == 0b111000) {
+            // Load/store, unsigned (unprivileged)
+            TODO_DEC();
+          } else if ((op3 & 0b110100) == 0b110100) {
+            // Load/store, unsigned (immediate, pre-indexed)
+            TODO_DEC();
+          } else
+            abort();
+          break;
+
+        case 0b01:
+          // Load/store, unsigned (positive immediate)
+          _DecodeExecute32_1100_01xxx_xxxx(instr, pc);
+          break;
+
+        case 0b10:
+          TODO_DEC();
+          break;
+
+        case 0b11:
+          TODO_DEC();
+          break;
+      }
+  }
+
+  /* _DecodeExecute32_1100_00xxx_xxxx_000000 {{{4
+   * ---------------------------------------
+   */
+  void _DecodeExecute32_1100_00xxx_xxxx_000000(uint32_t instr, uint32_t pc) {
+    uint32_t size = GETBITS(instr>>16, 5, 6);
+    uint32_t L    = GETBITS(instr>>16, 4, 4);
+    uint32_t Rn   = GETBITS(instr>>16, 0, 3);
+    uint32_t Rt   = GETBITS(instr    ,12,15);
+
+    ASSERT(Rn != 0b1111);
+
+    switch ((size<<1)|L) {
+      case 0b00'0:
+        // STRB (register)
+        TODO_DEC();
+        break;
+
+      case 0b00'1:
+        if (Rt != 0b1111) {
+          // LDRB (register)
+          _DecodeExecute32_1100_00001_xxxx_000000(instr, pc);
+        } else {
+          // PLD (register) — Preload read variant
+          TODO_DEC();
+        }
+        break;
+
+      case 0b01'0:
+        // STRH (register)
+        TODO_DEC();
+        break;
+
+      case 0b01'1:
+        if (Rt != 0b1111) {
+          // LDRH (register)
+          TODO_DEC();
+        } else {
+          // PLD (register) — Preload write variant
+          TODO_DEC();
+        }
+        break;
+
+      case 0b10'0:
+        // STR (register)
+        TODO_DEC();
+        break;
+
+      case 0b10'1:
+        // LDR (register)
+        TODO_DEC();
+        break;
+
+      case 0b11'0:
+      case 0b11'1:
+        // Unallocated
+        UNDEFINED_DEC();
+        break;
+
+      default:
+        abort();
+    }
+  }
+
+  /* _DecodeExecute32_1100_00001_xxxx_000000 {{{4
+   * ---------------------------------------
+   */
+  void _DecodeExecute32_1100_00001_xxxx_000000(uint32_t instr, uint32_t pc) {
+    // LDRB (register) § C2.4.57 T2
+    // ---- DECODE --------------------------------------------------
+    uint32_t Rn   = GETBITS(instr>>16, 0, 3);
+    uint32_t Rt   = GETBITS(instr    ,12,15);
+    uint32_t imm2 = GETBITS(instr    , 4, 5);
+    uint32_t Rm   = GETBITS(instr    , 0, 3);
+
+    ASSERT(Rt != 0b1111);
+    ASSERT(Rn != 0b1111);
+    if (!_HaveMainExt())
+      throw Exception(ExceptionType::UNDEFINED);
+
+    uint32_t  t = Rt;
+    uint32_t  n = Rn;
+    uint32_t  m = Rm;
+    bool      index = true, add = true, wback = false;
+    SRType    shiftT = SRType_LSL;
+    uint32_t  shiftN = imm2;
+
+    if (t == 13 || (m == 13 || m == 15))
+      throw Exception(ExceptionType::UNPREDICTABLE);
+
+    TRACEI(LDRB_reg, T2, "t=%u n=%u m=%u shiftL=%u", t, n, m, shiftN);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_LDRB_register(t, n, m, index, add, wback, shiftT, shiftN);
+  }
+
+  /* _DecodeExecute32_1100_0xxxx_1111 {{{4
+   * --------------------------------
+   */
+  void _DecodeExecute32_1100_0xxxx_1111(uint32_t instr, uint32_t pc) {
+    uint32_t U    = GETBITS(instr>>16, 7, 7);
+    uint32_t size = GETBITS(instr>>16, 5, 6);
+    uint32_t L    = GETBITS(instr>>16, 4, 4);
+    uint32_t Rt   = GETBITS(instr    ,12,15);
+
+    switch ((size<<1)|L) {
+      case 0b00'1:
+        if (Rt != 0b1111) {
+          // LDRB (literal)
+          TODO_DEC();
+        } else {
+          // PLD (literal)
+          TODO_DEC();
+        }
+        break;
+
+      case 0b01'1:
+        if (Rt != 0b1111) {
+          // LDRH (literal)
+          TODO_DEC();
+        } else
+          abort();
+        break;
+
+      case 0b10'1:
+        // LDR (literal)
+        _DecodeExecute32_1100_0x101_1111(instr, pc);
+        break;
+
+      case 0b11'0:
+      case 0b11'1:
+        UNDEFINED_DEC();
+        break;
+
+      default:
+        abort();
+    }
+  }
+
+  /* _DecodeExecute32_1100_0x101_1111 {{{4
+   * --------------------------------
+   */
+  void _DecodeExecute32_1100_0x101_1111(uint32_t instr, uint32_t pc) {
+    // LDR (literal) § C2.4.53 T2
+    // ---- DECODE --------------------------------------------------
+    uint32_t Rt     = GETBITS(instr    ,12,15);
+    uint32_t imm12  = GETBITS(instr    , 0,11);
+    uint32_t U      = GETBITS(instr>>16, 7, 7);
+
+    if (!_HaveMainExt())
+      throw Exception(ExceptionType::UNDEFINED);
+
+    uint32_t t      = Rt;
+    uint32_t imm32  = _ZeroExtend(imm12, 32);
+    bool     add    = !!U;
+
+    if (t == 15 && _InITBlock() && !_LastInITBlock())
+      throw Exception(ExceptionType::UNPREDICTABLE);
+
+    TRACEI(LDR_lit, T2, "t=%u imm32=0x%x add=%u", t, imm32, add);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_LDR_literal(t, imm32, add);
+  }
+
+  /* _DecodeExecute32_1100_01xxx_xxxx {{{4
+   * --------------------------------
+   */
+  void _DecodeExecute32_1100_01xxx_xxxx(uint32_t instr, uint32_t pc) {
+    uint32_t size = GETBITS(instr>>16, 5, 6);
+    uint32_t L    = GETBITS(instr>>16, 4, 4);
+    uint32_t Rt   = GETBITS(instr    ,12,15);
+
+    uint32_t size_L = (size<<1) | L;
+    switch (size_L) {
+      case 0b00'0:
+        // STRB (immediate)
+        _DecodeExecute32_1100_01000_xxxx(instr, pc);
+        break;
+
+      case 0b00'1:
+        if (Rt != 0b1111) {
+          // LDRB (immediate)
+          TODO_DEC();
+        } else {
+          // PLD, PLDW (immediate) — Preload read variant
+          TODO_DEC();
+        }
+        break;
+
+      case 0b01'0:
+        // STRH (immediate)
+        TODO_DEC();
+        break;
+
+      case 0b01'1:
+        if (Rt != 0b1111) {
+          // LDRH (immediate)
+          TODO_DEC();
+        } else {
+          // PLD, PLDW (immediate) — Preload write variant
+          TODO_DEC();
+        }
+        break;
+
+      case 0b10'0:
+        // STR (immediate)
+        _DecodeExecute32_1100_01100_xxxx(instr, pc);
+        break;
+
+      case 0b10'1:
+        // LDR (immediate)
+        _DecodeExecute32_1100_01101_xxxx(instr, pc);
+        break;
+
+      default:
+        abort();
+    }
+  }
+
+  /* _DecodeExecute32_1100_01000_xxxx {{{4
+   * --------------------------------
+   */
+  void _DecodeExecute32_1100_01000_xxxx(uint32_t instr, uint32_t pc) {
+    // STRB (immediate) § C2.4.185 T2
+    ASSERT(GETBIT(instr>>16, 7));
+    // ---- DECODE --------------------------------------------------
+    uint32_t Rn     = GETBITS(instr>>16, 0, 3);
+    uint32_t Rt     = GETBITS(instr    ,12,15);
+    uint32_t imm12  = GETBITS(instr    , 0,11);
+
+    if (Rn == 0b1111)
+      throw Exception(ExceptionType::UNDEFINED);
+
+    if (!_HaveMainExt())
+      throw Exception(ExceptionType::UNDEFINED);
+
+    uint32_t t     = Rt;
+    uint32_t n     = Rn;
+    uint32_t imm32 = _ZeroExtend(imm12, 32);
+    bool     index = true, add = true, wback = false;
+
+    if (t == 13 || t == 15)
+      throw Exception(ExceptionType::UNPREDICTABLE);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_STRB_immediate(t, n, imm32, index, add, wback);
+  }
+
+  /* _DecodeExecute32_1100_01100_xxxx {{{4
+   * --------------------------------
+   */
+  void _DecodeExecute32_1100_01100_xxxx(uint32_t instr, uint32_t pc) {
+    // STR (immediate) § C2.4.183 T3
+    // ---- DECODE --------------------------------------------------
+    uint32_t Rn     = GETBITS(instr>>16, 0, 3);
+    uint32_t Rt     = GETBITS(instr    ,12,15);
+    uint32_t imm12  = GETBITS(instr    , 0,11);
+
+    ASSERT(Rn != 0b1111);
+    if (!_HaveMainExt())
+      throw Exception(ExceptionType::UNDEFINED);
+
+    uint32_t  t     = Rt;
+    uint32_t  n     = Rn;
+    uint32_t  imm32 = _ZeroExtend(imm12, 32);
+    bool      index = true, add = true, wback = false;
+
+    if (t == 15)
+      throw Exception(ExceptionType::UNPREDICTABLE);
+
+    TRACEI(STR_imm, T3, "t=%u n=%u imm32=0x%x", t, n, imm32);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_STR_immediate(t, n, imm32, index, add, wback);
+  }
+
+  /* _DecodeExecute32_1100_01101_xxxx {{{4
+   * --------------------------------
+   */
+  void _DecodeExecute32_1100_01101_xxxx(uint32_t instr, uint32_t pc) {
+    // LDR (immediate) § C2.4.52 T3
+    // ---- DECODE --------------------------------------------------
+    uint32_t Rn     = GETBITS(instr>>16, 0, 3);
+    uint32_t Rt     = GETBITS(instr    ,12,15);
+    uint32_t imm12  = GETBITS(instr    , 0,11);
+
+    ASSERT(Rn != 0b1111);
+    if (!_HaveMainExt())
+      throw Exception(ExceptionType::UNDEFINED);
+
+    uint32_t  t     = Rt;
+    uint32_t  n     = Rn;
+    uint32_t  imm32 = _ZeroExtend(imm12, 32);
+    bool      index = true, add = true, wback = false;
+
+    if (t == 15 && _InITBlock() && !_LastInITBlock())
+      throw Exception(ExceptionType::UNPREDICTABLE);
+
+    TRACEI(LDR_imm, T3, "t=%u n=%u imm32=0x%x", t, n, imm32);
+
+    // ---- EXECUTE -------------------------------------------------
+    _Exec_LDR_immediate(t, n, imm32, index, add, wback);
+  }
+
   /* Instruction Execution {{{3
    * =====================
    */
+
+  /* _Exec_ADC_register {{{4
+   * ------------------
+   */
+  void _Exec_ADC_register(uint32_t d, uint32_t n, uint32_t m, bool setflags, SRType shiftT, uint32_t shiftN) {
+    // ADC (register) § C2.4.2
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    uint32_t shifted = _Shift(_GetR(m), shiftT, shiftN, GETBITSM(_s.xpsr, XPSR__C));
+    auto [result, carry, overflow] = _AddWithCarry(_GetR(n), shifted, GETBITSM(_s.xpsr, XPSR__C));
+    _SetR(d, result);
+    if (setflags) {
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__N, GETBIT(result,31));
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__Z, _IsZeroBit(result));
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__C, carry);
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__V, overflow);
+    }
+  }
 
   /* _Exec_ADD_SP_plus_immediate {{{4
    * ---------------------------
@@ -8482,12 +9698,35 @@ private:
     //EncodingSpecificOperations
     auto [result, carry, overflow] = _AddWithCarry(_GetSP(), imm32, false);
     _SetRSPCheck(d, result);
-    TRACE("  newSP=0x%x\n", result);
     if (setflags) {
       _s.xpsr = CHGBITSM(_s.xpsr, XPSR__N, GETBIT(result, 31));
       _s.xpsr = CHGBITSM(_s.xpsr, XPSR__Z, _IsZeroBit(result));
       _s.xpsr = CHGBITSM(_s.xpsr, XPSR__C, carry);
       _s.xpsr = CHGBITSM(_s.xpsr, XPSR__V, overflow);
+    }
+  }
+
+  /* _Exec_ADD_SP_plus_register {{{4
+   * --------------------------
+   */
+  void _Exec_ADD_SP_plus_register(uint32_t d, uint32_t m, bool setflags, SRType shiftT, uint32_t shiftN) {
+    // ADD (SP plus register) § C2.4.4
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    uint32_t shifted = _Shift(_GetR(m), shiftT, shiftN, GETBITSM(_s.xpsr, XPSR__C));
+    auto [result, carry, overflow] = _AddWithCarry(_GetSP(), shifted, false);
+    if (d == 15)
+      _ALUWritePC(result); // setflags is always false here
+    else {
+      _SetRSPCheck(d, result);
+      if (setflags) {
+        _s.xpsr = CHGBITSM(_s.xpsr, XPSR__N, GETBIT(result,31));
+        _s.xpsr = CHGBITSM(_s.xpsr, XPSR__Z, _IsZeroBit(result));
+        _s.xpsr = CHGBITSM(_s.xpsr, XPSR__C, carry);
+        _s.xpsr = CHGBITSM(_s.xpsr, XPSR__V, overflow);
+      }
     }
   }
 
@@ -8507,6 +9746,30 @@ private:
       _s.xpsr = CHGBITSM(_s.xpsr, XPSR__Z, _IsZeroBit(result));
       _s.xpsr = CHGBITSM(_s.xpsr, XPSR__C, carry);
       _s.xpsr = CHGBITSM(_s.xpsr, XPSR__V, overflow);
+    }
+  }
+
+  /* _Exec_ADD_register {{{4
+   * ------------------
+   */
+  void _Exec_ADD_register(uint32_t d, uint32_t n, uint32_t m, bool setflags, SRType shiftT, uint32_t shiftN) {
+    // ADD (register) § C2.4.7
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    uint32_t shifted = _Shift(_GetR(m), shiftT, shiftN, GETBITSM(_s.xpsr, XPSR__C));
+    auto [result, carry, overflow] = _AddWithCarry(_GetR(n), shifted, false);
+    if (d == 15)
+      _ALUWritePC(result);
+    else {
+      _SetR(d, result);
+      if (setflags) {
+        _s.xpsr = CHGBITSM(_s.xpsr, XPSR__N, GETBIT(result, 31));
+        _s.xpsr = CHGBITSM(_s.xpsr, XPSR__Z, _IsZeroBit(result));
+        _s.xpsr = CHGBITSM(_s.xpsr, XPSR__C, carry);
+        _s.xpsr = CHGBITSM(_s.xpsr, XPSR__V, overflow);
+      }
     }
   }
 
@@ -8624,6 +9887,35 @@ private:
     }
   }
 
+  /* _Exec_BIC_register {{{4
+   * ------------------
+   */
+  void _Exec_BIC_register(uint32_t d, uint32_t n, uint32_t m, bool setflags, SRType shiftT, uint32_t shiftN) {
+    // BIC (register) § C2.4.19
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    auto [shifted, carry] = _Shift_C(_GetR(m), shiftT, shiftN, GETBITSM(_s.xpsr, XPSR__C));
+    uint32_t result = _GetR(n) & ~shifted;
+    _SetR(d, result);
+    if (setflags) {
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__N, GETBIT(result,31));
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__Z, _IsZeroBit(result));
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__C, carry);
+      // APSR.V unchanged
+    }
+  }
+
+  /* _Exec_BKPT {{{4
+   * ----------
+   */
+  void _Exec_BKPT() {
+    // BKPT § C2.4.20
+    //EncodingSpecificOperations
+    _BKPTInstrDebugEvent();
+  }
+
   /* _Exec_BL {{{4
    * --------
    */
@@ -8697,6 +9989,29 @@ private:
     _HandleException(exc);
   }
 
+  /* _Exec_CBNZ_CBZ {{{4
+   * --------------
+   */
+  void _Exec_CBNZ_CBZ(uint32_t n, uint32_t imm32, bool nonzero) {
+    // CBNZ, CBZ § C2.4.24
+    //EncodingSpecificOperations
+
+    if (nonzero != _IsZero(_GetR(n)))
+      _BranchWritePC(_GetPC() + imm32);
+  }
+
+  /* _Exec_CLREX {{{4
+   * -----------
+   */
+  void _Exec_CLREX() {
+    // CLREX § C2.4.26
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    _ClearExclusiveLocal(_ProcessorID());
+  }
+
   /* _Exec_CMP_immediate {{{4
    * -------------------
    */
@@ -8708,6 +10023,40 @@ private:
     //EncodingSpecificOperations
     auto [result, carry, overflow] = _AddWithCarry(_GetR(n), ~imm32, true);
     _s.xpsr = CHGBITSM(_s.xpsr, XPSR__N, GETBIT(result, 31));
+    _s.xpsr = CHGBITSM(_s.xpsr, XPSR__Z, _IsZeroBit(result));
+    _s.xpsr = CHGBITSM(_s.xpsr, XPSR__C, carry);
+    _s.xpsr = CHGBITSM(_s.xpsr, XPSR__V, overflow);
+  }
+
+  /* _Exec_CMP_register {{{4
+   * ------------------
+   */
+  void _Exec_CMP_register(uint32_t n, uint32_t m, SRType shiftT, uint32_t shiftN) {
+    // CMP (register) § C2.4.31
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    uint32_t shifted = _Shift(_GetR(m), shiftT, shiftN, GETBITSM(_s.xpsr, XPSR__C));
+    auto [result, carry, overflow] = _AddWithCarry(_GetR(n), ~shifted, true);
+    _s.xpsr = CHGBITSM(_s.xpsr, XPSR__N, GETBIT(result,31));
+    _s.xpsr = CHGBITSM(_s.xpsr, XPSR__Z, _IsZeroBit(result));
+    _s.xpsr = CHGBITSM(_s.xpsr, XPSR__C, carry);
+    _s.xpsr = CHGBITSM(_s.xpsr, XPSR__V, overflow);
+  }
+
+  /* _Exec_CMN_register {{{4
+   * ------------------
+   */
+  void _Exec_CMN_register(uint32_t n, uint32_t m, SRType shiftT, uint32_t shiftN) {
+    // CMN (register) § C2.4.29
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    uint32_t shifted = _Shift(_GetR(m), shiftT, shiftN, GETBITSM(_s.xpsr, XPSR__C));
+    auto [result, carry, overflow] = _AddWithCarry(_GetR(n), shifted, false);
+    _s.xpsr = CHGBITSM(_s.xpsr, XPSR__N, GETBIT(result,31));
     _s.xpsr = CHGBITSM(_s.xpsr, XPSR__Z, _IsZeroBit(result));
     _s.xpsr = CHGBITSM(_s.xpsr, XPSR__C, carry);
     _s.xpsr = CHGBITSM(_s.xpsr, XPSR__V, overflow);
@@ -8735,6 +10084,18 @@ private:
     }
   }
 
+  /* _Exec_DMB {{{4
+   * ---------
+   */
+  void _Exec_DMB(uint32_t option) {
+    // DMB § C2.4.34
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    _DataMemoryBarrier(option);
+  }
+
   /* _Exec_DSB {{{4
    * ---------
    */
@@ -8745,6 +10106,37 @@ private:
 
     //EncodingSpecificOperations
     _DataSynchronizationBarrier(option);
+  }
+
+  /* _Exec_EOR_register {{{4
+   * ------------------
+   */
+  void _Exec_EOR_register(uint32_t d, uint32_t n, uint32_t m, bool setflags, SRType shiftT, uint32_t shiftN) {
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    auto [shifted, carry] = _Shift_C(_GetR(m), shiftT, shiftN, GETBITSM(_s.xpsr, XPSR__C));
+    uint32_t result = _GetR(n) ^ shifted;
+    _SetR(d, result);
+    if (setflags) {
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__N, GETBIT(result,31));
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__Z, _IsZeroBit(result));
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__C, carry);
+      // APSR.V unchanged
+    }
+  }
+
+  /* _Exec_ISB {{{4
+   * ---------
+   */
+  void _Exec_ISB(uint32_t option) {
+    // ISB § C2.4.40
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    _InstructionSynchronizationBarrier(option);
   }
 
   /* _Exec_IT {{{4
@@ -8887,6 +10279,48 @@ private:
       _SetR(t, data);
   }
 
+  /* _Exec_LDR_register {{{4
+   * ------------------
+   */
+  void _Exec_LDR_register(uint32_t t, uint32_t n, uint32_t m, bool index, bool add, bool wback, SRType shiftT, uint32_t shiftN) {
+    // LDR (register) § C2.4.54
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    uint32_t offset     = _Shift(_GetR(m), shiftT, shiftN, GETBITSM(_s.xpsr, XPSR__C));
+    uint32_t offsetAddr = add ? _GetR(n) + offset : _GetR(n) - offset;
+    uint32_t addr       = index ? offsetAddr : _GetR(n);
+
+    // Determine if the stack pointer limit should be checked.
+    uint32_t limit;
+    bool     applyLimit;
+    if (n == 13 && wback)
+      std::tie(limit, applyLimit) = _LookUpSPLim(_LookUpSP());
+    else
+      applyLimit = false;
+
+    uint32_t data = 0;
+
+    // Memory operation only performed if limit not violated.
+    if (!applyLimit && offsetAddr >= limit)
+      data = _MemU(addr, 4);
+
+    // If the stack pointer is being updated a fault will be raised
+    // if the limit is violated.
+    if (t == 15) {
+      if (GETBITS(addr, 0, 1) == 0b00)
+        _LoadWritePC(data, n, offsetAddr, wback, true);
+      else
+        CUNPREDICTABLE_UNALIGNED();
+    } else {
+      if (wback)
+        _SetRSPCheck(n, offsetAddr);
+
+      _SetR(t, data);
+    }
+  }
+
   /* _Exec_LDRB_immediate {{{4
    * --------------------
    */
@@ -8963,6 +10397,92 @@ private:
     // TODO untested
   }
 
+  /* _Exec_LDRH_immediate {{{4
+   * --------------------
+   */
+  void _Exec_LDRH_immediate(uint32_t t, uint32_t n, uint32_t imm32, bool index, bool add, bool wback) {
+    // LDRH (immediate) § C2.4.64
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+
+    uint32_t offsetAddr = add ? _GetR(n) + imm32 : _GetR(n) - imm32;
+    uint32_t addr       = index ? offsetAddr : _GetR(n);
+
+    // Determine if the stack pointer limit should be checked.
+    uint32_t limit;
+    bool applyLimit;
+    if (n == 13 && wback)
+      std::tie(limit, applyLimit) = _LookUpSPLim(_LookUpSP());
+    else
+      applyLimit = false;
+
+    // Memory operation only performed if limit not violated.
+    if (!applyLimit || offsetAddr >= limit)
+      _SetR(t, _ZeroExtend(_MemU(addr, 2), 32));
+
+    // If the stack pointer is benig updated a fault will be raised if the
+    // limit is violated.
+    if (wback)
+      _SetRSPCheck(n, offsetAddr);
+  }
+
+  /* _Exec_LDRH_register {{{4
+   * -------------------
+   */
+  void _Exec_LDRH_register(uint32_t t, uint32_t n, uint32_t m, bool index, bool add, bool wback, SRType shiftT, uint32_t shiftN) {
+    // LDRH (register) § C2.4.66
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    uint32_t offset     = _Shift(_GetR(m), shiftT, shiftN, GETBITSM(_s.xpsr, XPSR__C));
+    uint32_t offsetAddr = add ? _GetR(n) + offset : _GetR(n) - offset;
+    uint32_t addr       = index ? offsetAddr : _GetR(n);
+
+    uint32_t data = _MemU(addr, 2);
+    if (wback)
+      _SetR(n, offsetAddr);
+
+    _SetR(t, _ZeroExtend(data, 32));
+  }
+
+  /* _Exec_LDRSB_register {{{4
+   * --------------------
+   */
+  void _Exec_LDRSB_register(uint32_t t, uint32_t n, uint32_t m, bool index, bool add, bool wback, SRType shiftT, uint32_t shiftN) {
+    // LDRSB (register) § C2.4.70
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    uint32_t offset     = _Shift(_GetR(m), shiftT, shiftN, GETBITSM(_s.xpsr, XPSR__C));
+    uint32_t offsetAddr = add ? _GetR(n) + offset : _GetR(n) - offset;
+    uint32_t addr       = index ? offsetAddr : _GetR(n);
+    _SetR(t, _SignExtend(_MemU(addr, 1), 8, 32));
+  }
+
+  /* _Exec_LDRSH_register {{{4
+   * --------------------
+   */
+  void _Exec_LDRSH_register(uint32_t t, uint32_t n, uint32_t m, bool index, bool add, bool wback, SRType shiftT, uint32_t shiftN) {
+    // LDRSH (register) § C2.4.74
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    uint32_t offset     = _Shift(_GetR(m), shiftT, shiftN, GETBITSM(_s.xpsr, XPSR__C));
+    uint32_t offsetAddr = add ? _GetR(n) + offset : _GetR(n) - offset;
+    uint32_t addr       = index ? offsetAddr : _GetR(n);
+
+    uint32_t data = _MemU(addr, 2);
+    if (wback)
+      _SetR(n, offsetAddr);
+
+    _SetR(t, _SignExtend(data, 16, 32));
+  }
+
   /* _Exec_MOV_immediate {{{4
    * -------------------
    */
@@ -9006,6 +10526,78 @@ private:
     }
   }
 
+  /* _Exec_MOV_MOVS_register_shifted_register {{{4
+   * ----------------------------------------
+   */
+  void _Exec_MOV_MOVS_register_shifted_register(uint32_t d, uint32_t m, uint32_t s, bool setflags, SRType shiftT) {
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    uint32_t shiftN = GETBITS(_GetR(s), 0, 7);
+    auto [result, carry] = _Shift_C(_GetR(m), shiftT, shiftN, GETBITSM(_s.xpsr, XPSR__C));
+    _SetR(d, result);
+    if (setflags) {
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__N, GETBIT(result,31));
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__Z, _IsZeroBit(result));
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__C, carry);
+      // APSR.V unchanged
+    }
+  }
+
+  /* _Exec_MUL {{{4
+   * ---------
+   */
+  void _Exec_MUL(uint32_t d, uint32_t n, uint32_t m, bool setflags) {
+    // MUL § C2.4.97
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    uint32_t operand1 = (uint32_t)_GetR(n); // signed/unsigned produces the same final results
+    uint32_t operand2 = (uint32_t)_GetR(m); //
+    uint32_t result   = operand1 * operand2;
+    _SetR(d, GETBITS(result, 0,31));
+    if (setflags) {
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__N, GETBIT(result,31));
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__Z, _IsZeroBit(GETBITS(result, 0,31)));
+      // APSR.C unchanged
+      // APSR.V unchanged
+    }
+  }
+
+  /* _Exec_MVN_register {{{4
+   * ------------------
+   */
+  void _Exec_MVN_register(uint32_t d, uint32_t m, bool setflags, SRType shiftT, uint32_t shiftN) {
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    auto [shifted, carry] = _Shift_C(_GetR(m), shiftT, shiftN, GETBITSM(_s.xpsr, XPSR__C));
+    uint32_t result = ~shifted;
+    _SetR(d, result);
+    if (setflags) {
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__N, GETBIT(result,31));
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__Z, _IsZeroBit(result));
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__C, carry);
+      // APSR.V unchanged
+    }
+  }
+
+  /* _Exec_NOP {{{4
+   * ---------
+   */
+  void _Exec_NOP() {
+    // NOP § C2.4.100
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+
+    // Do nothing
+  }
+
   /* _Exec_ORR_immediate {{{4
    * -------------------
    */
@@ -9043,6 +10635,103 @@ private:
       _s.xpsr = CHGBITSM(_s.xpsr, XPSR__C, carry);
       // APSR.V unchanged
     }
+  }
+
+  /* _Exec_REV {{{4
+   * ---------
+   */
+  void _Exec_REV(uint32_t d, uint32_t m) {
+    // REV § C2.4.126
+    if (!_ConditionPassed())
+      return;
+
+    uint32_t result = 0;
+    result = CHGBITS(result,24,31,GETBITS(_GetR(m), 0, 7));
+    result = CHGBITS(result,16,23,GETBITS(_GetR(m), 8,15));
+    result = CHGBITS(result, 8,15,GETBITS(_GetR(m),16,23));
+    result = CHGBITS(result, 0, 7,GETBITS(_GetR(m),24,31));
+    _SetR(d, result);
+  }
+
+  /* _Exec_REV16 {{{4
+   * -----------
+   */
+  void _Exec_REV16(uint32_t d, uint32_t m) {
+    // REV16 § C2.4.127
+    if (!_ConditionPassed())
+      return;
+
+    uint32_t result = 0;
+    result = CHGBITS(result,24,31,GETBITS(_GetR(m),16,23));
+    result = CHGBITS(result,16,23,GETBITS(_GetR(m),24,31));
+    result = CHGBITS(result, 8,15,GETBITS(_GetR(m), 0, 7));
+    result = CHGBITS(result, 0, 7,GETBITS(_GetR(m), 8,15));
+    _SetR(d, result);
+  }
+
+  /* _Exec_REVSH {{{4
+   * -----------
+   */
+  void _Exec_REVSH(uint32_t d, uint32_t m) {
+    // REVSH § C2.4.128
+    if (!_ConditionPassed())
+      return;
+
+    uint32_t result = 0;
+    result = CHGBITS(result, 8,31,_SignExtend(GETBITS(_GetR(m), 0, 7), 8, 24));
+    result = CHGBITS(result, 0, 7,GETBITS(_GetR(m), 8,15));
+    _SetR(d, result);
+  }
+
+  /* _Exec_RSB_immediate {{{4
+   * -------------------
+   */
+  void _Exec_RSB_immediate(uint32_t d, uint32_t n, bool setflags, uint32_t imm32) {
+    // RSB (immediate) § C2.4.135
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    auto [result, carry, overflow] = _AddWithCarry(~_GetR(n), imm32, true);
+    _SetR(d, result);
+    if (setflags) {
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__N, GETBIT(result,31));
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__Z, _IsZeroBit(result));
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__C, carry);
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__V, overflow);
+    }
+  }
+
+  /* _Exec_SBC_register {{{4
+   * ------------------
+   */
+  void _Exec_SBC_register(uint32_t d, uint32_t n, uint32_t m, bool setflags, SRType shiftT, uint32_t shiftN) {
+    // SBC (register) § C2.4.141
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    uint32_t shifted = _Shift(_GetR(m), shiftT, shiftN, GETBITSM(_s.xpsr, XPSR__C));
+    auto [result, carry, overflow] = _AddWithCarry(_GetR(n), ~shifted, GETBITSM(_s.xpsr, XPSR__C));
+    _SetR(d, result);
+    if (setflags) {
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__N, GETBIT(result, 31));
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__Z, _IsZeroBit(result));
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__C, carry);
+      _s.xpsr = CHGBITSM(_s.xpsr, XPSR__V, overflow);
+    }
+  }
+
+  /* _Exec_SEV {{{4
+   * ---------
+   */
+  void _Exec_SEV() {
+    // SEV § C2.4.145
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    _SendEvent();
   }
 
   /* _Exec_STM {{{4
@@ -9158,6 +10847,20 @@ private:
     _MemU(addr, 4, _GetR(t));
   }
 
+  /* _Exec_STRH_register {{{4
+   * -------------------
+   */
+  void _Exec_STRH_register(uint32_t t, uint32_t n, uint32_t m, bool index, bool add, bool wback, SRType shiftT, uint32_t shiftN) {
+    // STRH (register) § C2.4.193
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    uint32_t offset = _Shift(_GetR(m), shiftT, shiftN, GETBITSM(_s.xpsr, XPSR__C));
+    uint32_t addr   = _GetR(n) + offset;
+    _MemU(addr, 2, GETBITS(_GetR(t), 0, 15));
+  }
+
   /* _Exec_STRB_immediate {{{4
    * --------------------
    */
@@ -9270,6 +10973,66 @@ private:
     }
   }
 
+  /* _Exec_SUB_register {{{4
+   * ------------------
+   */
+  void _Exec_SUB_register(uint32_t d, uint32_t n, uint32_t m, bool setflags, SRType shiftT, uint32_t shiftN) {
+    // SUB (register) § C2.4.200
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    uint32_t shifted = _Shift(_GetR(m), shiftT, shiftN, GETBITSM(_s.xpsr, XPSR__C));
+    auto [result, carry, overflow] = _AddWithCarry(_GetR(n), ~shifted, true);
+    if (d == 15)
+      _ALUWritePC(result);
+    else {
+      _SetR(d, result);
+      if (setflags) {
+        _s.xpsr = CHGBITSM(_s.xpsr, XPSR__N, GETBIT(result, 31));
+        _s.xpsr = CHGBITSM(_s.xpsr, XPSR__Z, _IsZeroBit(result));
+        _s.xpsr = CHGBITSM(_s.xpsr, XPSR__C, carry);
+        _s.xpsr = CHGBITSM(_s.xpsr, XPSR__V, overflow);
+      }
+    }
+  }
+
+  /* _Exec_SVC {{{4
+   * ---------
+   */
+  void _Exec_SVC() {
+    // SVC § C2.4.201
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    _CallSupervisor();
+  }
+
+  /* _Exec_SXTB {{{4
+   * ----------
+   */
+  void _Exec_SXTB(uint32_t d, uint32_t m, uint32_t rotation) {
+    // SXTB § C2.4.205
+    if (!_ConditionPassed())
+      return;
+
+    uint32_t rotated = _ROR(_GetR(m), rotation);
+    _SetR(d, _SignExtend(GETBITS(rotated, 0, 7), 8, 32));
+  }
+
+  /* _Exec_SXTH {{{4
+   * ----------
+   */
+  void _Exec_SXTH(uint32_t d, uint32_t m, uint32_t rotation) {
+    // SXTH § C2.4.207
+    if (!_ConditionPassed())
+      return;
+
+    uint32_t rotated = _ROR(_GetR(m), rotation);
+    _SetR(d, _SignExtend(GETBITS(rotated, 0,15), 16, 32));
+  }
+
   /* _Exec_TST_immediate {{{4
    * -------------------
    */
@@ -9287,6 +11050,74 @@ private:
     // APSR.V unchanged
   }
 
+  /* _Exec_TST_register {{{4
+   * ------------------
+   */
+  void _Exec_TST_register(uint32_t n, uint32_t m, SRType shiftT, uint32_t shiftN) {
+    // TST (register) § C2.4.212
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    auto [shifted, carry] = _Shift_C(_GetR(m), shiftT, shiftN, GETBITSM(_s.xpsr, XPSR__C));
+    uint32_t result = _GetR(n) & shifted;
+    _s.xpsr = CHGBITSM(_s.xpsr, XPSR__N, GETBIT(result,31));
+    _s.xpsr = CHGBITSM(_s.xpsr, XPSR__Z, _IsZeroBit(result));
+    _s.xpsr = CHGBITSM(_s.xpsr, XPSR__C, carry);
+    // APSR.V unchanged
+  }
+
+  /* _Exec_UDF {{{4
+   * ---------
+   */
+  void _Exec_UDF() {
+    // UDF § C2.4.218
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    throw Exception(ExceptionType::UNDEFINED);
+  }
+
+  /* _Exec_UXTB {{{4
+   * ----------
+   */
+  void _Exec_UXTB(uint32_t d, uint32_t m, uint32_t rotation) {
+    // UXTB § C2.4.245
+    if (!_ConditionPassed())
+      return;
+
+    uint32_t rotated = _ROR(_GetR(m), rotation);
+    _SetR(d, _ZeroExtend(GETBITS(rotated, 0, 7), 32));
+  }
+
+  /* _Exec_UXTH {{{4
+   * ----------
+   */
+  void _Exec_UXTH(uint32_t d, uint32_t m, uint32_t rotation) {
+    // UXTH § C2.4.247
+    if (!_ConditionPassed())
+      return;
+
+    uint32_t rotated = _ROR(_GetR(m), rotation);
+    _SetR(d, _ZeroExtend(GETBITS(rotated, 0,15), 32));
+  }
+
+  /* _Exec_WFE {{{4
+   * ---------
+   */
+  void _Exec_WFE() {
+    // WFE § C2.4.304
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    if (_EventRegistered())
+      _ClearEventRegister();
+    else
+      _WaitForEvent();
+  }
+
   /* _Exec_WFI {{{4
    * ---------
    */
@@ -9297,6 +11128,18 @@ private:
 
     //EncodingSpecificOperations
     _WaitForInterrupt();
+  }
+
+  /* _Exec_YIELD {{{4
+   * -----------
+   */
+  void _Exec_YIELD() {
+    // YIELD § C2.4.306
+    if (!_ConditionPassed())
+      return;
+
+    //EncodingSpecificOperations
+    _Hint_Yield();
   }
 
   // }}}3
