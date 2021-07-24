@@ -683,7 +683,7 @@ struct Simulator {
   Simulator(Device &dev, const SimulatorConfig &cfg=SimulatorConfig()) :_dev(dev), _cfg(cfg) {
     ASSERT(cfg.MaxExc() < NUM_EXC);
 
-    _TakeReset();
+    _ColdReset();
   }
 
   /* Public Functions {{{3
@@ -4630,8 +4630,19 @@ private:
     }
   }
 
+  /* _ColdReset {{{4
+   * ----------
+   * Does not correspond to any function in the ISA manual psuedocode; implements a cold
+   * reset as described in the manual. A cold reset is a superset of a warm reset.
+   */
+  void _ColdReset() {
+    // TODO
+    _TakeReset();
+  }
+
   /* _TakeReset {{{4
    * ----------
+   * This implements a warm reset.
    */
   void _TakeReset() {
     _s.curState = _HaveSecurityExt() ? SecurityState_Secure : SecurityState_NonSecure;
