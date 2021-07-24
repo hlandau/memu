@@ -646,13 +646,39 @@ struct IDevice {
   virtual uint32_t DebugPins() const { return 0; }
 };
 
+/* SimpleEmulatorConfig {{{2
+ * --------------------
+ * SimpleEmulatorConfig implements the EmulatorConfig concept. Any object can
+ * be used so long as it can be copied and it supports the methods shown below.
+ */
+struct SimpleEmulatorConfig {
+  bool HaveMainExt() const { return this->main; }
+  bool HaveSecurityExt() const { return this->security; }
+
+  int MaxExc() const { return this->maxExc; }
+
+  // -----------------------------------------
+  bool      main            = true;         // Whether the simulated CPU supports the Main extension.
+  bool      security        = true;         // Whether the simulated CPU supports the Security extension.
+  bool      fpb             = true;         // Whether the simulated CPU supports the Flash Patch extension.
+  bool      dwt             = true;         // Whether the simulated CPU supports the DWT extension.
+  bool      itm             = true;         // Whether the simulated CPU supports the ITM extension.
+  bool      fpExt           = true;         // Whether the simulated CPU supports the floating point extension.
+  int       sysTick         = 2;            // Whether the simulated CPU supports the SysTick feature.
+  bool      haltingDebug    = true;         // Whether the simulated CPU supports the halting debug feature.
+  bool      dsp             = false;        // Whether the simulated CPU supports the DSP extension.
+  uint32_t  mpuRegions      = 8;            // Number of MPU regions supported. 0 for no MPU.
+  uint32_t  cpuid           = 0xFFFF'FFFF;  // Specifies the value of the CPUID register.
+  int       maxExc          = NUM_EXC-1;    // Maximum number of exceptions supported.
+};
+
 /* Emulator {{{2
  * ========
  */
-template<typename Device=IDevice>
+template<typename Device=IDevice, typename EmulatorConfig=SimpleEmulatorConfig>
 struct Emulator {
-  Emulator(Device &dev, int maxExc=NUM_EXC-1) :_dev(dev), _maxExc(maxExc) {
-    ASSERT(maxExc < NUM_EXC);
+  Emulator(Device &dev, const EmulatorConfig &cfg=EmulatorConfig()) :_dev(dev), _cfg(cfg) {
+    ASSERT(cfg.MaxExc() < NUM_EXC);
 
     _TakeReset();
   }
@@ -990,12 +1016,12 @@ private:
   /* _HaveMainExt {{{4
    * ------------
    */
-  bool _HaveMainExt() { return true; }
+  bool _HaveMainExt() { return _cfg.HaveMainExt(); }
 
   /* _HaveSecurityExt {{{4
    * ----------------
    */
-  bool _HaveSecurityExt() { return true; }
+  bool _HaveSecurityExt() { return _cfg.HaveSecurityExt(); }
 
   /* _SetThisInstrDetails {{{4
    * --------------------
@@ -3996,7 +4022,7 @@ private:
    * -----------
    */
   bool _IsIrqValid(int e) {
-    return e >= 16 && e <= _maxExc;
+    return e >= 16 && e <= _cfg.MaxExc();
   }
 
   /* _PopStack {{{4
@@ -11145,10 +11171,10 @@ private:
   // }}}3
 
 private:
-  CpuState _s{};
-  CpuNest  _n{};
-  Device  &_dev;
-  int      _maxExc;
+  CpuState       _s{};
+  CpuNest        _n{};
+  Device        &_dev;
+  EmulatorConfig _cfg;
 };
 
 /* Test Driver                                                             {{{1
