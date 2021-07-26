@@ -8339,7 +8339,7 @@ private:
         case 0b0'1:
           if (op3 == 0b1110'1001'0111'1111) {
             // SG
-            _DecodeExecute32_0100_111_1111_01_SG(instr, pc);
+            _DecodeExecute32_SG_T1(instr, pc);
           } else
             throw Exception(ExceptionType::UNPREDICTABLE);
           break;
@@ -8353,10 +8353,10 @@ private:
     }
   }
 
-  /* _DecodeExecute32_0100_111_1111_01_SG {{{4
-   * ------------------------------------
+  /* _DecodeExecute32_SG_T1 {{{4
+   * ----------------------
    */
-  void _DecodeExecute32_0100_111_1111_01_SG(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_SG_T1(uint32_t instr, uint32_t pc) {
     // SG § C2.4.146 T1
     // ---- DECODE --------------------------------------------------
     // No encoding specific operations
@@ -8375,9 +8375,9 @@ private:
     // These are also mapped via Load/store dual (immediate, post-indexed) and
     // Load/store dual (immediate).
     if (!L) {
-      _DecodeExecute32_0100_011_LS_STRD(instr, pc);
+      _DecodeExecute32_STRD_immediate_T1(instr, pc);
     } else {
-      _DecodeExecute32_0100_011_LS_LDRD(instr, pc);
+      _DecodeExecute32_LDRD_immediate_T1(instr, pc);
     }
   }
 
@@ -8391,7 +8391,7 @@ private:
     switch (op0) {
       case 0b1111:
         // LDRD (literal)
-        _DecodeExecute32_0100_110_1111(instr, pc);
+        _DecodeExecute32_LDRD_literal_T1(instr, pc);
         break;
 
       default:
@@ -8412,17 +8412,17 @@ private:
     // Load/store dual (immediate, post-indexed).
     if (!L) {
       // STRD (immediate)
-      _DecodeExecute32_0100_011_LS_STRD(instr, pc);
+      _DecodeExecute32_STRD_immediate_T1(instr, pc);
     } else {
       // LDRD (immediate)
-      _DecodeExecute32_0100_011_LS_LDRD(instr, pc);
+      _DecodeExecute32_LDRD_immediate_T1(instr, pc);
     }
   }
 
-  /* _DecodeExecute32_0100_110_1111 {{{4
-   * ------------------------------
+  /* _DecodeExecute32_LDRD_literal_T1 {{{4
+   * --------------------------------
    */
-  void _DecodeExecute32_0100_110_1111(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_LDRD_literal_T1(uint32_t instr, uint32_t pc) {
     // LDRD (literal) § C2.4.60 T1
     // ---- DECODE --------------------------------------------------
     uint32_t P    = GETBITS(instr>>16, 8, 8);
@@ -8468,7 +8468,7 @@ private:
     if (!op0) {
       if ((op1 & 0b1'0000'1111) == 0b0'0000'1111) {
         // TT, TTT, TTA, TTAT
-        _DecodeExecute32_0100_010_0_0xxxx1111(instr, pc);
+        _DecodeExecute32_TT_TTT_TTA_TTAT_T1(instr, pc);
       } else {
         // Load/store exclusive
         _DecodeExecute32_0100_010_0_xxxxxxxxx(instr, pc);
@@ -8480,7 +8480,7 @@ private:
           UNDEFINED_DEC();
         } else {
           // TBB, TBH
-          _DecodeExecute32_0100_010_1_000_1xxxxxxxx(instr, pc);
+          _DecodeExecute32_TBB_TBH_T1(instr, pc);
         }
       } else {
         if (GETBITS(op2, 1, 2) == 0b01) {
@@ -8510,62 +8510,62 @@ private:
     switch (L_op_sz) {
       case 0b0'0'00:
         // STLB
-        _DecodeExecute32_0100_010_1_100_00(instr, pc);
+        _DecodeExecute32_STLB_T1(instr, pc);
         break;
 
       case 0b0'0'01:
         // STLH
-        _DecodeExecute32_0100_010_1_100_01(instr, pc);
+        _DecodeExecute32_STLH_T1(instr, pc);
         break;
 
       case 0b0'0'10:
         // STL
-        _DecodeExecute32_0100_010_1_101_00(instr, pc);
+        _DecodeExecute32_STL_T1(instr, pc);
         break;
 
       case 0b0'1'00:
         // STLEXB
-        _DecodeExecute32_0100_010_1_110_00(instr, pc);
+        _DecodeExecute32_STLEXB_T1(instr, pc);
         break;
 
       case 0b0'1'01:
         // STLEXH
-        _DecodeExecute32_0100_010_1_110_01(instr, pc);
+        _DecodeExecute32_STLEXH_T1(instr, pc);
         break;
 
       case 0b0'1'10:
         // STLEX
-        _DecodeExecute32_0100_010_1_111_00(instr, pc);
+        _DecodeExecute32_STLEX_T1(instr, pc);
         break;
 
       case 0b1'0'00:
         // LDAB
-        _DecodeExecute32_0100_010_1_100_10(instr, pc);
+        _DecodeExecute32_LDAB_T1(instr, pc);
         break;
 
       case 0b1'0'01:
         // LDAH
-        _DecodeExecute32_0100_010_1_100_11(instr, pc);
+        _DecodeExecute32_LDAH_T1(instr, pc);
         break;
 
       case 0b1'0'10:
         // LDA
-        _DecodeExecute32_0100_010_1_101_10(instr, pc);
+        _DecodeExecute32_LDA_T1(instr, pc);
         break;
 
       case 0b1'1'00:
         // LDAEXB
-        _DecodeExecute32_0100_010_1_110_10(instr, pc);
+        _DecodeExecute32_LDAEXB_T1(instr, pc);
         break;
 
       case 0b1'1'01:
         // LDAEXH
-        _DecodeExecute32_0100_010_1_110_11(instr, pc);
+        _DecodeExecute32_LDAEXH_T1(instr, pc);
         break;
 
       case 0b1'1'10:
         // LDAEX
-        _DecodeExecute32_0100_010_1_111_10(instr, pc);
+        _DecodeExecute32_LDAEX_T1(instr, pc);
         break;
 
       case 0b0'0'11:
@@ -8581,10 +8581,10 @@ private:
     }
   }
 
-  /* _DecodeExecute32_0100_010_1_100_00 {{{4
-   * ----------------------------------
+  /* _DecodeExecute32_STLB_T1 {{{4
+   * ------------------------
    */
-  void _DecodeExecute32_0100_010_1_100_00(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_STLB_T1(uint32_t instr, uint32_t pc) {
     // STLB § C2.4.176 T1
     // ---- DECODE --------------------------------------------------
     uint32_t Rn = GETBITS(instr>>16, 0, 3);
@@ -8600,10 +8600,10 @@ private:
     _Exec_STLB(t, n);
   }
 
-  /* _DecodeExecute32_0100_010_1_100_01 {{{4
-   * ----------------------------------
+  /* _DecodeExecute32_STLH_T1 {{{4
+   * ------------------------
    */
-  void _DecodeExecute32_0100_010_1_100_01(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_STLH_T1(uint32_t instr, uint32_t pc) {
     // STLH § C2.4.180 T1
     // ---- DECODE --------------------------------------------------
     uint32_t Rn = GETBITS(instr>>16, 0, 3);
@@ -8619,10 +8619,10 @@ private:
     _Exec_STLH(t, n);
   }
 
-  /* _DecodeExecute32_0100_010_1_101_00 {{{4
-   * ----------------------------------
+  /* _DecodeExecute32_STL_T1 {{{4
+   * -----------------------
    */
-  void _DecodeExecute32_0100_010_1_101_00(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_STL_T1(uint32_t instr, uint32_t pc) {
     // STL § C2.4.175 T1
     // ---- DECODE --------------------------------------------------
     uint32_t Rn = GETBITS(instr>>16, 0, 3);
@@ -8638,10 +8638,10 @@ private:
     _Exec_STL(t, n);
   }
 
-  /* _DecodeExecute32_0100_010_1_110_00 {{{4
-   * ----------------------------------
+  /* _DecodeExecute32_STLEXB_T1 {{{4
+   * --------------------------
    */
-  void _DecodeExecute32_0100_010_1_110_00(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_STLEXB_T1(uint32_t instr, uint32_t pc) {
     // STLEXB § C2.4.178 T1
     // ---- DECODE --------------------------------------------------
     uint32_t Rn = GETBITS(instr>>16, 0, 3);
@@ -8662,10 +8662,10 @@ private:
     _Exec_STLEXB(d, t, n);
   }
 
-  /* _DecodeExecute32_0100_010_1_110_01 {{{4
-   * ----------------------------------
+  /* _DecodeExecute32_STLEXH_T1 {{{4
+   * --------------------------
    */
-  void _DecodeExecute32_0100_010_1_110_01(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_STLEXH_T1(uint32_t instr, uint32_t pc) {
     // STLEXH § C2.4.179 T1
     // ---- DECODE --------------------------------------------------
     uint32_t Rn = GETBITS(instr>>16, 0, 3);
@@ -8686,10 +8686,10 @@ private:
     _Exec_STLEXH(d, t, n);
   }
 
-  /* _DecodeExecute32_0100_010_1_111_00 {{{4
-   * ----------------------------------
+  /* _DecodeExecute32_STLEX_T1 {{{4
+   * -------------------------
    */
-  void _DecodeExecute32_0100_010_1_111_00(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_STLEX_T1(uint32_t instr, uint32_t pc) {
     // STLEX § C2.4.177 T1
     // ---- DECODE --------------------------------------------------
     uint32_t Rn = GETBITS(instr>>16, 0, 3);
@@ -8710,10 +8710,10 @@ private:
     _Exec_STLEX(d, t, n);
   }
 
-  /* _DecodeExecute32_0100_010_1_100_10 {{{4
-   * ----------------------------------
+  /* _DecodeExecute32_LDAB_T1 {{{4
+   * ------------------------
    */
-  void _DecodeExecute32_0100_010_1_100_10(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_LDAB_T1(uint32_t instr, uint32_t pc) {
     // LDAB § C2.4.43 T1
     // ---- DECODE --------------------------------------------------
     uint32_t Rn = GETBITS(instr>>16, 0, 3);
@@ -8728,10 +8728,10 @@ private:
     _Exec_LDAB(t, n);
   }
   
-  /* _DecodeExecute32_0100_010_1_100_11 {{{4
-   * ----------------------------------
+  /* _DecodeExecute32_LDAH_T1 {{{4
+   * ------------------------
    */
-  void _DecodeExecute32_0100_010_1_100_11(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_LDAH_T1(uint32_t instr, uint32_t pc) {
     // LDAH § C2.4.47 T1
     // ---- DECODE --------------------------------------------------
     uint32_t Rn = GETBITS(instr>>16, 0, 3);
@@ -8746,10 +8746,10 @@ private:
     _Exec_LDAH(t, n);
   }
   
-  /* _DecodeExecute32_0100_010_1_101_10 {{{4
-   * ----------------------------------
+  /* _DecodeExecute32_LDA_T1 {{{4
+   * -----------------------
    */
-  void _DecodeExecute32_0100_010_1_101_10(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_LDA_T1(uint32_t instr, uint32_t pc) {
     // LDA § C2.4.42 T1
     // ---- DECODE --------------------------------------------------
     uint32_t Rn = GETBITS(instr>>16, 0, 3);
@@ -8764,10 +8764,10 @@ private:
     _Exec_LDA(t, n);
   }
   
-  /* _DecodeExecute32_0100_010_1_110_10 {{{4
-   * ----------------------------------
+  /* _DecodeExecute32_LDAEXB_T1 {{{4
+   * --------------------------
    */
-  void _DecodeExecute32_0100_010_1_110_10(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_LDAEXB_T1(uint32_t instr, uint32_t pc) {
     // LDAEXB § C2.4.45 T1
     // ---- DECODE --------------------------------------------------
     uint32_t Rn = GETBITS(instr>>16, 0, 3);
@@ -8782,10 +8782,10 @@ private:
     _Exec_LDAEXB(t, n);
   }
   
-  /* _DecodeExecute32_0100_010_1_110_11 {{{4
-   * ----------------------------------
+  /* _DecodeExecute32_LDAEXH_T1 {{{4
+   * --------------------------
    */
-  void _DecodeExecute32_0100_010_1_110_11(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_LDAEXH_T1(uint32_t instr, uint32_t pc) {
     // LDAEXH § C2.4.46 T1
     // ---- DECODE --------------------------------------------------
     uint32_t Rn = GETBITS(instr>>16, 0, 3);
@@ -8800,10 +8800,10 @@ private:
     _Exec_LDAEXH(t, n);
   }
   
-  /* _DecodeExecute32_0100_010_1_111_10 {{{4
-   * ----------------------------------
+  /* _DecodeExecute32_LDAEX_T1 {{{4
+   * -------------------------
    */
-  void _DecodeExecute32_0100_010_1_111_10(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_LDAEX_T1(uint32_t instr, uint32_t pc) {
     // LDAEX § C2.4.44 T1
     // ---- DECODE --------------------------------------------------
     uint32_t Rn = GETBITS(instr>>16, 0, 3);
@@ -8829,12 +8829,12 @@ private:
     switch ((L<<2) | sz) {
       case 0b0'00:
         // STREXB
-        _DecodeExecute32_0100_010_1_010_00(instr, pc);
+        _DecodeExecute32_STREXB_T1(instr, pc);
         break;
 
       case 0b0'01:
         // STREXH
-        _DecodeExecute32_0100_010_1_010_01(instr, pc);
+        _DecodeExecute32_STREXH_T1(instr, pc);
         break;
 
       case 0b0'10:
@@ -8847,12 +8847,12 @@ private:
 
       case 0b1'00:
         // LDREXB
-        _DecodeExecute32_0100_010_1_010_10(instr, pc);
+        _DecodeExecute32_LDREXB_T1(instr, pc);
         break;
 
       case 0b1'01:
         // LDREXH
-        _DecodeExecute32_0100_010_1_010_11(instr, pc);
+        _DecodeExecute32_LDREXH_T1(instr, pc);
         break;
 
       default:
@@ -8860,10 +8860,10 @@ private:
     }
   }
 
-  /* _DecodeExecute32_0100_010_1_010_10 {{{4
-   * ----------------------------------
+  /* _DecodeExecute32_LDREXB_T1 {{{4
+   * --------------------------
    */
-  void _DecodeExecute32_0100_010_1_010_10(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_LDREXB_T1(uint32_t instr, uint32_t pc) {
     // LDREXB § C2.4.62 T1
     // ---- DECODE --------------------------------------------------
     uint32_t Rn = GETBITS(instr>>16, 0, 3);
@@ -8879,10 +8879,10 @@ private:
     _Exec_LDREXB(t, n);
   }
 
-  /* _DecodeExecute32_0100_010_1_010_11 {{{4
-   * ----------------------------------
+  /* _DecodeExecute32_LDREXH_T1 {{{4
+   * --------------------------
    */
-  void _DecodeExecute32_0100_010_1_010_11(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_LDREXH_T1(uint32_t instr, uint32_t pc) {
     // LDREXH § C2.4.63 T1
     // ---- DECODE --------------------------------------------------
     uint32_t Rn = GETBITS(instr>>16, 0, 3);
@@ -8898,10 +8898,10 @@ private:
     _Exec_LDREXH(t, n);
   }
 
-  /* _DecodeExecute32_0100_010_1_010_00 {{{4
-   * ----------------------------------
+  /* _DecodeExecute32_STREXB_T1 {{{4
+   * --------------------------
    */
-  void _DecodeExecute32_0100_010_1_010_00(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_STREXB_T1(uint32_t instr, uint32_t pc) {
     // STREXB § C2.4.190 T1
     // ---- DECODE --------------------------------------------------
     uint32_t Rn = GETBITS(instr>>16, 0, 3);
@@ -8922,10 +8922,10 @@ private:
     _Exec_STREXB(d, t, n);
   }
 
-  /* _DecodeExecute32_0100_010_1_010_01 {{{4
-   * ----------------------------------
+  /* _DecodeExecute32_STREXH_T1 {{{4
+   * --------------------------
    */
-  void _DecodeExecute32_0100_010_1_010_01(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_STREXH_T1(uint32_t instr, uint32_t pc) {
     // STREXH § C2.4.191 T1
     // ---- DECODE --------------------------------------------------
     uint32_t Rn = GETBITS(instr>>16, 0, 3);
@@ -8946,10 +8946,10 @@ private:
     _Exec_STREXH(d, t, n);
   }
 
-  /* _DecodeExecute32_0100_010_1_000_1xxxxxxxx {{{4
-   * -----------------------------------------
+  /* _DecodeExecute32_TBB_TBH_T1 {{{4
+   * ---------------------------
    */
-  void _DecodeExecute32_0100_010_1_000_1xxxxxxxx(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_TBB_TBH_T1(uint32_t instr, uint32_t pc) {
     // TBB, TBH § C2.4.208 T1
     // ---- DECODE --------------------------------------------------
     uint32_t Rn = GETBITS(instr>>16, 0, 3);
@@ -8984,18 +8984,18 @@ private:
 
     if (L_Rt != 0b0'1111) {
       // STREX
-      _DecodeExecute32_0100_010_0_xxxxxxxxx_STREX(instr, pc);
+      _DecodeExecute32_STREX_T1(instr, pc);
     } else if (L) {
       // LDREX
-      _DecodeExecute32_0100_010_0_1xxxxxxxx(instr, pc);
+      _DecodeExecute32_LDREX_T1(instr, pc);
     } else
       abort();
   }
 
-  /* _DecodeExecute32_0100_010_0_xxxxxxxxx_STREX {{{4
-   * -------------------------------------------
+  /* _DecodeExecute32_STREX_T1 {{{4
+   * -------------------------
    */
-  void _DecodeExecute32_0100_010_0_xxxxxxxxx_STREX(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_STREX_T1(uint32_t instr, uint32_t pc) {
     // STREX § C2.4.189 T1
     // ---- DECODE --------------------------------------------------
     uint32_t Rn   = GETBITS(instr>>16, 0, 3);
@@ -9019,10 +9019,10 @@ private:
     _Exec_STREX(d, t, n, imm32);
   }
 
-  /* _DecodeExecute32_0100_010_0_1xxxxxxxx {{{4
-   * -------------------------------------
+  /* _DecodeExecute32_LDREX_T1 {{{4
+   * -------------------------
    */
-  void _DecodeExecute32_0100_010_0_1xxxxxxxx(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_LDREX_T1(uint32_t instr, uint32_t pc) {
     // LDREX § C2.4.61 T1
     // ---- DECODE --------------------------------------------------
     uint32_t Rn   = GETBITS(instr>>16, 0, 3);
@@ -9040,10 +9040,10 @@ private:
     _Exec_LDREX(t, n, imm32);
   }
 
-  /* _DecodeExecute32_0100_010_0_0xxxx1111 {{{4
-   * -------------------------------------
+  /* _DecodeExecute32_TT_TTT_TTA_TTAT_T1 {{{4
+   * -----------------------------------
    */
-  void _DecodeExecute32_0100_010_0_0xxxx1111(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_TT_TTT_TTA_TTAT_T1(uint32_t instr, uint32_t pc) {
     // TT, TTT, TTA, TTAT § C2.4.213 T1
     // ---- DECODE --------------------------------------------------
     uint32_t Rn = GETBITS(instr>>16, 0, 3);
@@ -9082,22 +9082,22 @@ private:
 
       case 0b01'0:
         // STM, STMIA, STMEA
-        _DecodeExecute32_0100_00x_10(instr, pc);
+        _DecodeExecute32_STM_STMIA_STMEA_T2(instr, pc);
         break;
 
       case 0b01'1:
         // LDM, LDMIA, LDMFD
-        _DecodeExecute32_0100_00x_11(instr, pc);
+        _DecodeExecute32_LDM_LDMIA_LDMFD_T2(instr, pc);
         break;
 
       case 0b10'0:
         // STMDB, STMFD
-        _DecodeExecute32_0100_10x_00(instr, pc);
+        _DecodeExecute32_STMDB_STMFD_T1(instr, pc);
         break;
 
       case 0b10'1:
         // LDMDB, LDMEA
-        _DecodeExecute32_0100_10x_01(instr, pc);
+        _DecodeExecute32_LDMDB_LDMEA_T1(instr, pc);
         break;
 
       case 0b11'0:
@@ -9111,10 +9111,10 @@ private:
     }
   }
  
-  /* _DecodeExecute32_0100_00x_10 {{{4
-   * ----------------------------
+  /* _DecodeExecute32_STM_STMIA_STMEA_T2 {{{4
+   * -----------------------------------
    */
-  void _DecodeExecute32_0100_00x_10(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_STM_STMIA_STMEA_T2(uint32_t instr, uint32_t pc) {
     // STM, STMIA, STMEA § C2.4.181 T2
     // ---- DECODE --------------------------------------------------
     uint32_t W        = GETBITS(instr>>16, 5, 5);
@@ -9144,10 +9144,10 @@ private:
     _Exec_STM(n, registers, wback);
   }
 
-  /* _DecodeExecute32_0100_00x_11 {{{4
-   * ----------------------------
+  /* _DecodeExecute32_LDM_LDMIA_LDMFD_T2 {{{4
+   * -----------------------------------
    */
-  void _DecodeExecute32_0100_00x_11(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_LDM_LDMIA_LDMFD_T2(uint32_t instr, uint32_t pc) {
     // LDM, LDMIA, LDMFD § C2.4.50 T2
     // ---- DECODE --------------------------------------------------
     uint32_t W        = GETBITS(instr>>16, 4, 4);
@@ -9178,10 +9178,10 @@ private:
     _Exec_LDM(n, registers, wback);
   }
 
-  /* _DecodeExecute32_0100_10x_00 {{{4
-   * ----------------------------
+  /* _DecodeExecute32_STMDB_STMFD_T1 {{{4
+   * -------------------------------
    */
-  void _DecodeExecute32_0100_10x_00(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_STMDB_STMFD_T1(uint32_t instr, uint32_t pc) {
     // STMDB, STMFD § C2.4.182 T1
     // ---- DECODE --------------------------------------------------
     uint32_t W        = GETBITS(instr>>16, 5, 5);
@@ -9211,10 +9211,10 @@ private:
     _Exec_STMDB(n, registers, wback);
   }
 
-  /* _DecodeExecute32_0100_10x_01 {{{4
-   * ----------------------------
+  /* _DecodeExecute32_LDMDB_LDMEA_T1 {{{4
+   * -------------------------------
    */
-  void _DecodeExecute32_0100_10x_01(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_LDMDB_LDMEA_T1(uint32_t instr, uint32_t pc) {
     // LDMDB, LDMEA § C2.4.51 T1
     // ---- DECODE --------------------------------------------------
     uint32_t W        = GETBITS(instr>>16, 5, 5);
@@ -9276,17 +9276,17 @@ private:
     // Load/store dual (immediate).
     if (!L) {
       // STRD (immediate)
-      _DecodeExecute32_0100_011_LS_STRD(instr, pc);
+      _DecodeExecute32_STRD_immediate_T1(instr, pc);
     } else {
       // LDRD (immediate)
-      _DecodeExecute32_0100_011_LS_LDRD(instr, pc);
+      _DecodeExecute32_LDRD_immediate_T1(instr, pc);
     }
   }
 
-  /* _DecodeExecute32_0100_011_LS_STRD {{{4
-   * ---------------------------------
+  /* _DecodeExecute32_STRD_immediate_T1 {{{4
+   * ----------------------------------
    */
-  void _DecodeExecute32_0100_011_LS_STRD(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_STRD_immediate_T1(uint32_t instr, uint32_t pc) {
     // STRD (immediate) § C2.4.188 T1
     // ---- DECODE --------------------------------------------------
     uint32_t P    = GETBITS(instr>>16, 8, 8);
@@ -9315,10 +9315,10 @@ private:
     _Exec_STRD_immediate(t, t2, n, imm32, index, add, wback);
   }
 
-  /* _DecodeExecute32_0100_011_LS_LDRD {{{4
-   * ---------------------------------
+  /* _DecodeExecute32_LDRD_immediate_T1 {{{4
+   * ----------------------------------
    */
-  void _DecodeExecute32_0100_011_LS_LDRD(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_LDRD_immediate_T1(uint32_t instr, uint32_t pc) {
     // LDRD (immediate) § C2.4.59 T1
     // ---- DECODE --------------------------------------------------
     uint32_t P    = GETBITS(instr>>16, 8, 8);
@@ -9369,47 +9369,47 @@ private:
       case 0b0000:
         if (!S) {
           // AND (register) — AND, rotate right with extend variant
-          _DecodeExecute32_0101_0000_AND_reg(instr, pc);
+          _DecodeExecute32_AND_register_T2(instr, pc);
         } else if (imm3_imm2_type != 0b0000011) {
           if (Rd != 0b1111) {
             // AND (register) — ANDS, shift or rotate by value variant
-            _DecodeExecute32_0101_0000_AND_reg(instr, pc);
+            _DecodeExecute32_AND_register_T2(instr, pc);
           } else {
             // TST (register) — Shift or rotate by value variant
-            _DecodeExecute32_0101_0000_1_1111(instr, pc);
+            _DecodeExecute32_TST_register_T2(instr, pc);
           }
         } else {
           if (Rd != 0b1111) {
             // AND (register) — ANDS, rotate right with extend variant
-            _DecodeExecute32_0101_0000_AND_reg(instr, pc);
+            _DecodeExecute32_AND_register_T2(instr, pc);
           } else {
             // TST (register) — Rotate right with extend variant
-            _DecodeExecute32_0101_0000_1_1111(instr, pc);
+            _DecodeExecute32_TST_register_T2(instr, pc);
           }
         }
         break;
 
       case 0b0001:
         // BIC (register)
-        _DecodeExecute32_0101_0001(instr, pc);
+        _DecodeExecute32_BIC_register_T2(instr, pc);
         break;
 
       case 0b0010:
         if (!S) {
           if (Rn != 0b1111) {
             // ORR (register) — ORR, rotate right with extend variant
-            _DecodeExecute32_0101_0010_x_xxxx(instr, pc);
+            _DecodeExecute32_ORR_register_T2(instr, pc);
           } else {
             // MOV (register) — MOV, rotate right with extend variant
-            _DecodeExecute32_0101_0010_x_1111(instr, pc);
+            _DecodeExecute32_MOV_register_T3(instr, pc);
           }
         } else {
           if (Rn != 0b1111) {
             // ORR (register) — ORRS, rotate right with extend variant
-            _DecodeExecute32_0101_0010_x_xxxx(instr, pc);
+            _DecodeExecute32_ORR_register_T2(instr, pc);
           } else {
             // MOV (register) — MOVS, rotate right with extend variant
-            _DecodeExecute32_0101_0010_x_1111(instr, pc);
+            _DecodeExecute32_MOV_register_T3(instr, pc);
           }
         }
         break;
@@ -9418,7 +9418,7 @@ private:
         if (!S) {
           if (Rn != 0b1111) {
             // ORN (register) — ORN, rotate right with extend variant
-            _DecodeExecute32_0101_0011_x_xxxx(instr, pc);
+            _DecodeExecute32_ORN_register_T1(instr, pc);
           } else {
             // MVN (register) — MVN, rotate right with extend variant
             _DecodeExecute32_0101_0011_x_1111(instr, pc);
@@ -9426,7 +9426,7 @@ private:
         } else {
           if (Rn != 0b1111) {
             // ORN (register) — ORNS, rotate right with extend variant
-            _DecodeExecute32_0101_0011_x_xxxx(instr, pc);
+            _DecodeExecute32_ORN_register_T1(instr, pc);
           } else {
             // MVN (register) — MVNS, rotate right with extend variant
             _DecodeExecute32_0101_0011_x_1111(instr, pc);
@@ -9437,22 +9437,22 @@ private:
       case 0b0100:
         if (!S) {
           // EOR (register) — EOR, rotate right with extend variant
-          _DecodeExecute32_0101_0100_x_xxxx(instr, pc);
+          _DecodeExecute32_EOR_register_T2(instr, pc);
         } else if (imm3_imm2_type != 0b0000011) {
           if (Rd != 0b1111) {
             // EOR (register) — EORS, shift or rotate by value variant
-            _DecodeExecute32_0101_0100_x_xxxx(instr, pc);
+            _DecodeExecute32_EOR_register_T2(instr, pc);
           } else {
             // TEQ (register) — Shift or rotate by value variant
-            _DecodeExecute32_0101_0100_1_1111(instr, pc);
+            _DecodeExecute32_TEQ_register_T1(instr, pc);
           }
         } else {
           if (Rd != 0b1111) {
             // EOR (register) — EORS, rotate right with extend variant
-            _DecodeExecute32_0101_0100_x_xxxx(instr, pc);
+            _DecodeExecute32_EOR_register_T2(instr, pc);
           } else {
             // TEQ (register) — Rotate right with extend variant
-            _DecodeExecute32_0101_0100_1_1111(instr, pc);
+            _DecodeExecute32_TEQ_register_T1(instr, pc);
           }
         }
         break;
@@ -9462,12 +9462,12 @@ private:
           switch (imm3_imm2_type & 0b11) {
             case 0b00:
               // PKHBT, PKHTB - PKHBT variant
-              _DecodeExecute32_0101_0110_0_x0(instr, pc);
+              _DecodeExecute32_PKHBT_PKHTB_T1(instr, pc);
               break;
 
             case 0b10:
               // PKHBT, PKHTB - PKHTB variant
-              _DecodeExecute32_0101_0110_0_x0(instr, pc);
+              _DecodeExecute32_PKHBT_PKHTB_T1(instr, pc);
               break;
 
             case 0b01:
@@ -9489,22 +9489,22 @@ private:
         if (!S) {
           if (Rn != 0b1101) {
             // ADD (register) — ADD, rotate right with extend variant
-            _DecodeExecute32_0101_1000_x_xxxx(instr, pc);
+            _DecodeExecute32_ADD_register_T3(instr, pc);
           } else {
             // ADD (SP plus register) — ADD, rotate right with extend variant
-            _DecodeExecute32_0101_1000_x_1101(instr, pc);
+            _DecodeExecute32_ADD_SP_plus_register_T3(instr, pc);
           }
         } else {
           if (Rd == 0b1111) {
             // CMN (register)
-            _DecodeExecute32_0101_1000_1_1111(instr, pc);
+            _DecodeExecute32_CMN_register_T2(instr, pc);
           } else {
             if (Rn != 0b1101) {
               // ADD (register) — ADDS, rotate right with extend variant
-              _DecodeExecute32_0101_1000_x_xxxx(instr, pc);
+              _DecodeExecute32_ADD_register_T3(instr, pc);
             } else {
               // ADD (SP plus register) — ADDS, rotate right with extend variant
-              _DecodeExecute32_0101_1000_x_1101(instr, pc);
+              _DecodeExecute32_ADD_SP_plus_register_T3(instr, pc);
             }
           }
         }
@@ -9512,34 +9512,34 @@ private:
 
       case 0b1010:
         // ADC (register)
-        _DecodeExecute32_0101_1010(instr, pc);
+        _DecodeExecute32_ADC_register_T2(instr, pc);
         break;
 
       case 0b1011:
         // SBC (register)
-        _DecodeExecute32_0101_1011(instr, pc);
+        _DecodeExecute32_SBC_register_T2(instr, pc);
         break;
 
       case 0b1101:
         if (!S) {
           if (Rn != 0b1101) {
             // SUB (register) — SUB, rotate right with extend variant
-            _DecodeExecute32_0101_1101_x_xxxx(instr, pc);
+            _DecodeExecute32_SUB_register_T2(instr, pc);
           } else {
             // SUB (SP minus register) — SUB, rotate right with extend variant
-            _DecodeExecute32_0101_1101_x_1101(instr, pc);
+            _DecodeExecute32_SUB_SP_minus_register_T1(instr, pc);
           }
         } else {
           if (Rd == 0b1111) {
             // CMP (register)
-            _DecodeExecute32_0101_1101_1_1111(instr, pc);
+            _DecodeExecute32_CMP_immediate_T2(instr, pc);
           } else {
             if (Rn != 0b1101) {
               // SUB (register) — SUBS, rotate right with extend variant
-              _DecodeExecute32_0101_1101_x_xxxx(instr, pc);
+              _DecodeExecute32_SUB_register_T2(instr, pc);
             } else {
               // SUB (SP minus register) — SUBS, rotate right with extend variant
-              _DecodeExecute32_0101_1101_x_1101(instr, pc);
+              _DecodeExecute32_SUB_SP_minus_register_T1(instr, pc);
             }
           }
         }
@@ -9547,7 +9547,7 @@ private:
 
       case 0b1110:
         // RSB (register)
-        _DecodeExecute32_0101_1110(instr, pc);
+        _DecodeExecute32_RSB_register_T1(instr, pc);
         break;
 
       case 0b0101:
@@ -9564,10 +9564,10 @@ private:
     }
   }
 
-  /* _DecodeExecute32_0101_1110 {{{4
-   * --------------------------
+  /* _DecodeExecute32_RSB_register_T1 {{{4
+   * --------------------------------
    */
-  void _DecodeExecute32_0101_1110(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_RSB_register_T1(uint32_t instr, uint32_t pc) {
     // RSB (register) § C2.4.136 T1
     // ---- DECODE --------------------------------------------------
     uint32_t S    = GETBITS(instr>>16, 4, 4);
@@ -9594,10 +9594,10 @@ private:
     _Exec_RSB_register(d, n, m, setflags, shiftT, shiftN);
   }
 
-  /* _DecodeExecute32_0101_1101_1_1111 {{{4
+  /* _DecodeExecute32_CMP_immediate_T2 {{{4
    * ---------------------------------
    */
-  void _DecodeExecute32_0101_1101_1_1111(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_CMP_immediate_T2(uint32_t instr, uint32_t pc) {
     // CMP (immediate) § C2.4.30 T2
     // ---- DECODE --------------------------------------------------
     uint32_t i    = GETBITS(instr>>16,10,10);
@@ -9618,10 +9618,10 @@ private:
     _Exec_CMP_immediate(n, imm32);
   }
 
-  /* _DecodeExecute32_0101_1101_x_1101 {{{4
-   * ---------------------------------
+  /* _DecodeExecute32_SUB_SP_minus_register_T1 {{{4
+   * -----------------------------------------
    */
-  void _DecodeExecute32_0101_1101_x_1101(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_SUB_SP_minus_register_T1(uint32_t instr, uint32_t pc) {
     // SUB (SP minus register) § C2.4.197 T1
     // ---- DECODE --------------------------------------------------
     uint32_t S    = GETBITS(instr>>16, 4, 4);
@@ -9650,10 +9650,10 @@ private:
     _Exec_SUB_SP_minus_register(d, m, setflags, shiftT, shiftN);
   }
 
-  /* _DecodeExecute32_0101_1101_x_xxxx {{{4
-   * ---------------------------------
+  /* _DecodeExecute32_SUB_register_T2 {{{4
+   * --------------------------------
    */
-  void _DecodeExecute32_0101_1101_x_xxxx(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_SUB_register_T2(uint32_t instr, uint32_t pc) {
     // SUB (register) § C2.4.200 T2
     // ---- DECODE --------------------------------------------------
     uint32_t S    = GETBITS(instr>>16, 4, 4);
@@ -9682,18 +9682,18 @@ private:
     _Exec_SUB_register(d, n, m, setflags, shiftT, shiftN);
   }
 
-  /* _DecodeExecute32_0101_0110_0_x0 {{{4
+  /* _DecodeExecute32_PKHBT_PKHTB_T1 {{{4
    * -------------------------------
    */
-  void _DecodeExecute32_0101_0110_0_x0(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_PKHBT_PKHTB_T1(uint32_t instr, uint32_t pc) {
     // PKHBT, PKHTB § C2.4.105 T1
     TODO_DEC(); // DSP
   }
 
-  /* _DecodeExecute32_0101_1010 {{{4
-   * --------------------------
+  /* _DecodeExecute32_ADC_register_T2 {{{4
+   * --------------------------------
    */
-  void _DecodeExecute32_0101_1010(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_ADC_register_T2(uint32_t instr, uint32_t pc) {
     // ADC (register) § C2.4.2 T2
     // ---- DECODE --------------------------------------------------
     uint32_t S    = GETBITS(instr>>16, 4, 4);
@@ -9720,10 +9720,10 @@ private:
     _Exec_ADC_register(d, n, m, setflags, shiftT, shiftN);
   }
   
-  /* _DecodeExecute32_0101_1011 {{{4
+  /* _DecodeExecute32_SBC_register_T2 {{{4
    * --------------------------
    */
-  void _DecodeExecute32_0101_1011(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_SBC_register_T2(uint32_t instr, uint32_t pc) {
     // SBC (register) § C2.4.141 T2
     // ---- DECODE --------------------------------------------------
     uint32_t S    = GETBITS(instr>>16, 4, 4);
@@ -9750,10 +9750,10 @@ private:
     _Exec_SBC_register(d, n, m, setflags, shiftT, shiftN);
   }
   
-  /* _DecodeExecute32_0101_1000_1_1111 {{{4
-   * ---------------------------------
+  /* _DecodeExecute32_CMN_register_T2 {{{4
+   * --------------------------------
    */
-  void _DecodeExecute32_0101_1000_1_1111(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_CMN_register_T2(uint32_t instr, uint32_t pc) {
     // CMN (register) § C2.4.29 T2
     // ---- DECODE --------------------------------------------------
     uint32_t Rn   = GETBITS(instr>>16, 0, 3);
@@ -9776,10 +9776,10 @@ private:
     _Exec_CMN_register(n, m, shiftT, shiftN);
   }
   
-  /* _DecodeExecute32_0101_1000_x_1101 {{{4
-   * ---------------------------------
+  /* _DecodeExecute32_ADD_SP_plus_register_T3 {{{4
+   * ----------------------------------------
    */
-  void _DecodeExecute32_0101_1000_x_1101(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_ADD_SP_plus_register_T3(uint32_t instr, uint32_t pc) {
     // ADD (SP plus register) § C2.4.4 T3
     // ---- DECODE --------------------------------------------------
     uint32_t S    = GETBITS(instr>>16, 4, 4);
@@ -9808,10 +9808,10 @@ private:
     _Exec_ADD_SP_plus_register(d, m, setflags, shiftT, shiftN);
   }
 
-  /* _DecodeExecute32_0101_1000_x_xxxx {{{4
-   * ---------------------------------
+  /* _DecodeExecute32_ADD_register_T3 {{{4
+   * --------------------------------
    */
-  void _DecodeExecute32_0101_1000_x_xxxx(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_ADD_register_T3(uint32_t instr, uint32_t pc) {
     // ADD (register) § C2.4.7 T3
     // ---- DECODE --------------------------------------------------
     uint32_t S    = GETBITS(instr>>16, 4, 4);
@@ -9840,10 +9840,10 @@ private:
     _Exec_ADD_register(d, n, m, setflags, shiftT, shiftN);
   }
 
-  /* _DecodeExecute32_0101_0100_1_1111 {{{4
-   * ---------------------------------
+  /* _DecodeExecute32_TEQ_register_T1 {{{4
+   * --------------------------------
    */
-  void _DecodeExecute32_0101_0100_1_1111(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_TEQ_register_T1(uint32_t instr, uint32_t pc) {
     // TEQ (register) § C2.4.210 T1
     // ---- DECODE --------------------------------------------------
     uint32_t Rn   = GETBITS(instr>>16, 0, 3);
@@ -9867,10 +9867,10 @@ private:
     _Exec_TEQ_register(n, m, shiftT, shiftN);
   }
 
-  /* _DecodeExecute32_0101_0100_x_xxxx {{{4
-   * ---------------------------------
+  /* _DecodeExecute32_EOR_register_T2 {{{4
+   * --------------------------------
    */
-  void _DecodeExecute32_0101_0100_x_xxxx(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_EOR_register_T2(uint32_t instr, uint32_t pc) {
     // EOR (register) § C2.4.37 T2
     // ---- DECODE --------------------------------------------------
     uint32_t S    = GETBITS(instr>>16, 4, 4);
@@ -9899,8 +9899,8 @@ private:
     _Exec_EOR_register(d, n, m, setflags, shiftT, shiftN);
   }
 
-  /* _DecodeExecute32_0101_0011_x_1111 {{{4
-   * ---------------------------------
+  /* _DecodeExecute32_MVN_register_T2 {{{4
+   * --------------------------------
    */
   void _DecodeExecute32_0101_0011_x_1111(uint32_t instr, uint32_t pc) {
     // MVN (register) § C2.4.99 T2
@@ -9928,10 +9928,10 @@ private:
     _Exec_MVN_register(d, m, setflags, shiftT, shiftN);
   }
 
-  /* _DecodeExecute32_0101_0011_x_xxxx {{{4
-   * ---------------------------------
+  /* _DecodeExecute32_ORN_register_T1 {{{4
+   * --------------------------------
    */
-  void _DecodeExecute32_0101_0011_x_xxxx(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_ORN_register_T1(uint32_t instr, uint32_t pc) {
     // ORN (register) § C2.4.102 T1
     // ---- DECODE --------------------------------------------------
     uint32_t S    = GETBITS(instr>>16, 4, 4);
@@ -9960,10 +9960,10 @@ private:
     _Exec_ORN_register(d, n, m, setflags, shiftT, shiftN);
   }
 
-  /* _DecodeExecute32_0101_0010_x_1111 {{{4
-   * ---------------------------------
+  /* _DecodeExecute32_MOV_register_T3 {{{4
+   * --------------------------------
    */
-  void _DecodeExecute32_0101_0010_x_1111(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_MOV_register_T3(uint32_t instr, uint32_t pc) {
     // MOV (register) § C2.4.90 T3
     // ---- DECODE --------------------------------------------------
     uint32_t S    = GETBITS(instr>>16, 4, 4);
@@ -9993,10 +9993,10 @@ private:
     _Exec_MOV_register(d, m, setflags, shiftT, shiftN);
   }
 
-  /* _DecodeExecute32_0101_0001 {{{4
-   * --------------------------
+  /* _DecodeExecute32_BIC_register_T2 {{{4
+   * --------------------------------
    */
-  void _DecodeExecute32_0101_0001(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_BIC_register_T2(uint32_t instr, uint32_t pc) {
     // BIC (register) § C2.4.19 T2
     // ---- DECODE --------------------------------------------------
     uint32_t S    = GETBITS(instr>>16, 4, 4);
@@ -10023,10 +10023,10 @@ private:
     _Exec_BIC_register(d, n, m, setflags, shiftT, shiftN);
   }
 
-  /* _DecodeExecute32_0101_0000_1_1111 {{{4
-   * ---------------------------------
+  /* _DecodeExecute32_TST_register_T2 {{{4
+   * --------------------------------
    */
-  void _DecodeExecute32_0101_0000_1_1111(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_TST_register_T2(uint32_t instr, uint32_t pc) {
     // TST (register) § C2.4.212 T2
     // ---- DECODE --------------------------------------------------
     uint32_t Rn   = GETBITS(instr>>16, 0, 3);
@@ -10049,10 +10049,10 @@ private:
     _Exec_TST_register(n, m, shiftT, shiftN);
   }
 
-  /* _DecodeExecute32_0101_0000_AND_reg {{{4
-   * ----------------------------------
+  /* _DecodeExecute32_AND_register_T2 {{{4
+   * --------------------------------
    */
-  void _DecodeExecute32_0101_0000_AND_reg(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_AND_register_T2(uint32_t instr, uint32_t pc) {
     // AND (register) § C2.4.10 T2
     // ---- DECODE --------------------------------------------------
     uint32_t S    = GETBITS(instr>>16, 4, 4);
@@ -10079,10 +10079,10 @@ private:
     _Exec_AND_register(d, n, m, setflags, shiftT, shiftN);
   }
 
-  /* _DecodeExecute32_0101_0010_x_xxxx {{{4
-   * ---------------------------------
+  /* _DecodeExecute32_ORR_register_T2 {{{4
+   * --------------------------------
    */
-  void _DecodeExecute32_0101_0010_x_xxxx(uint32_t instr, uint32_t pc)  {
+  void _DecodeExecute32_ORR_register_T2(uint32_t instr, uint32_t pc)  {
     // ORR (register) § C2.4.104 T2
     // ---- DECODE --------------------------------------------------
     uint32_t S    = GETBITS(instr>>16, 4, 4);
@@ -10134,18 +10134,18 @@ private:
 
       case 0b1'1:
         // BL
-        _DecodeExecute32_10xx_11(instr, pc);
+        _DecodeExecute32_BL_T1(instr, pc);
         break;
 
       case 0b0'1:
         // B — T4 variant
-        _DecodeExecute32_10xx_01(instr, pc);
+        _DecodeExecute32_B_T4(instr, pc);
         break;
 
       case 0b0'0:
         if ((op1 & 0b1110) != 0b1110) {
           // B - T3 variant
-          _DecodeExecute32_10xx_00_xxx(instr, pc);
+          _DecodeExecute32_B_T3(instr, pc);
         } else {
           if (!(op1 & BIT(0))) {
             if (!op0) {
@@ -10153,7 +10153,7 @@ private:
                 case 0b00:
                 case 0b01:
                   // MSR (register)
-                  _DecodeExecute32_100x_00_xxx0_0x(instr, pc);
+                  _DecodeExecute32_MSR_register_T1(instr, pc);
                   break;
 
                 case 0b10:
@@ -10190,7 +10190,7 @@ private:
                 case 0b10:
                 case 0b11:
                   // MRS
-                  _DecodeExecute32_100x_00_1_1x(instr, pc);
+                  _DecodeExecute32_MRS_T1(instr, pc);
                   break;
 
                 default:
@@ -10223,10 +10223,10 @@ private:
     }
   }
 
-  /* _DecodeExecute32_100x_00_1_1x {{{4
-   * -----------------------------
+  /* _DecodeExecute32_MRS_T1 {{{4
+   * -----------------------
    */
-  void _DecodeExecute32_100x_00_1_1x(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_MRS_T1(uint32_t instr, uint32_t pc) {
     // MRS § C2.4.95 T1
     // ---- DECODE --------------------------------------------------
     uint32_t Rd     = GETBITS(instr    , 8,11);
@@ -10257,7 +10257,7 @@ private:
         break;
 
       case 0b1'1:
-        _DecodeExecute32_101x_00_1_11_1(instr, pc);
+        _DecodeExecute32_UDF_T2(instr, pc);
         break;
 
       default:
@@ -10265,10 +10265,10 @@ private:
     }
   }
 
-  /* _DecodeExecute32_101x_00_1_11_1 {{{4
-   * -------------------------------
+  /* _DecodeExecute32_UDF_T2 {{{4
+   * -----------------------
    */
-  void _DecodeExecute32_101x_00_1_11_1(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_UDF_T2(uint32_t instr, uint32_t pc) {
     // UDF § C2.4.218 T2
     // ---- DECODE --------------------------------------------------
     uint32_t imm4   = GETBITS(instr>>16, 0, 3);
@@ -10298,47 +10298,47 @@ private:
         switch (option) {
           case 0b0000:
             // NOP
-            _DecodeExecute32_100x_00_xxx0_10_000_0000_0000(instr, pc);
+            _DecodeExecute32_NOP_T2(instr, pc);
             break;
           case 0b0001:
             // YIELD
-            _DecodeExecute32_100x_00_xxx0_10_000_0000_0001(instr, pc);
+            _DecodeExecute32_YIELD_T2(instr, pc);
             break;
           case 0b0010:
             // WFE
-            _DecodeExecute32_100x_00_xxx0_10_000_0000_0010(instr, pc);
+            _DecodeExecute32_WFE_T2(instr, pc);
             break;
           case 0b0011:
             // WFI
-            _DecodeExecute32_100x_00_xxx0_10_000_0000_0011(instr, pc);
+            _DecodeExecute32_WFI_T2(instr, pc);
             break;
           case 0b0100:
             // SEV
-            _DecodeExecute32_100x_00_xxx0_10_000_0000_0100(instr, pc);
+            _DecodeExecute32_SEV_T2(instr, pc);
             break;
           default:
             // Reserved hints behave as NOP.
-            _DecodeExecute32_100x_00_xxx0_10_000_xxxx(instr, pc);
+            _DecodeExecute32_ReservedHint(instr, pc);
             break;
         }
         break;
 
       case 0b1111:
         // DBG
-        _DecodeExecute32_100x_00_xxx0_10_000_1111(instr, pc);
+        _DecodeExecute32_DBG_T1(instr, pc);
         break;
 
       default:
         // Reserved hints behave as NOP.
-        _DecodeExecute32_100x_00_xxx0_10_000_xxxx(instr, pc);
+        _DecodeExecute32_ReservedHint(instr, pc);
         break;
     }
   }
 
-  /* _DecodeExecute32_100x_00_xxx0_10_000_1111 {{{4
-   * -----------------------------------------
+  /* _DecodeExecute32_DBG_T1 {{{4
+   * -----------------------
    */
-  void _DecodeExecute32_100x_00_xxx0_10_000_1111(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_DBG_T1(uint32_t instr, uint32_t pc) {
     // DBG § C2.4.33 T1
     // ---- DECODE --------------------------------------------------
     uint32_t option   = GETBITS(instr, 0, 3);
@@ -10352,10 +10352,10 @@ private:
     _Exec_DBG(option);
   }
 
-  /* _DecodeExecute32_100x_00_xxx0_10_000_0000_0000 {{{4
-   * ----------------------------------------------
+  /* _DecodeExecute32_NOP_T2 {{{4
+   * -----------------------
    */
-  void _DecodeExecute32_100x_00_xxx0_10_000_0000_0000(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_NOP_T2(uint32_t instr, uint32_t pc) {
     // NOP § C2.4.100 T2
     // ---- DECODE --------------------------------------------------
 
@@ -10370,10 +10370,10 @@ private:
     _Exec_NOP();
   }
 
-  /* _DecodeExecute32_100x_00_xxx0_10_000_0000_0001 {{{4
-   * ----------------------------------------------
+  /* _DecodeExecute32_YIELD_T2 {{{4
+   * -------------------------
    */
-  void _DecodeExecute32_100x_00_xxx0_10_000_0000_0001(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_YIELD_T2(uint32_t instr, uint32_t pc) {
     // YIELD § C2.4.306 T2
     // ---- DECODE --------------------------------------------------
 
@@ -10388,10 +10388,10 @@ private:
     _Exec_YIELD();
   }
 
-  /* _DecodeExecute32_100x_00_xxx0_10_000_0000_0010 {{{4
-   * ----------------------------------------------
+  /* _DecodeExecute32_WFE_T2 {{{4
+   * -----------------------
    */
-  void _DecodeExecute32_100x_00_xxx0_10_000_0000_0010(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_WFE_T2(uint32_t instr, uint32_t pc) {
     // WFE § C2.4.304 T2
     // ---- DECODE --------------------------------------------------
 
@@ -10406,10 +10406,10 @@ private:
     _Exec_WFE();
   }
 
-  /* _DecodeExecute32_100x_00_xxx0_10_000_0000_0011 {{{4
-   * ----------------------------------------------
+  /* _DecodeExecute32_WFI_T2 {{{4
+   * -----------------------
    */
-  void _DecodeExecute32_100x_00_xxx0_10_000_0000_0011(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_WFI_T2(uint32_t instr, uint32_t pc) {
     // WFI § C2.4.305 T2
     // ---- DECODE --------------------------------------------------
 
@@ -10424,10 +10424,10 @@ private:
     _Exec_WFI();
   }
 
-  /* _DecodeExecute32_100x_00_xxx0_10_000_0000_0100 {{{4
-   * ----------------------------------------------
+  /* _DecodeExecute32_SEV_T2 {{{4
+   * -----------------------
    */
-  void _DecodeExecute32_100x_00_xxx0_10_000_0000_0100(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_SEV_T2(uint32_t instr, uint32_t pc) {
     // SEV § C2.4.145 T2
     // ---- DECODE --------------------------------------------------
 
@@ -10442,23 +10442,10 @@ private:
     _Exec_SEV();
   }
 
-  /* _DecodeExecute32_100x_00_xxx0_10_000_xxxx {{{4
-   * -----------------------------------------
-   */
-  void _DecodeExecute32_100x_00_xxx0_10_000_xxxx(uint32_t instr, uint32_t pc) {
-    // Reserved hint, behaves as NOP.
-    // ---- DECODE --------------------------------------------------
-
-    TRACEI(RSVD_HINT, UNK32, "");
-
-    // ---- EXECUTE -------------------------------------------------
-    _Exec_NOP();
-  }
-
-  /* _DecodeExecute32_100x_00_xxx0_0x {{{4
+  /* _DecodeExecute32_MSR_register_T1 {{{4
    * --------------------------------
    */
-  void _DecodeExecute32_100x_00_xxx0_0x(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_MSR_register_T1(uint32_t instr, uint32_t pc) {
     // MSR (register) § C2.4.96 T1
     // ---- DECODE --------------------------------------------------
     uint32_t Rn     = GETBITS(instr>>16, 0, 3);
@@ -10482,10 +10469,10 @@ private:
     _Exec_MSR_register(n, mask, SYSm);
   }
 
-  /* _DecodeExecute32_10xx_00_xxx {{{4
-   * ----------------------------
+  /* _DecodeExecute32_B_T3 {{{4
+   * ---------------------
    */
-  void _DecodeExecute32_10xx_00_xxx(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_B_T3(uint32_t instr, uint32_t pc) {
     // B § C2.4.15 T3
     // ---- DECODE --------------------------------------------------
     uint32_t S      = GETBITS(instr>>16,10,10);
@@ -10509,10 +10496,10 @@ private:
     _Exec_B(imm32);
   }
 
-  /* _DecodeExecute32_10xx_01 {{{4
-   * ------------------------
+  /* _DecodeExecute32_B_T4 {{{4
+   * ---------------------
    */
-  void _DecodeExecute32_10xx_01(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_B_T4(uint32_t instr, uint32_t pc) {
     // B § C2.4.15 T4
     // ---- DECODE --------------------------------------------------
     uint32_t S      = GETBITS(instr>>16,10,10);
@@ -10532,10 +10519,10 @@ private:
     _Exec_B(imm32);
   }
 
-  /* _DecodeExecute32_10xx_11 {{{4
-   * ------------------------
+  /* _DecodeExecute32_BL_T1 {{{4
+   * ----------------------
    */
-  void _DecodeExecute32_10xx_11(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_BL_T1(uint32_t instr, uint32_t pc) {
     // BL § C2.4.21 T1
     // ---- DECODE --------------------------------------------------
     uint32_t S      = GETBITS(instr>>16,10,10);
@@ -10572,37 +10559,37 @@ private:
       case 0b0000:
         if (!S) {
           // AND (immediate) — AND variant
-          _DecodeExecute32_10x0_0_0000_0(instr, pc);
+          _DecodeExecute32_AND_immediate_T1(instr, pc);
         } else if (Rd != 15) {
           // AND (immediate) — ANDS variant
-          _DecodeExecute32_10x0_0_0000_0(instr, pc);
+          _DecodeExecute32_AND_immediate_T1(instr, pc);
         } else {
           // TST (immediate)
-          _DecodeExecute32_10x0_0_0000_1_1111(instr, pc);
+          _DecodeExecute32_TST_immediate_T1(instr, pc);
         }
         break;
 
       case 0b0001:
         // BIC (immediate)
-        _DecodeExecute32_10x0_0_0001(instr, pc);
+        _DecodeExecute32_BIC_immediate_T1(instr, pc);
         break;
 
       case 0b0010:
         if (!S) {
           if (Rn != 15) {
             // ORR (immediate) — ORR variant
-            _DecodeExecute32_10x0_0_0010_0_xxxx(instr, pc);
+            _DecodeExecute32_ORR_immediate_T1(instr, pc);
           } else {
             // MOV (immediate) — MOV variant
-            _DecodeExecute32_10x0_0_0010_0_1111(instr, pc);
+            _DecodeExecute32_MOV_immediate_T2(instr, pc);
           }
         } else {
           if (Rn != 15) {
             // ORR (immediate) — ORRS variant
-            _DecodeExecute32_10x0_0_0010_0_xxxx(instr, pc);
+            _DecodeExecute32_ORR_immediate_T1(instr, pc);
           } else {
             // MOV (immediate) — MOVS variant
-            _DecodeExecute32_10x0_0_0010_0_1111(instr, pc);
+            _DecodeExecute32_MOV_immediate_T2(instr, pc);
           }
         }
         break;
@@ -10611,18 +10598,18 @@ private:
         if (!S) {
           if (Rn != 15) {
             // ORN (immediate) — Non flag setting variant
-            _DecodeExecute32_10x0_0_0011_0_xxxx(instr, pc);
+            _DecodeExecute32_ORN_immediate_T1(instr, pc);
           } else {
             // MVN (immediate) — MVN variant
-            _DecodeExecute32_10x0_0_0011_0_1111(instr, pc);
+            _DecodeExecute32_MVN_immediate_T1(instr, pc);
           }
         } else {
           if (Rn != 15) {
             // ORN (immediate) — Flag setting variant
-            _DecodeExecute32_10x0_0_0011_0_xxxx(instr, pc);
+            _DecodeExecute32_ORN_immediate_T1(instr, pc);
           } else {
             // MVN (immediate) — MVNS variant
-            _DecodeExecute32_10x0_0_0011_0_1111(instr, pc);
+            _DecodeExecute32_MVN_immediate_T1(instr, pc);
           }
         }
         break;
@@ -10630,14 +10617,14 @@ private:
       case 0b0100:
         if (!S) {
           // EOR (immediate) — EOR variant
-          _DecodeExecute32_10x0_0_0100_0(instr, pc);
+          _DecodeExecute32_EOR_immediate_T1(instr, pc);
         } else {
           if (Rd != 15) {
             // EOR (immediate) — EORS variant
-            _DecodeExecute32_10x0_0_0100_0(instr, pc);
+            _DecodeExecute32_EOR_immediate_T1(instr, pc);
           } else {
             // TEQ (immediate)
-            _DecodeExecute32_10x0_0_0100_1_1111(instr, pc);
+            _DecodeExecute32_TEQ_immediate_T1(instr, pc);
           }
         }
         break;
@@ -10655,61 +10642,61 @@ private:
         if (!S) {
           if (Rn != 0b1101) {
             // ADD (immediate) — ADD variant
-            _DecodeExecute32_10x0_0_1000_0_xxxx(instr, pc);
+            _DecodeExecute32_ADD_immediate_T3(instr, pc);
           } else {
             // ADD (SP plus immediate) — ADD variant
-            _DecodeExecute32_10x0_0_1000_x_xxxx(instr, pc);
+            _DecodeExecute32_ADD_SP_plus_immediate_T3(instr, pc);
           }
         } else if (Rd == 15) {
           // CMN (immediate)
-          _DecodeExecute32_10x0_0_1000_1_1111(instr, pc);
+          _DecodeExecute32_CMN_immediate_T1(instr, pc);
         } else {
           if (Rn != 0b1101) {
             // ADD (immediate) — ADDS variant
-            _DecodeExecute32_10x0_0_1000_0_xxxx(instr, pc);
+            _DecodeExecute32_ADD_immediate_T3(instr, pc);
           } else {
             // ADD (SP plus immediate) — ADDS variant
-            _DecodeExecute32_10x0_0_1000_x_xxxx(instr, pc);
+            _DecodeExecute32_ADD_SP_plus_immediate_T3(instr, pc);
           }
         }
         break;
 
       case 0b1010:
         // ADC (immediate)
-        _DecodeExecute32_10x0_0_1010(instr, pc);
+        _DecodeExecute32_ADC_immediate_T1(instr, pc);
         break;
 
       case 0b1011:
         // SBC (immediate)
-        _DecodeExecute32_10x0_0_1011(instr, pc);
+        _DecodeExecute32_SBC_immediate_T1(instr, pc);
         break;
 
       case 0b1101:
         if (!S) {
           if (Rn != 0b1101) {
             // SUB (immediate) — SUB variant
-            _DecodeExecute32_10x0_0_1101_0_xxxx(instr, pc);
+            _DecodeExecute32_SUB_immediate_T3(instr, pc);
           } else {
             // SUB (SP minus immediate) — SUB variant
-            _DecodeExecute32_10x0_0_1101_x_1101(instr, pc);
+            _DecodeExecute32_SUB_SP_minus_immediate_T2(instr, pc);
           }
         } else if (Rd == 15) {
           // CMP (immediate)
-          _DecodeExecute32_10x0_0_1101_1_1111(instr, pc);
+          _DecodeExecute32_CMP_immediate_T2(instr, pc);
         } else {
           if (Rn != 0b1101) {
             // SUB (immediate) — SUBS variant
-            _DecodeExecute32_10x0_0_1101_0_xxxx(instr, pc);
+            _DecodeExecute32_SUB_immediate_T3(instr, pc);
           } else {
             // SUB (SP minus immediate) — SUBS variant
-            _DecodeExecute32_10x0_0_1101_x_1101(instr, pc);
+            _DecodeExecute32_SUB_SP_minus_immediate_T2(instr, pc);
           }
         }
         break;
 
       case 0b1110:
         // RSB (immediate)
-        _DecodeExecute32_10x0_0_1110(instr, pc);
+        _DecodeExecute32_RSB_immediate_T2(instr, pc);
         break;
 
       default:
@@ -10717,10 +10704,10 @@ private:
     }
   }
 
-  /* _DecodeExecute32_10x0_0_1110 {{{4
-   * ----------------------------
+  /* _DecodeExecute32_RSB_immediate_T2 {{{4
+   * ---------------------------------
    */
-  void _DecodeExecute32_10x0_0_1110(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_RSB_immediate_T2(uint32_t instr, uint32_t pc) {
     // RSB (immediate) § C2.4.135 T2
     // ---- DECODE --------------------------------------------------
     uint32_t i    = GETBITS(instr>>16,10,10);
@@ -10745,10 +10732,10 @@ private:
     _Exec_RSB_immediate(d, n, setflags, imm32);
   }
 
-  /* _DecodeExecute32_10x0_0_1101_1_1111 {{{4
-   * -----------------------------------
+  /* _DecodeExecute32_CMP_immediate_T2 {{{4
+   * ---------------------------------
    */
-  void _DecodeExecute32_10x0_0_1101_1_1111(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_CMP_immediate_T2(uint32_t instr, uint32_t pc) {
     // CMP (immediate) § C2.4.30 T2
     // ---- DECODE --------------------------------------------------
     uint32_t i    = GETBITS(instr>>16,10,10);
@@ -10769,10 +10756,10 @@ private:
     _Exec_CMP_immediate(n, imm32);
   }
 
-  /* _DecodeExecute32_10x0_0_1101_x_1101 {{{4
-   * -----------------------------------
+  /* _DecodeExecute32_SUB_SP_minus_immediate_T2 {{{4
+   * ------------------------------------------
    */
-  void _DecodeExecute32_10x0_0_1101_x_1101(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_SUB_SP_minus_immediate_T2(uint32_t instr, uint32_t pc) {
     // SUB (SP minus immediate) § C2.4.196 T2
     // ---- DECODE --------------------------------------------------
     uint32_t i    = GETBITS(instr>>16,10,10);
@@ -10797,10 +10784,10 @@ private:
     _Exec_SUB_SP_minus_immediate(d, setflags, imm32);
   }
 
-  /* _DecodeExecute32_10x0_0_1000_1_1111 {{{4
-   * -----------------------------------
+  /* _DecodeExecute32_CMN_immediate_T1 {{{4
+   * ---------------------------------
    */
-  void _DecodeExecute32_10x0_0_1000_1_1111(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_CMN_immediate_T1(uint32_t instr, uint32_t pc) {
     // CMN (immediate) § C2.4.28 T1
     // ---- DECODE --------------------------------------------------
     uint32_t i    = GETBITS(instr>>16,10,10);
@@ -10821,10 +10808,10 @@ private:
     _Exec_CMN_immediate(n, imm32);
   }
  
-  /* _DecodeExecute32_10x0_0_1011 {{{4
-   * ----------------------------
+  /* _DecodeExecute32_SBC_immediate_T1 {{{4
+   * ---------------------------------
    */
-  void _DecodeExecute32_10x0_0_1011(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_SBC_immediate_T1(uint32_t instr, uint32_t pc) {
     // SBC (immediate) § C2.4.140 T1
     // ---- DECODE --------------------------------------------------
     uint32_t i    = GETBITS(instr>>16,10,10);
@@ -10849,10 +10836,10 @@ private:
     _Exec_SBC_immediate(d, n, setflags, imm32);
   }
  
-  /* _DecodeExecute32_10x0_0_1010 {{{4
-   * ----------------------------
+  /* _DecodeExecute32_ADC_immediate_T1 {{{4
+   * ---------------------------------
    */
-  void _DecodeExecute32_10x0_0_1010(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_ADC_immediate_T1(uint32_t instr, uint32_t pc) {
     // ADC (immediate) § C2.4.1 T1
     // ---- DECODE --------------------------------------------------
     uint32_t i    = GETBITS(instr>>16,10,10);
@@ -10877,10 +10864,10 @@ private:
     _Exec_ADC_immediate(d, n, setflags, imm32);
   }
  
-  /* _DecodeExecute32_10x0_0_1000_x_xxxx {{{4
-   * -----------------------------------
+  /* _DecodeExecute32_ADD_SP_plus_immediate_T3 {{{4
+   * -----------------------------------------
    */
-  void _DecodeExecute32_10x0_0_1000_x_xxxx(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_ADD_SP_plus_immediate_T3(uint32_t instr, uint32_t pc) {
     // ADD (SP plus immediate) § C2.4.3 T3
     // ---- DECODE --------------------------------------------------
     uint32_t i    = GETBITS(instr>>16,10,10);
@@ -10905,10 +10892,10 @@ private:
     _Exec_ADD_SP_plus_immediate(d, setflags, imm32);
   }
  
-  /* _DecodeExecute32_10x0_0_0100_1_1111 {{{4
-   * -----------------------------------
+  /* _DecodeExecute32_TEQ_immediate_T1 {{{4
+   * ---------------------------------
    */
-  void _DecodeExecute32_10x0_0_0100_1_1111(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_TEQ_immediate_T1(uint32_t instr, uint32_t pc) {
     // TEQ (immediate) § C2.4.209 T1
     // ---- DECODE --------------------------------------------------
     uint32_t i    = GETBITS(instr>>16,10,10);
@@ -10929,10 +10916,10 @@ private:
     _Exec_TEQ_immediate(n, imm32, carry);
   }
 
-  /* _DecodeExecute32_10x0_0_0100_0 {{{4
-   * ------------------------------
+  /* _DecodeExecute32_EOR_immediate_T1 {{{4
+   * ---------------------------------
    */
-  void _DecodeExecute32_10x0_0_0100_0(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_EOR_immediate_T1(uint32_t instr, uint32_t pc) {
     // EOR (immediate) § C2.4.36 T1
     // ---- DECODE --------------------------------------------------
     uint32_t i    = GETBITS(instr>>16,10,10);
@@ -10959,10 +10946,10 @@ private:
     _Exec_EOR_immediate(d, n, setflags, imm32, carry);
   }
 
-  /* _DecodeExecute32_10x0_0_0011_0_xxxx {{{4
-   * -----------------------------------
+  /* _DecodeExecute32_MVN_immediate_T1 {{{4
+   * ---------------------------------
    */
-  void _DecodeExecute32_10x0_0_0011_0_1111(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_MVN_immediate_T1(uint32_t instr, uint32_t pc) {
     // MVN (immediate) § C2.4.98 T1
     // ---- DECODE --------------------------------------------------
     uint32_t i    = GETBITS(instr>>16,10,10);
@@ -10985,10 +10972,10 @@ private:
     _Exec_MVN_immediate(d, setflags, imm32, carry);
   }
 
-  /* _DecodeExecute32_10x0_0_0011_0_xxxx {{{4
-   * -----------------------------------
+  /* _DecodeExecute32_ORN_immediate_T1 {{{4
+   * ---------------------------------
    */
-  void _DecodeExecute32_10x0_0_0011_0_xxxx(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_ORN_immediate_T1(uint32_t instr, uint32_t pc) {
     // ORN (immediate) § C2.4.101 T1
     // ---- DECODE --------------------------------------------------
     uint32_t i    = GETBITS(instr>>16,10,10);
@@ -11015,10 +11002,10 @@ private:
     _Exec_ORN_immediate(d, n, setflags, imm32, carry);
   }
 
-  /* _DecodeExecute32_10x0_0_0000_1_1111 {{{4
-   * -----------------------------------
+  /* _DecodeExecute32_TST_immediate_T1 {{{4
+   * ---------------------------------
    */
-  void _DecodeExecute32_10x0_0_0000_1_1111(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_TST_immediate_T1(uint32_t instr, uint32_t pc) {
     // TST (immediate) § C2.4.211 T1
     // ---- DECODE --------------------------------------------------
     uint32_t i    = GETBITS(instr>>16,10,10);
@@ -11038,10 +11025,10 @@ private:
     _Exec_TST_immediate(n, imm32, carry);
   }
 
-  /* _DecodeExecute32_10x0_0_1101_0_xxxx {{{4
-   * -----------------------------------
+  /* _DecodeExecute32_SUB_immediate_T3 {{{4
+   * ---------------------------------
    */
-  void _DecodeExecute32_10x0_0_1101_0_xxxx(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_SUB_immediate_T3(uint32_t instr, uint32_t pc) {
     // SUB (immediate) § C2.4.198 T3
     // ---- DECODE --------------------------------------------------
     uint32_t i    = GETBITS(instr>>16,10,10);
@@ -11068,10 +11055,10 @@ private:
     _Exec_SUB_immediate(d, n, setflags, imm32);
   }
 
-  /* _DecodeExecute32_10x0_0_1000_0_xxxx {{{4
-   * -----------------------------------
+  /* _DecodeExecute32_ADD_immediate_T3 {{{4
+   * ---------------------------------
    */
-  void _DecodeExecute32_10x0_0_1000_0_xxxx(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_ADD_immediate_T3(uint32_t instr, uint32_t pc) {
     // ADD (immediate) § C2.4.5 T3
     // ---- DECODE --------------------------------------------------
     uint32_t i    = GETBITS(instr>>16,10,10);
@@ -11100,10 +11087,10 @@ private:
     _Exec_ADD_immediate(d, n, setflags, imm32);
   }
 
-  /* _DecodeExecute32_10x0_0_0001 {{{4
-   * ----------------------------
+  /* _DecodeExecute32_BIC_immediate_T1 {{{4
+   * ---------------------------------
    */
-  void _DecodeExecute32_10x0_0_0001(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_BIC_immediate_T1(uint32_t instr, uint32_t pc) {
     // BIC (immediate) § C2.4.18 T1
     // ---- DECODE --------------------------------------------------
     uint32_t i    = GETBITS(instr>>16,10,10);
@@ -11129,10 +11116,10 @@ private:
     _Exec_BIC_immediate(d, n, setflags, imm32, carry);
   }
 
-  /* _DecodeExecute32_10x0_0_0010_0_xxxx {{{4
-   * -----------------------------------
+  /* _DecodeExecute32_ORR_immediate_T1 {{{4
+   * ---------------------------------
    */
-  void _DecodeExecute32_10x0_0_0010_0_xxxx(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_ORR_immediate_T1(uint32_t instr, uint32_t pc) {
     // ORR (immediate) § C2.4.103 T1
     // ---- DECODE --------------------------------------------------
     uint32_t i    = GETBITS(instr>>16,10,10);
@@ -11159,10 +11146,10 @@ private:
     _Exec_ORR_immediate(d, n, setflags, imm32, carry);
   }
 
-  /* _DecodeExecute32_10x0_0_0010_0_1111 {{{4
-   * -----------------------------------
+  /* _DecodeExecute32_MOV_immediate_T2 {{{4
+   * ---------------------------------
    */
-  void _DecodeExecute32_10x0_0_0010_0_1111(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_MOV_immediate_T2(uint32_t instr, uint32_t pc) {
     // MOV (immediate) § C2.4.89 T2
     // ---- DECODE --------------------------------------------------
     uint32_t i    = GETBITS(instr>>16,10,10);
@@ -11186,10 +11173,10 @@ private:
     _Exec_MOV_immediate(d, setflags, imm32, carry);
   }
 
-  /* _DecodeExecute32_10x0_0_0000_0 {{{4
-   * ------------------------------
+  /* _DecodeExecute32_AND_immediate_T1 {{{4
+   * ---------------------------------
    */
-  void _DecodeExecute32_10x0_0_0000_0(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_AND_immediate_T1(uint32_t instr, uint32_t pc) {
     // AND (immediate) § C2.4.9 T1
     // ---- DECODE --------------------------------------------------
     uint32_t i    = GETBITS(instr>>16,10,10);
@@ -11267,14 +11254,14 @@ private:
       case 0b0'0:
         if (Rn == 0b1111) {
           // ADR - T3
-          _DecodeExecute32_10x1_0_00x_00_1111(instr, pc);
+          _DecodeExecute32_ADR_T3(instr, pc);
         } else if (Rn == 0b1101) {
           // ADD (SP plus immediate) (T4)
-          _DecodeExecute32_10x1_0_00x_00_1101(instr, pc);
+          _DecodeExecute32_ADD_SP_plus_immediate_T4(instr, pc);
           break;
         } else {
           // ADD (immediate)
-          _DecodeExecute32_10x1_0_00x_00_xxxx(instr, pc);
+          _DecodeExecute32_ADD_immediate_T4(instr, pc);
           break;
         }
         break;
@@ -11288,13 +11275,13 @@ private:
       case 0b1'1:
         if (Rn == 0b1111) {
           // ADR - T2
-          _DecodeExecute32_10x1_0_00x_11_1111(instr, pc);
+          _DecodeExecute32_ADR_T2(instr, pc);
         } else if (Rn == 0b1101) {
           // SUB (SP minus immediate) (T3)
-          _DecodeExecute32_10x1_0_00x_11_1101(instr, pc);
+          _DecodeExecute32_SUB_SP_minus_immediate_T3(instr, pc);
         } else {
           // SUB (immediate)
-          _DecodeExecute32_10x1_0_00x_11_xxxx(instr, pc);
+          _DecodeExecute32_SUB_immediate_T4(instr, pc);
         }
         break;
 
@@ -11303,10 +11290,10 @@ private:
     }
   }
 
-  /* _DecodeExecute32_10x1_0_00x_11_xxxx {{{4
-   * -----------------------------------
+  /* _DecodeExecute32_SUB_immediate_T4 {{{4
+   * ---------------------------------
    */
-  void _DecodeExecute32_10x1_0_00x_11_xxxx(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_SUB_immediate_T4(uint32_t instr, uint32_t pc) {
     // SUB (immediate) § C2.4.198 T4
     // ---- DECODE --------------------------------------------------
     uint32_t i    = GETBITS(instr>>16,10,10);
@@ -11335,10 +11322,10 @@ private:
     _Exec_SUB_immediate(d, n, setflags, imm32);
   }
 
-  /* _DecodeExecute32_10x1_0_00x_00_xxxx {{{4
-   * -----------------------------------
+  /* _DecodeExecute32_ADD_immediate_T4 {{{4
+   * ---------------------------------
    */
-  void _DecodeExecute32_10x1_0_00x_00_xxxx(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_ADD_immediate_T4(uint32_t instr, uint32_t pc) {
     // ADD (immediate) § C2.4.5 T4
     // ---- DECODE --------------------------------------------------
     uint32_t i    = GETBITS(instr>>16,10,10);
@@ -11367,10 +11354,10 @@ private:
     _Exec_ADD_immediate(d, n, setflags, imm32);
   }
 
-  /* _DecodeExecute32_10x1_0_00x_11_1101 {{{4
-   * -----------------------------------
+  /* _DecodeExecute32_SUB_SP_minus_immediate_T3 {{{4
+   * ------------------------------------------
    */
-  void _DecodeExecute32_10x1_0_00x_11_1101(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_SUB_SP_minus_immediate_T3(uint32_t instr, uint32_t pc) {
     // SUB (SP minus immediate) § C2.4.196 T3
     // ---- DECODE --------------------------------------------------
     uint32_t i    = GETBITS(instr>>16,10,10);
@@ -11392,10 +11379,10 @@ private:
     _Exec_SUB_SP_minus_immediate(d, setflags, imm32);
   }
 
-  /* _DecodeExecute32_10x1_0_00x_00_1101 {{{4
-   * -----------------------------------
+  /* _DecodeExecute32_ADD_SP_plus_immediate_T4 {{{4
+   * -----------------------------------------
    */
-  void _DecodeExecute32_10x1_0_00x_00_1101(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_ADD_SP_plus_immediate_T4(uint32_t instr, uint32_t pc) {
     // ADD (SP plus immediate) § C2.4.3 T4
     // ---- DECODE --------------------------------------------------
     uint32_t i    = GETBITS(instr>>16,10,10);
@@ -11417,10 +11404,10 @@ private:
     _Exec_ADD_SP_plus_immediate(d, setflags, imm32);
   }
 
-  /* _DecodeExecute32_10x1_0_00x_00_1111 {{{4
-   * -----------------------------------
+  /* _DecodeExecute32_ADR_T3 {{{4
+   * -----------------------
    */
-  void _DecodeExecute32_10x1_0_00x_00_1111(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_ADR_T3(uint32_t instr, uint32_t pc) {
     // ADR § C2.4.8 T3
     // ---- DECODE --------------------------------------------------
     uint32_t i    = GETBITS(instr>>16,10,10);
@@ -11441,10 +11428,10 @@ private:
     _Exec_ADR(d, imm32, add);
   }
 
-  /* _DecodeExecute32_10x1_0_00x_11_1111 {{{4
-   * -----------------------------------
+  /* _DecodeExecute32_ADR_T2 {{{4
+   * -----------------------
    */
-  void _DecodeExecute32_10x1_0_00x_11_1111(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_ADR_T2(uint32_t instr, uint32_t pc) {
     // ADR § C2.4.8 T2
     // ---- DECODE --------------------------------------------------
     uint32_t i    = GETBITS(instr>>16,10,10);
@@ -11474,17 +11461,17 @@ private:
     uint32_t o1 = GETBITS(instr>>16, 7, 7);
     if (!o1) {
       // MOV (immediate)
-      _DecodeExecute32_10x1_0_010_0(instr, pc);
+      _DecodeExecute32_MOV_immediate_T3(instr, pc);
     } else {
       // MOVT
-      _DecodeExecute32_10x1_0_010_1(instr, pc);
+      _DecodeExecute32_MOVT_T1(instr, pc);
     }
   }
 
-  /* _DecodeExecute32_10x1_0_010_1 {{{4
-   * -----------------------------
+  /* _DecodeExecute32_MOVT_T1 {{{4
+   * ------------------------
    */
-  void _DecodeExecute32_10x1_0_010_1(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_MOVT_T1(uint32_t instr, uint32_t pc) {
     // MOVT § C2.4.92 T1
     // ---- DECODE --------------------------------------------------
     uint32_t i    = GETBITS(instr>>16,10,10);
@@ -11503,10 +11490,10 @@ private:
     _Exec_MOVT(d, imm16);
   }
 
-  /* _DecodeExecute32_10x1_0_010_0 {{{4
-   * -----------------------------
+  /* _DecodeExecute32_MOV_immediate_T3 {{{4
+   * ---------------------------------
    */
-  void _DecodeExecute32_10x1_0_010_0(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_MOV_immediate_T3(uint32_t instr, uint32_t pc) {
     // MOV (immediate) § C2.4.89 T3
     // ---- DECODE --------------------------------------------------
     uint32_t i    = GETBITS(instr>>16,10,10);
@@ -11558,16 +11545,16 @@ private:
 
       case 0b010:
         // SBFX
-        _DecodeExecute32_10x1_0_1_010(instr, pc);
+        _DecodeExecute32_SBFX_T1(instr, pc);
         break;
 
       case 0b011:
         if (Rn != 0b1111) {
           // BFI
-          _DecodeExecute32_1001_0_1_011_xxxx(instr, pc);
+          _DecodeExecute32_BFI_T1(instr, pc);
         } else {
           // BFC
-          _DecodeExecute32_1001_0_1_011_1111(instr, pc);
+          _DecodeExecute32_BFC_T1(instr, pc);
         }
         break;
 
@@ -11588,7 +11575,7 @@ private:
 
       case 0b110:
         // UBFX
-        _DecodeExecute32_10x1_0_1_110(instr, pc);
+        _DecodeExecute32_UBFX_T1(instr, pc);
         break;
 
       case 0b111:
@@ -11601,10 +11588,10 @@ private:
     }
   }
 
-  /* _DecodeExecute32_10x1_0_1_010 {{{4
-   * -----------------------------
+  /* _DecodeExecute32_SBFX_T1 {{{4
+   * ------------------------
    */
-  void _DecodeExecute32_10x1_0_1_010(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_SBFX_T1(uint32_t instr, uint32_t pc) {
     // SBFX § C2.4.142 T1
     // ---- DECODE --------------------------------------------------
     uint32_t Rn       = GETBITS(instr>>16, 0, 3);
@@ -11632,10 +11619,10 @@ private:
     _Exec_SBFX(d, n, lsbit, widthminus1, msbit);
   }
 
-  /* _DecodeExecute32_10x1_0_1_110 {{{4
-   * -----------------------------
+  /* _DecodeExecute32_UBFX_T1 {{{4
+   * ------------------------
    */
-  void _DecodeExecute32_10x1_0_1_110(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_UBFX_T1(uint32_t instr, uint32_t pc) {
     // UBFX § C2.4.217 T1
     // ---- DECODE --------------------------------------------------
     uint32_t Rn       = GETBITS(instr>>16, 0, 3);
@@ -11689,22 +11676,22 @@ private:
 
       case 0b0010:
         // CLREX
-        _DecodeExecute32_1001_00_110_11_0010(instr, pc);
+        _DecodeExecute32_CLREX_T1(instr, pc);
         break;
 
       case 0b0100:
         // DSB
-        _DecodeExecute32_1001_00_110_11_0100(instr, pc);
+        _DecodeExecute32_DSB_T1(instr, pc);
         break;
 
       case 0b0101:
         // DMB
-        _DecodeExecute32_1001_00_110_11_0101(instr, pc);
+        _DecodeExecute32_DMB_T1(instr, pc);
         break;
 
       case 0b0110:
         // ISB
-        _DecodeExecute32_1001_00_110_11_0110(instr, pc);
+        _DecodeExecute32_ISB_T1(instr, pc);
         break;
 
       default:
@@ -11712,10 +11699,10 @@ private:
     }
   }
   
-  /* _DecodeExecute32_1001_00_110_11_0010 {{{4
-   * ------------------------------------
+  /* _DecodeExecute32_CLREX_T1 {{{4
+   * ------------------------
    */
-  void _DecodeExecute32_1001_00_110_11_0010(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_CLREX_T1(uint32_t instr, uint32_t pc) {
     // CLREX § C2.4.26 T1
     // ---- DECODE --------------------------------------------------
     // No additional decoding required.
@@ -11724,10 +11711,10 @@ private:
     _Exec_CLREX();
   }
 
-  /* _DecodeExecute32_1001_00_110_11_0100 {{{4
-   * ------------------------------------
+  /* _DecodeExecute32_DSB_T1 {{{4
+   * -----------------------
    */
-  void _DecodeExecute32_1001_00_110_11_0100(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_DSB_T1(uint32_t instr, uint32_t pc) {
     // DSB § C2.4.35 T1
     // ---- DECODE --------------------------------------------------
     uint32_t option = GETBITS(instr, 0, 3);
@@ -11738,10 +11725,10 @@ private:
     _Exec_DSB(option);
   }
 
-  /* _DecodeExecute32_1001_00_110_11_0101 {{{4
-   * ------------------------------------
+  /* _DecodeExecute32_DMB_T1 {{{4
+   * -----------------------
    */
-  void _DecodeExecute32_1001_00_110_11_0101(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_DMB_T1(uint32_t instr, uint32_t pc) {
     // DMB § C2.4.34 T1
     // ---- DECODE --------------------------------------------------
     uint32_t option = GETBITS(instr, 0, 3);
@@ -11752,10 +11739,10 @@ private:
     _Exec_DMB(option);
   }
 
-  /* _DecodeExecute32_1001_00_110_11_0110 {{{4
-   * ------------------------------------
+  /* _DecodeExecute32_ISB_T1 {{{4
+   * -----------------------
    */
-  void _DecodeExecute32_1001_00_110_11_0110(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_ISB_T1(uint32_t instr, uint32_t pc) {
     // ISB § C2.4.40 T1
     // ---- DECODE --------------------------------------------------
     uint32_t option = GETBITS(instr, 0, 3);
@@ -11766,10 +11753,10 @@ private:
     _Exec_ISB(option);
   }
 
-  /* _DecodeExecute32_1001_0_1_011_xxxx {{{4
-   * ----------------------------------
+  /* _DecodeExecute32_BFI_T1 {{{4
+   * -----------------------
    */
-  void _DecodeExecute32_1001_0_1_011_xxxx(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_BFI_T1(uint32_t instr, uint32_t pc) {
     // BFI § C2.4.17 T1
     // ---- DECODE --------------------------------------------------
     uint32_t Rn   = GETBITS(instr>>16, 0, 3);
@@ -11798,10 +11785,10 @@ private:
     _Exec_BFI(d, n, msbit, lsbit);
   }
 
-  /* _DecodeExecute32_1001_0_1_011_1111 {{{4
-   * ----------------------------------
+  /* _DecodeExecute32_BFC_T1 {{{4
+   * -----------------------
    */
-  void _DecodeExecute32_1001_0_1_011_1111(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_BFC_T1(uint32_t instr, uint32_t pc) {
     // BFC § C2.4.16 T1
     // ---- DECODE --------------------------------------------------
     uint32_t imm3 = GETBITS(instr,12,14);
@@ -11964,7 +11951,6 @@ private:
   /* _DecodeExecute32_1100_00xxx_1110xx {{{4
    * ----------------------------------
    */
-  //                         87654/BA9876
   void _DecodeExecute32_1100_00xxx_1110xx(uint32_t instr, uint32_t pc) {
     // Load/store, unsigned (unprivileged)
     uint32_t size = GETBITS(instr>>16, 5, 6);
@@ -11973,32 +11959,32 @@ private:
     switch ((size<<1) | L) {
       case 0b00'0:
         // STRBT
-        _DecodeExecute32_1100_00000_1110xx(instr, pc);
+        _DecodeExecute32_STRBT_T1(instr, pc);
         break;
 
       case 0b00'1:
         // LDRBT
-        _DecodeExecute32_1100_00001_1110xx(instr, pc);
+        _DecodeExecute32_LDRBT_T1(instr, pc);
         break;
 
       case 0b01'0:
         // STRHT
-        _DecodeExecute32_1100_00010_1110xx(instr, pc);
+        _DecodeExecute32_STRHT_T1(instr, pc);
         break;
 
       case 0b01'1:
         // LDRHT
-        _DecodeExecute32_1100_00011_1110xx(instr, pc);
+        _DecodeExecute32_LDRHT_T1(instr, pc);
         break;
 
       case 0b10'0:
         // STRT
-        _DecodeExecute32_1100_00100_1110xx(instr, pc);
+        _DecodeExecute32_STRT_T1(instr, pc);
         break;
 
       case 0b10'1:
         // LDRT
-        _DecodeExecute32_1100_00101_1110xx(instr, pc);
+        _DecodeExecute32_LDRT_T1(instr, pc);
         break;
 
       default:
@@ -12007,10 +11993,10 @@ private:
     }
   }
 
-  /* _DecodeExecute32_1100_00001_1110xx {{{4
-   * ----------------------------------
+  /* _DecodeExecute32_LDRBT_T1 {{{4
+   * -------------------------
    */
-  void _DecodeExecute32_1100_00001_1110xx(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_LDRBT_T1(uint32_t instr, uint32_t pc) {
     // LDRBT § C2.4.58 T1
     // ---- DECODE --------------------------------------------------
     uint32_t Rn   = GETBITS(instr>>16, 0, 3);
@@ -12036,10 +12022,10 @@ private:
     _Exec_LDRBT(t, n, postindex, add, registerForm, imm32);
   }
 
-  /* _DecodeExecute32_1100_00011_1110xx {{{4
-   * ----------------------------------
+  /* _DecodeExecute32_LDRHT_T1 {{{4
+   * -------------------------
    */
-  void _DecodeExecute32_1100_00011_1110xx(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_LDRHT_T1(uint32_t instr, uint32_t pc) {
     // LDRHT § C2.4.67 T1
     // ---- DECODE --------------------------------------------------
     uint32_t Rn   = GETBITS(instr>>16, 0, 3);
@@ -12065,10 +12051,10 @@ private:
     _Exec_LDRHT(t, n, postindex, add, registerForm, imm32);
   }
 
-  /* _DecodeExecute32_1100_00001_1110xx {{{4
-   * ----------------------------------
+  /* _DecodeExecute32_LDRT_T1 {{{4
+   * ------------------------
    */
-  void _DecodeExecute32_1100_00101_1110xx(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_LDRT_T1(uint32_t instr, uint32_t pc) {
     // LDRT § C2.4.76 T1
     // ---- DECODE --------------------------------------------------
     uint32_t Rn   = GETBITS(instr>>16, 0, 3);
@@ -12094,10 +12080,10 @@ private:
     _Exec_LDRT(t, n, postindex, add, registerForm, imm32);
   }
 
-  /* _DecodeExecute32_1100_00000_1110xx {{{4
-   * ----------------------------------
+  /* _DecodeExecute32_STRBT_T1 {{{4
+   * -------------------------
    */
-  void _DecodeExecute32_1100_00000_1110xx(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_STRBT_T1(uint32_t instr, uint32_t pc) {
     // STRBT § C2.4.187 T1
     // ---- DECODE --------------------------------------------------
     uint32_t Rn   = GETBITS(instr>>16, 0, 3);
@@ -12123,10 +12109,10 @@ private:
     _Exec_STRBT(t, n, postindex, add, registerForm, imm32);
   }
 
-  /* _DecodeExecute32_1100_00010_1110xx {{{4
-   * ----------------------------------
+  /* _DecodeExecute32_STRHT_T1 {{{4
+   * -------------------------
    */
-  void _DecodeExecute32_1100_00010_1110xx(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_STRHT_T1(uint32_t instr, uint32_t pc) {
     // STRHT § C2.4.194 T1
     // ---- DECODE --------------------------------------------------
     uint32_t Rn   = GETBITS(instr>>16, 0, 3);
@@ -12152,10 +12138,10 @@ private:
     _Exec_STRHT(t, n, postindex, add, registerForm, imm32);
   }
 
-  /* _DecodeExecute32_1100_00100_1110xx {{{4
-   * ----------------------------------
+  /* _DecodeExecute32_STRT_T1 {{{4
+   * ------------------------
    */
-  void _DecodeExecute32_1100_00100_1110xx(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_STRT_T1(uint32_t instr, uint32_t pc) {
     // STRT § C2.4.195 T1
     // ---- DECODE --------------------------------------------------
     uint32_t Rn   = GETBITS(instr>>16, 0, 3);
@@ -12192,27 +12178,27 @@ private:
     switch ((size<<1) | L) {
       case 0b00'0:
         // STRB (immediate)
-        _DecodeExecute32_1100_00000_10x1xx(instr, pc);
+        _DecodeExecute32_STRB_immediate_T3(instr, pc);
         break;
       case 0b00'1:
         // LDRB (immediate)
-        _DecodeExecute32_1100_00001_10x1xx(instr, pc);
+        _DecodeExecute32_LDRB_immediate_T3(instr, pc);
         break;
       case 0b01'0:
         // STRH (immediate)
-        _DecodeExecute32_1100_00010_10x1xx(instr, pc);
+        _DecodeExecute32_STRH_immediate_T3(instr, pc);
         break;
       case 0b01'1:
         // LDRH (immediate)
-        _DecodeExecute32_1100_00011_10x1xx(instr, pc);
+        _DecodeExecute32_LDRH_immediate_T3(instr, pc);
         break;
       case 0b10'0:
         // STR (immediate)
-        _DecodeExecute32_1100_00100_10x1xx(instr, pc);
+        _DecodeExecute32_STR_immediate_T4(instr, pc);
         break;
       case 0b10'1:
         // LDR (immediate)
-        _DecodeExecute32_1100_00101_10x1xx(instr, pc);
+        _DecodeExecute32_LDR_immediate_T4(instr, pc);
         break;
 
       case 0b11'0:
@@ -12238,37 +12224,37 @@ private:
     switch ((size<<1) | L) {
       case 0b00'0:
         // STRB (immediate)
-        _DecodeExecute32_1100_00000_10x1xx(instr, pc);
+        _DecodeExecute32_STRB_immediate_T3(instr, pc);
         break;
       case 0b00'1:
         if (Rt != 0b1111) {
           // LDRB (immediate)
-          _DecodeExecute32_1100_00001_10x1xx(instr, pc);
+          _DecodeExecute32_LDRB_immediate_T3(instr, pc);
         } else {
           // PLD, PLDW (immediate) — Preload read variant
-          _DecodeExecute32_1100_000x1_10x1xx_1111(instr, pc);
+          _DecodeExecute32_PLD_PLDW_immediate_T2(instr, pc);
         }
         break;
       case 0b01'0:
         // STRH (immediate)
-        _DecodeExecute32_1100_00010_10x1xx(instr, pc);
+        _DecodeExecute32_STRH_immediate_T3(instr, pc);
         break;
       case 0b01'1:
         if (Rt != 0b1111) {
           // LDRH (immediate)
-          _DecodeExecute32_1100_00011_10x1xx(instr, pc);
+          _DecodeExecute32_LDRH_immediate_T3(instr, pc);
         } else {
           // PLD, PLDW (immediate) — Preload write variant
-          _DecodeExecute32_1100_000x1_10x1xx_1111(instr, pc);
+          _DecodeExecute32_PLD_PLDW_immediate_T2(instr, pc);
         }
         break;
       case 0b10'0:
         // STR (immediate)
-        _DecodeExecute32_1100_00100_10x1xx(instr, pc);
+        _DecodeExecute32_STR_immediate_T4(instr, pc);
         break;
       case 0b10'1:
         // LDR (immediate)
-        _DecodeExecute32_1100_00101_10x1xx(instr, pc);
+        _DecodeExecute32_LDR_immediate_T4(instr, pc);
         break;
       case 0b11'0:
       case 0b11'1:
@@ -12278,10 +12264,10 @@ private:
     }
   }
 
-  /* _DecodeExecute32_1100_000x1_10x1xx_1111 {{{4
-   * ---------------------------------------
+  /* _DecodeExecute32_PLD_PLDW_immediate_T2 {{{4
+   * --------------------------------------
    */
-  void _DecodeExecute32_1100_000x1_10x1xx_1111(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_PLD_PLDW_immediate_T2(uint32_t instr, uint32_t pc) {
     // PLD, PLDW (immediate) § C2.4.108 T2
     // ---- DECODE --------------------------------------------------
     uint32_t W    = GETBITS(instr>>16, 5, 5);
@@ -12313,32 +12299,32 @@ private:
     switch ((size<<1) | L) {
       case 0b00'0:
         // STRB (immediate)
-        _DecodeExecute32_1100_00000_10x1xx(instr, pc);
+        _DecodeExecute32_STRB_immediate_T3(instr, pc);
         break;
 
       case 0b00'1:
         // LDRB (immediate)
-        _DecodeExecute32_1100_00001_10x1xx(instr, pc);
+        _DecodeExecute32_LDRB_immediate_T3(instr, pc);
         break;
 
       case 0b01'0:
         // STRH (immediate)
-        _DecodeExecute32_1100_00010_10x1xx(instr, pc);
+        _DecodeExecute32_STRH_immediate_T3(instr, pc);
         break;
 
       case 0b01'1:
         // LDRH (immediate)
-        _DecodeExecute32_1100_00011_10x1xx(instr, pc);
+        _DecodeExecute32_LDRH_immediate_T3(instr, pc);
         break;
 
       case 0b10'0:
         // STR (immediate)
-        _DecodeExecute32_1100_00100_10x1xx(instr, pc);
+        _DecodeExecute32_STR_immediate_T4(instr, pc);
         break;
 
       case 0b10'1:
         // LDR (immediate)
-        _DecodeExecute32_1100_00101_10x1xx(instr, pc);
+        _DecodeExecute32_LDR_immediate_T4(instr, pc);
         break;
 
       case 0b11'0:
@@ -12349,10 +12335,10 @@ private:
     }
   }
 
-  /* _DecodeExecute32_1100_00101_10x1xx {{{4
-   * ----------------------------------
+  /* _DecodeExecute32_LDR_immediate_T4 {{{4
+   * ---------------------------------
    */
-  void _DecodeExecute32_1100_00101_10x1xx(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_LDR_immediate_T4(uint32_t instr, uint32_t pc) {
     // LDR (immediate) § C2.4.52 T4
     // ---- DECODE --------------------------------------------------
     uint32_t Rn   = GETBITS(instr>>16, 0, 3);
@@ -12386,10 +12372,10 @@ private:
     _Exec_LDR_immediate(t, n, imm32, index, add, wback);
   }
 
-  /* _DecodeExecute32_1100_00001_10x1xx {{{4
+  /* _DecodeExecute32_LDRB_immediate_T3 {{{4
    * ----------------------------------
    */
-  void _DecodeExecute32_1100_00001_10x1xx(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_LDRB_immediate_T3(uint32_t instr, uint32_t pc) {
     // LDRB (immediate) § C2.4.55 T3
     // ---- DECODE --------------------------------------------------
     uint32_t Rn   = GETBITS(instr>>16, 0, 3);
@@ -12427,10 +12413,10 @@ private:
     _Exec_LDRB_immediate(t, n, imm32, index, add, wback);
   }
 
-  /* _DecodeExecute32_1100_00011_10x1xx {{{4
+  /* _DecodeExecute32_LDRH_immediate_T3 {{{4
    * ----------------------------------
    */
-  void _DecodeExecute32_1100_00011_10x1xx(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_LDRH_immediate_T3(uint32_t instr, uint32_t pc) {
     // LDRH (immediate) § C2.4.64 T3
     // ---- DECODE --------------------------------------------------
     uint32_t Rn   = GETBITS(instr>>16, 0, 3);
@@ -12468,10 +12454,10 @@ private:
     _Exec_LDRH_immediate(t, n, imm32, index, add, wback);
   }
 
-  /* _DecodeExecute32_1100_00100_10x1xx {{{4
-   * ----------------------------------
+  /* _DecodeExecute32_STR_immediate_T4 {{{4
+   * ---------------------------------
    */
-  void _DecodeExecute32_1100_00100_10x1xx(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_STR_immediate_T4(uint32_t instr, uint32_t pc) {
     // STR (immediate) § C2.4.183 T4
     // ---- DECODE --------------------------------------------------
     uint32_t Rn   = GETBITS(instr>>16, 0, 3);
@@ -12502,10 +12488,10 @@ private:
     _Exec_STR_immediate(t, n, imm32, index, add, wback);
   }
 
-  /* _DecodeExecute32_1100_00000_10x1xx {{{4
+  /* _DecodeExecute32_STRB_immediate_T3 {{{4
    * ----------------------------------
    */
-  void _DecodeExecute32_1100_00000_10x1xx(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_STRB_immediate_T3(uint32_t instr, uint32_t pc) {
     // STRB (immediate) § C2.4.185 T3
     // ---- DECODE --------------------------------------------------
     uint32_t Rn   = GETBITS(instr>>16, 0, 3);
@@ -12536,10 +12522,10 @@ private:
     _Exec_STRB_immediate(t, n, imm32, index, add, wback);
   }
 
-  /* _DecodeExecute32_1100_00010_10x1xx {{{4
+  /* _DecodeExecute32_STRH_immediate_T3 {{{4
    * ----------------------------------
    */
-  void _DecodeExecute32_1100_00010_10x1xx(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_STRH_immediate_T3(uint32_t instr, uint32_t pc) {
     // STRH (immediate) § C2.4.192 T3
     // ---- DECODE --------------------------------------------------
     uint32_t Rn   = GETBITS(instr>>16, 0, 3);
@@ -12582,20 +12568,20 @@ private:
       case 0b00:
         if (Rt != 0b1111) {
           // LDRSB (literal)
-          _DecodeExecute32_1100_1x001_1111_xxxx(instr, pc);
+          _DecodeExecute32_LDRSB_literal_T1(instr, pc);
         } else {
           // PLI (immediate, literal)
-          _DecodeExecute32_1100_1x001_1111_1111(instr, pc);
+          _DecodeExecute32_PLI_immediate_literal_T3(instr, pc);
         }
         break;
 
       case 0b01:
         if (Rt != 0b1111) {
           // LDRSH (literal)
-          _DecodeExecute32_1100_1x011_1111_xxxx(instr, pc);
+          _DecodeExecute32_LDRSH_literal_T1(instr, pc);
         } else {
           // Reserved hint, behaves as NOP
-          _DecodeExecute32_1100_1x011_1111_1111(instr, pc);
+          _DecodeExecute32_ReservedHint(instr, pc);
         }
         break;
 
@@ -12610,10 +12596,10 @@ private:
     }
   }
 
-  /* _DecodeExecute32_1100_1x001_1111_1111 {{{4
-   * -------------------------------------
+  /* _DecodeExecute32_PLI_immediate_literal_T3 {{{4
+   * -----------------------------------------
    */
-  void _DecodeExecute32_1100_1x001_1111_1111(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_PLI_immediate_literal_T3(uint32_t instr, uint32_t pc) {
     // PLI (immediate, literal) § C2.4.109 T3
     // ---- DECODE --------------------------------------------------
     uint32_t U      = GETBITS(instr>>16, 7, 7);
@@ -12630,10 +12616,10 @@ private:
     _Exec_PLI_immediate_literal(n, imm32, add);
   }
 
-  /* _DecodeExecute32_1100_1x001_1111_xxxx {{{4
-   * -------------------------------------
+  /* _DecodeExecute32_LDRSB_literal_T1 {{{4
+   * ---------------------------------
    */
-  void _DecodeExecute32_1100_1x001_1111_xxxx(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_LDRSB_literal_T1(uint32_t instr, uint32_t pc) {
     // LDRSB (literal) § C2.4.69 T1
     // ---- DECODE --------------------------------------------------
     uint32_t U      = GETBITS(instr>>16, 7, 7);
@@ -12656,10 +12642,10 @@ private:
     _Exec_LDRSB_literal(t, imm32, add);
   }
 
-  /* _DecodeExecute32_1100_1x011_1111_xxxx {{{4
-   * -------------------------------------
+  /* _DecodeExecute32_LDRSH_literal_T1 {{{4
+   * ---------------------------------
    */
-  void _DecodeExecute32_1100_1x011_1111_xxxx(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_LDRSH_literal_T1(uint32_t instr, uint32_t pc) {
     // LDRSH (literal) § C2.4.73 T1
     // ---- DECODE --------------------------------------------------
     uint32_t U      = GETBITS(instr>>16, 7, 7);
@@ -12682,10 +12668,10 @@ private:
     _Exec_LDRSH_literal(t, imm32, add);
   }
 
-  /* _DecodeExecute32_1100_1x011_1111_1111 {{{4
-   * -------------------------------------
+  /* _DecodeExecute32_ReservedHint {{{4
+   * -----------------------------
    */
-  void _DecodeExecute32_1100_1x011_1111_1111(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_ReservedHint(uint32_t instr, uint32_t pc) {
     // Reserved hint, behaves as NOP.
     // ---- DECODE --------------------------------------------------
 
@@ -12710,42 +12696,42 @@ private:
     switch ((size<<1)|L) {
       case 0b00'0:
         // STRB (register)
-        _DecodeExecute32_1100_00000_xxxx_000000(instr, pc);
+        _DecodeExecute32_STRB_register_T2(instr, pc);
         break;
 
       case 0b00'1:
         if (Rt != 0b1111) {
           // LDRB (register)
-          _DecodeExecute32_1100_00001_xxxx_000000(instr, pc);
+          _DecodeExecute32_LDRB_register_T2(instr, pc);
         } else {
           // PLD (register) — Preload read variant
-          _DecodeExecute32_1100_000x1_1111_000000(instr, pc);
+          _DecodeExecute32_PLD_register_RO(instr, pc);
         }
         break;
 
       case 0b01'0:
         // STRH (register)
-        _DecodeExecute32_1100_00010_xxxx_000000(instr, pc);
+        _DecodeExecute32_STRH_register_T2(instr, pc);
         break;
 
       case 0b01'1:
         if (Rt != 0b1111) {
           // LDRH (register)
-          _DecodeExecute32_1100_00011_xxxx_000000(instr, pc);
+          _DecodeExecute32_LDRH_register_T2(instr, pc);
         } else {
           // PLD (register) — Preload write variant
-          _DecodeExecute32_1100_000x1_1111_000000(instr, pc);
+          _DecodeExecute32_PLD_register_RO(instr, pc);
         }
         break;
 
       case 0b10'0:
         // STR (register)
-        _DecodeExecute32_1100_00100_xxxx_000000(instr, pc);
+        _DecodeExecute32_STR_register_T2(instr, pc);
         break;
 
       case 0b10'1:
         // LDR (register)
-        _DecodeExecute32_1100_00101_xxxx_000000(instr, pc);
+        _DecodeExecute32_LDR_register_T2(instr, pc);
         break;
 
       case 0b11'0:
@@ -12759,10 +12745,10 @@ private:
     }
   }
 
-  /* _DecodeExecute32_1100_00100_xxxx_000000 {{{4
-   * ---------------------------------------
+  /* _DecodeExecute32_STR_register_T2 {{{4
+   * --------------------------------
    */
-  void _DecodeExecute32_1100_00100_xxxx_000000(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_STR_register_T2(uint32_t instr, uint32_t pc) {
     // STR (register) § C2.4.184 T2
     // ---- DECODE --------------------------------------------------
     uint32_t Rn   = GETBITS(instr>>16, 0, 3);
@@ -12791,10 +12777,10 @@ private:
     _Exec_STR_register(t, n, m, index, add, wback, shiftT, shiftN);
   }
 
-  /* _DecodeExecute32_1100_00000_xxxx_000000 {{{4
-   * ---------------------------------------
+  /* _DecodeExecute32_STRB_register_T2 {{{4
+   * ---------------------------------
    */
-  void _DecodeExecute32_1100_00000_xxxx_000000(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_STRB_register_T2(uint32_t instr, uint32_t pc) {
     // STRB (register) § C2.4.186 T2
     // ---- DECODE --------------------------------------------------
     uint32_t Rn   = GETBITS(instr>>16, 0, 3);
@@ -12823,10 +12809,10 @@ private:
     _Exec_STRB_register(t, n, m, index, add, wback, shiftT, shiftN);
   }
 
-  /* _DecodeExecute32_1100_00010_xxxx_000000 {{{4
-   * ---------------------------------------
+  /* _DecodeExecute32_STRH_register_T2 {{{4
+   * ---------------------------------
    */
-  void _DecodeExecute32_1100_00010_xxxx_000000(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_STRH_register_T2(uint32_t instr, uint32_t pc) {
     // STRH (register) § C2.4.193 T2
     // ---- DECODE --------------------------------------------------
     uint32_t Rn   = GETBITS(instr>>16, 0, 3);
@@ -12855,10 +12841,10 @@ private:
     _Exec_STRH_register(t, n, m, index, add, wback, shiftT, shiftN);
   }
 
-  /* _DecodeExecute32_1100_000x1_1111_000000 {{{4
-   * ---------------------------------------
+  /* _DecodeExecute32_PLD_register_RO {{{4
+   * --------------------------------
    */
-  void _DecodeExecute32_1100_000x1_1111_000000(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_PLD_register_RO(uint32_t instr, uint32_t pc) {
     // PLD (register) § C2.4.107 Register-offset
     // ---- DECODE --------------------------------------------------
     uint32_t W    = GETBITS(instr>>16, 5, 5);
@@ -12886,10 +12872,10 @@ private:
     _Exec_PLD_register(n, m, add, shiftT, shiftN);
   }
 
-  /* _DecodeExecute32_1100_00101_xxxx_000000 {{{4
-   * ---------------------------------------
+  /* _DecodeExecute32_LDR_register_T2 {{{4
+   * --------------------------------
    */
-  void _DecodeExecute32_1100_00101_xxxx_000000(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_LDR_register_T2(uint32_t instr, uint32_t pc) {
     // LDR (register) § C2.4.54 T2
     // ---- DECODE --------------------------------------------------
     uint32_t Rn   = GETBITS(instr>>16, 0, 3);
@@ -12921,10 +12907,10 @@ private:
     _Exec_LDR_register(t, n, m, index, add, wback, shiftT, shiftN);
   }
 
-  /* _DecodeExecute32_1100_00001_xxxx_000000 {{{4
-   * ---------------------------------------
+  /* _DecodeExecute32_LDRB_register_T2 {{{4
+   * ---------------------------------
    */
-  void _DecodeExecute32_1100_00001_xxxx_000000(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_LDRB_register_T2(uint32_t instr, uint32_t pc) {
     // LDRB (register) § C2.4.57 T2
     // ---- DECODE --------------------------------------------------
     uint32_t Rn   = GETBITS(instr>>16, 0, 3);
@@ -12953,10 +12939,10 @@ private:
     _Exec_LDRB_register(t, n, m, index, add, wback, shiftT, shiftN);
   }
 
-  /* _DecodeExecute32_1100_00011_xxxx_000000 {{{4
-   * ---------------------------------------
+  /* _DecodeExecute32_LDRH_register_T2 {{{4
+   * ---------------------------------
    */
-  void _DecodeExecute32_1100_00011_xxxx_000000(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_LDRH_register_T2(uint32_t instr, uint32_t pc) {
     // LDRH (register) § C2.4.66 T2
     // ---- DECODE --------------------------------------------------
     uint32_t Rn   = GETBITS(instr>>16, 0, 3);
@@ -12999,17 +12985,17 @@ private:
       case 0b00'1:
         if (Rt != 0b1111) {
           // LDRB (literal)
-          _DecodeExecute32_1100_0x001_1111_xxxx(instr, pc);
+          _DecodeExecute32_LDRB_literal_T1(instr, pc);
         } else {
           // PLD (literal)
-          _DecodeExecute32_1100_0x001_1111_1111(instr, pc);
+          _DecodeExecute32_PLD_literal_T1(instr, pc);
         }
         break;
 
       case 0b01'1:
         if (Rt != 0b1111) {
           // LDRH (literal)
-          _DecodeExecute32_1100_0x011_1111_xxxx(instr, pc);
+          _DecodeExecute32_LDRH_literal_T1(instr, pc);
         } else {
           // ?
           UNDEFINED_DEC();
@@ -13018,7 +13004,7 @@ private:
 
       case 0b10'1:
         // LDR (literal)
-        _DecodeExecute32_1100_0x101_1111(instr, pc);
+        _DecodeExecute32_LDR_literal_T2(instr, pc);
         break;
 
       case 0b11'0:
@@ -13031,10 +13017,10 @@ private:
     }
   }
 
-  /* _DecodeExecute32_1100_0x011_1111_xxxx {{{4
-   * -------------------------------------
+  /* _DecodeExecute32_LDRH_literal_T1 {{{4
+   * --------------------------------
    */
-  void _DecodeExecute32_1100_0x011_1111_xxxx(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_LDRH_literal_T1(uint32_t instr, uint32_t pc) {
     // LDRH (literal) § C2.4.65 T1
     // ---- DECODE --------------------------------------------------
     uint32_t U      = GETBITS(instr>>16, 7, 7);
@@ -13056,10 +13042,10 @@ private:
     _Exec_LDRH_literal(t, imm32, add);
   }
 
-  /* _DecodeExecute32_1100_0x001_1111_xxxx {{{4
-   * -------------------------------------
+  /* _DecodeExecute32_LDRB_literal_T1 {{{4
+   * --------------------------------
    */
-  void _DecodeExecute32_1100_0x001_1111_xxxx(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_LDRB_literal_T1(uint32_t instr, uint32_t pc) {
     // LDRB (literal) § C2.4.56 T1
     // ---- DECODE --------------------------------------------------
     uint32_t U      = GETBITS(instr>>16, 7, 7);
@@ -13081,10 +13067,10 @@ private:
     _Exec_LDRB_literal(t, imm32, add);
   }
 
-  /* _DecodeExecute32_1100_0x001_1111_1111 {{{4
-   * -------------------------------------
+  /* _DecodeExecute32_PLD_literal_T1 {{{4
+   * -------------------------------
    */
-  void _DecodeExecute32_1100_0x001_1111_1111(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_PLD_literal_T1(uint32_t instr, uint32_t pc) {
     // PLD (literal) § C2.4.106 T1
     // ---- DECODE --------------------------------------------------
     uint32_t U      = GETBITS(instr>>16, 7, 7);
@@ -13100,10 +13086,10 @@ private:
     _Exec_PLD_literal(imm32, add);
   }
 
-  /* _DecodeExecute32_1100_0x101_1111 {{{4
-   * --------------------------------
+  /* _DecodeExecute32_LDR_literal_T2 {{{4
+   * -------------------------------
    */
-  void _DecodeExecute32_1100_0x101_1111(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_LDR_literal_T2(uint32_t instr, uint32_t pc) {
     // LDR (literal) § C2.4.53 T2
     // ---- DECODE --------------------------------------------------
     uint32_t Rt     = GETBITS(instr    ,12,15);
@@ -13139,42 +13125,42 @@ private:
     switch (size_L) {
       case 0b00'0:
         // STRB (immediate)
-        _DecodeExecute32_1100_01000_xxxx(instr, pc);
+        _DecodeExecute32_STRB_immediate_T2(instr, pc);
         break;
 
       case 0b00'1:
         if (Rt != 0b1111) {
           // LDRB (immediate)
-          _DecodeExecute32_1100_01001_xxxx(instr, pc);
+          _DecodeExecute32_LDRB_immediate_T2(instr, pc);
         } else {
           // PLD, PLDW (immediate) — Preload read variant
-          _DecodeExecute32_1100_010x1_1111(instr, pc);
+          _DecodeExecute32_PLD_PLDW_immediate_T1(instr, pc);
         }
         break;
 
       case 0b01'0:
         // STRH (immediate)
-        _DecodeExecute32_1100_01010_xxxx(instr, pc);
+        _DecodeExecute32_STRH_immediate_T2(instr, pc);
         break;
 
       case 0b01'1:
         if (Rt != 0b1111) {
           // LDRH (immediate)
-          _DecodeExecute32_1100_01011_xxxx(instr, pc);
+          _DecodeExecute32_LDRH_immediate_T2(instr, pc);
         } else {
           // PLD, PLDW (immediate) — Preload write variant
-          _DecodeExecute32_1100_010x1_1111(instr, pc);
+          _DecodeExecute32_PLD_PLDW_immediate_T1(instr, pc);
         }
         break;
 
       case 0b10'0:
         // STR (immediate)
-        _DecodeExecute32_1100_01100_xxxx(instr, pc);
+        _DecodeExecute32_STR_immediate_T3(instr, pc);
         break;
 
       case 0b10'1:
         // LDR (immediate)
-        _DecodeExecute32_1100_01101_xxxx(instr, pc);
+        _DecodeExecute32_LDR_immediate_T3(instr, pc);
         break;
 
       default:
@@ -13182,10 +13168,10 @@ private:
     }
   }
 
-  /* _DecodeExecute32_1100_010x1_1111 {{{4
-   * --------------------------------
+  /* _DecodeExecute32_PLD_PLDW_immediate_T1 {{{4
+   * --------------------------------------
    */
-  void _DecodeExecute32_1100_010x1_1111(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_PLD_PLDW_immediate_T1(uint32_t instr, uint32_t pc) {
     // PLD, PLDW (immediate) § C2.4.108 T1
     // ---- DECODE --------------------------------------------------
     uint32_t W      = GETBITS(instr>>16, 5, 5);
@@ -13206,10 +13192,10 @@ private:
     _Exec_PLD_PLDW_immediate(n, imm32, add, isPLDW);
   }
 
-  /* _DecodeExecute32_1100_01000_xxxx {{{4
-   * --------------------------------
+  /* _DecodeExecute32_STRB_immediate_T2 {{{4
+   * ----------------------------------
    */
-  void _DecodeExecute32_1100_01000_xxxx(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_STRB_immediate_T2(uint32_t instr, uint32_t pc) {
     // STRB (immediate) § C2.4.185 T2
     // ---- DECODE --------------------------------------------------
     uint32_t Rn     = GETBITS(instr>>16, 0, 3);
@@ -13234,10 +13220,10 @@ private:
     _Exec_STRB_immediate(t, n, imm32, index, add, wback);
   }
 
-  /* _DecodeExecute32_1100_01010_xxxx {{{4
-   * --------------------------------
+  /* _DecodeExecute32_STRH_immediate_T2 {{{4
+   * ----------------------------------
    */
-  void _DecodeExecute32_1100_01010_xxxx(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_STRH_immediate_T2(uint32_t instr, uint32_t pc) {
     // STRH (immediate) § C2.4.192 T2
     // ---- DECODE --------------------------------------------------
     uint32_t Rn     = GETBITS(instr>>16, 0, 3);
@@ -13262,10 +13248,10 @@ private:
     _Exec_STRH_immediate(t, n, imm32, index, add, wback);
   }
 
-  /* _DecodeExecute32_1100_01100_xxxx {{{4
-   * --------------------------------
+  /* _DecodeExecute32_STR_immediate_T3 {{{4
+   * ---------------------------------
    */
-  void _DecodeExecute32_1100_01100_xxxx(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_STR_immediate_T3(uint32_t instr, uint32_t pc) {
     // STR (immediate) § C2.4.183 T3
     // ---- DECODE --------------------------------------------------
     uint32_t Rn     = GETBITS(instr>>16, 0, 3);
@@ -13290,10 +13276,10 @@ private:
     _Exec_STR_immediate(t, n, imm32, index, add, wback);
   }
 
-  /* _DecodeExecute32_1100_01001_xxxx {{{4
-   * --------------------------------
+  /* _DecodeExecute32_LDRB_immediate_T2 {{{4
+   * ----------------------------------
    */
-  void _DecodeExecute32_1100_01001_xxxx(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_LDRB_immediate_T2(uint32_t instr, uint32_t pc) {
     // LDRB (immediate) § C2.4.55 T2
     // ---- DECODE --------------------------------------------------
     uint32_t Rn     = GETBITS(instr>>16, 0, 3);
@@ -13319,10 +13305,10 @@ private:
     _Exec_LDRB_immediate(t, n, imm32, index, add, wback);
   }
 
-  /* _DecodeExecute32_1100_01011_xxxx {{{4
-   * --------------------------------
+  /* _DecodeExecute32_LDRH_immediate_T2 {{{4
+   * ----------------------------------
    */
-  void _DecodeExecute32_1100_01011_xxxx(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_LDRH_immediate_T2(uint32_t instr, uint32_t pc) {
     // LDRH (immediate) § C2.4.64 T2
     // ---- DECODE --------------------------------------------------
     uint32_t Rn     = GETBITS(instr>>16, 0, 3);
@@ -13348,10 +13334,10 @@ private:
     _Exec_LDRH_immediate(t, n, imm32, index, add, wback);
   }
 
-  /* _DecodeExecute32_1100_01101_xxxx {{{4
-   * --------------------------------
+  /* _DecodeExecute32_LDR_immediate_T3 {{{4
+   * ---------------------------------
    */
-  void _DecodeExecute32_1100_01101_xxxx(uint32_t instr, uint32_t pc) {
+  void _DecodeExecute32_LDR_immediate_T3(uint32_t instr, uint32_t pc) {
     // LDR (immediate) § C2.4.52 T3
     // ---- DECODE --------------------------------------------------
     uint32_t Rn     = GETBITS(instr>>16, 0, 3);
