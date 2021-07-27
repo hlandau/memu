@@ -60,6 +60,8 @@
  *  Proper register implementation
  *  Debug stuff
  *  Full manual review
+ *  Coprocessor handling
+ *  Floating point support
  */
 
 /* Simulator Debugging and Tracing Utilities {{{2
@@ -174,29 +176,88 @@ private:
 #define IMPL_DEF_DROP_PREV_GEN_EXC                    1
 
 /* Register Definitions {{{3
- * --------------------
+ * ====================
  */
 #define SECREG(Name) (_IsSecure() ? Name##_S : Name##_NS)
 
-#define REG_DHCSR     0xE000'EDF0
-#define REG_DHCSR_NS  0xE002'EDF0
-#define   REG_DHCSR__S_HALT     BIT(17)
-#define   REG_DHCSR__S_LOCKUP   BIT(19)
-#define   REG_DHCSR__S_SDE      BIT(20)
-#define REG_DEMCR     0xE000'EDFC
-#define REG_DEMCR_NS  0xE002'EDFC
-#define   REG_DEMCR__MON_EN     BIT(16)
-#define   REG_DEMCR__MON_PEND   BIT(17)
-#define   REG_DEMCR__MON_STEP   BIT(18)
-#define   REG_DEMCR__SDME       BIT(20)
-#define   REG_DEMCR__TRCENA     BIT(24)
-#define REG_FPDSCR_S  0xE000'EF3C
-#define REG_FPDSCR_NS 0xE002'EF3C
-#define   REG_FPDSCR__RMODE     BITS(22,23)
-#define   REG_FPDSCR__FZ        BIT (24)
-#define   REG_FPDSCR__DN        BIT (25)
-#define   REG_FPDSCR__AHP       BIT (26)
+/* ITM: Instrumentation Macrocell {{{4
+ * ------------------------------
+ */
 
+/* DWT: Data Watchpoint and Trace {{{4
+ * ------------------------------
+ */
+#define REG_DWT_CTRL      SECREG(REG_DWT_CTRL)
+#define REG_DWT_CTRL_S    0xE000'1000
+#define REG_DWT_CTRL_NS   0xE002'1000
+#define   REG_DWT_CTRL__NUMCOMP   BITS(28,31)
+#define   REG_DWT_CTRL__NOTRCPKT  BIT (27)
+#define   REG_DWT_CTRL__NOCYCCNT  BIT (25)
+#define REG_DWT_COMP(N)     (0xE000'1020 + 16*(N))
+#define REG_DWT_FUNCTION(N) (0xE000'1028 + 16*(N))
+#define   REG_DWT_FUNCTION__MATCH     BITS( 0, 3)
+#define   REG_DWT_FUNCTION__ACTION    BITS( 4, 5)
+#define   REG_DWT_FUNCTION__DATAVSIZE BITS(10,11)
+#define   REG_DWT_FUNCTION__MATCHED   BIT (24)
+#define   REG_DWT_FUNCTION__ID        BITS(27,31)
+
+/* FPB: Flash Patch and Breakpoint {{{4
+ * -------------------------------
+ */
+#define REG_FP_CTRL       0xE000'2000
+#define   REG_FP_CTRL__ENABLE       BIT ( 0)
+#define   REG_FP_CTRL__KEY          BIT ( 1)
+#define   REG_FP_CTRL__NUM_CODE_LO  BITS( 4, 7)
+#define   REG_FP_CTRL__NUM_CODE_HI  BITS(12,14)
+#define   REG_FP_CTRL__NUM_LIT      BITS( 8,11)
+#define   REG_FP_CTRL__REV          BITS(28,31)
+#define REG_FP_COMP(N)     (0xE000'2008+4*(N))
+#define   REG_FP_COMPn__BE             BIT ( 0)
+#define   REG_FP_COMPn__BPADDR         BITS( 1,31)
+
+/* ICB: Implementation Control Block {{{4
+ * ---------------------------------
+ */
+#define REG_CPPWR         SECREG(REG_CPPWR)
+#define REG_CPPWR_S       0xE000'E00C
+#define REG_CPPWR_NS      0xE002'E00C
+#define   REG_CPPWR__SUn(N)   BIT (N*2)
+#define   REG_CPPWR__SUSn(N)  BIT (N*2+1)
+
+/* SysTick: SysTick Timer {{{4
+ * ----------------------
+ */
+
+/* NVIC: Nested Vectored Interrupt Controller {{{4
+ * ------------------------------------------
+ */
+#define REG_NVIC_IPRn_S(N)  (0xE000'E400 + 4*(N))
+#define REG_NVIC_IPRn_NS(N) (0xE002'E400 + 4*(N))
+
+#define REG_NVIC_ISPRn_S(N)  (0xE000'E200 + 4*(N))
+#define REG_NVIC_ISPRn_NS(N) (0xE002'E200 + 4*(N))
+
+#define REG_NVIC_ITNSn(N) (0xE000'E380+4*(N))
+
+/* SCB: System Control Block {{{4
+ * -------------------------
+ */
+#define REG_ICSR_S        0xE000'ED04
+#define REG_ICSR_NS       0xE002'ED04
+#define   REG_ICSR__VECTACTIVE  BITS( 0, 8)
+#define   REG_ICSR__RETTOBASE   BIT (11)
+#define   REG_ICSR__VECTPENDING BITS(12,20)
+#define   REG_ICSR__ISRPENDING  BIT (22)
+#define   REG_ICSR__ISRPREEMPT  BIT (23)
+#define   REG_ICSR__STTNS       BIT (24)
+#define   REG_ICSR__PENDSTCLR   BIT (25)
+#define   REG_ICSR__PENDSTSET   BIT (26)
+#define   REG_ICSR__PENDSVCLR   BIT (27)
+#define   REG_ICSR__PENDSVSET   BIT (28)
+#define   REG_ICSR__PENDNMICLR  BIT (30)
+#define   REG_ICSR__PENDNMISET  BIT (31)
+#define REG_VTOR_S    0xE000'ED08
+#define REG_VTOR_NS   0xE002'ED08
 #define REG_AIRCR     SECREG(REG_AIRCR)
 #define REG_AIRCR_S   0xE000'ED0C
 #define REG_AIRCR_NS  0xE002'ED0C
@@ -208,53 +269,10 @@ private:
 #define   REG_AIRCR__PRIS           BIT (14)
 #define   REG_AIRCR__ENDIANNESS     BIT (15)
 #define   REG_AIRCR__VECTKEY        BITS(16,31)
-#define REG_DAUTHCTRL 0xE000'EE04
-#define   REG_DAUTHCTRL__SPIDENSEL  BIT ( 0)
-#define   REG_DAUTHCTRL__INTSPIDEN  BIT ( 1)
-#define   REG_DAUTHCTRL__SPNIDENSEL BIT ( 2)
-#define   REG_DAUTHCTRL__INTSPNIDEN BIT ( 3)
-
-#define REG_UFSR      SECREG(REG_UFSR)
-#define REG_UFSR_S    0xE000'ED2A
-#define REG_UFSR_NS   0xE002'ED2A
-#define   REG_UFSR__UNDEFINSTR      BIT ( 0)
-#define   REG_UFSR__INVSTATE        BIT ( 1)
-#define   REG_UFSR__INVPC           BIT ( 2)
-#define   REG_UFSR__NOCP            BIT ( 3)
-#define   REG_UFSR__STKOF           BIT ( 4)
-#define   REG_UFSR__UNALIGNED       BIT ( 8)
-#define   REG_UFSR__DIVBYZERO       BIT ( 9)
-#define REG_DFSR      0xE000'ED30
-#define   REG_DFSR__HALTED          BIT ( 0)
-#define   REG_DFSR__BKPT            BIT ( 1)
-#define   REG_DFSR__DWTTRAP         BIT ( 2)
-#define   REG_DFSR__VCATCH          BIT ( 3)
-#define   REG_DFSR__EXTERNAL        BIT ( 4)
-
-#define REG_FPCCR     SECREG(REG_FPCCR)
-#define REG_FPCCR_S   0xE000'EF34
-#define REG_FPCCR_NS  0xE002'EF34
-#define   REG_FPCCR__LSPACT         BIT ( 0)
-#define   REG_FPCCR__USER           BIT ( 1)
-#define   REG_FPCCR__S              BIT ( 2)
-#define   REG_FPCCR__THREAD         BIT ( 3)
-#define   REG_FPCCR__HFRDY          BIT ( 4)
-#define   REG_FPCCR__TS             BIT (26)
-#define   REG_FPCCR__CLRONRET       BIT (28)
-#define   REG_FPCCR__LSPENS         BIT (29)
-#define   REG_FPCCR__LSPEN          BIT (30)
-#define   REG_FPCCR__ASPEN          BIT (31)
-
-#define REG_FPCAR_S   0xE000'EF38
-#define REG_FPCAR_NS  0xE002'EF38
-
-#define REG_DHCSR_S   0xE000'EDF0
-#define REG_DHCSR_NS  0xE002'EDF0
-#define   REG_DHCSR__C_DEBUGEN      BIT ( 0)
-#define   REG_DHCSR__C_HALT         BIT ( 1)
-#define   REG_DHCSR__C_STEP         BIT ( 2)
-#define   REG_DHCSR__C_MASKINTS     BIT ( 3)
-
+#define REG_SCR           SECREG(REG_SCR)
+#define REG_SCR_S         0xE000'ED10
+#define REG_SCR_NS        0xE000'ED10
+#define   REG_SCR__SLEEPONEXIT    BIT ( 1)
 #define REG_CCR       SECREG(REG_CCR)
 #define REG_CCR_S     0xE000'ED14
 #define REG_CCR_NS    0xE002'ED14
@@ -262,63 +280,104 @@ private:
 #define   REG_CCR__DIV_0_TRP          BIT ( 4)
 #define   REG_CCR__BFHFNMIGN          BIT ( 8)
 #define   REG_CCR__STKOFHFNMIGN       BIT (10)
-
-#define REG_VTOR_S    0xE000'ED08
-#define REG_VTOR_NS   0xE002'ED08
-
+#define REG_SHPR1_S       0xE000'ED18
+#define REG_SHPR1_NS      0xE002'ED18
+#define   REG_SHPR1__PRI_4  BITS( 0, 7)
+#define   REG_SHPR1__PRI_5  BITS( 8,15)
+#define   REG_SHPR1__PRI_6  BITS(16,23)
+#define   REG_SHPR1__PRI_7  BITS(24,31)
+#define REG_SHPR2_S       0xE000'ED1C
+#define REG_SHPR2_NS      0xE002'ED1C
+#define   REG_SHPR2__PRI_8  BITS( 0, 7)
+#define   REG_SHPR2__PRI_9  BITS( 8,15)
+#define   REG_SHPR2__PRI_10 BITS(16,23)
+#define   REG_SHPR2__PRI_11 BITS(24,31)
+#define REG_SHPR3_S       0xE000'ED20
+#define REG_SHPR3_NS      0xE002'ED20
+#define   REG_SHPR3__PRI_12 BITS( 0, 7)
+#define   REG_SHPR3__PRI_13 BITS( 8,15)
+#define   REG_SHPR3__PRI_14 BITS(16,23)
+#define   REG_SHPR3__PRI_15 BITS(24,31)
+#define REG_SHCSR         SECREG(REG_SHCSR)
+#define REG_SHCSR_S       0xE000'ED24
+#define REG_SHCSR_NS      0xE002'ED24
+#define   REG_SHCSR__MEMFAULTACT      BIT ( 0)
+#define   REG_SHCSR__BUSFAULTACT      BIT ( 1)
+#define   REG_SHCSR__HARDFAULTACT     BIT ( 2)
+#define   REG_SHCSR__USGFAULTACT      BIT ( 3)
+#define   REG_SHCSR__SECUREFAULTACT   BIT ( 4)
+#define   REG_SHCSR__NMIACT           BIT ( 5)
+#define   REG_SHCSR__SVCALLACT        BIT ( 7)
+#define   REG_SHCSR__MONITORACT       BIT ( 8)
+#define   REG_SHCSR__PENDSVACT        BIT (10)
+#define   REG_SHCSR__SYSTICKACT       BIT (11)
+#define   REG_SHCSR__USGFAULTPENDED   BIT (12)
+#define   REG_SHCSR__MEMFAULTPENDED   BIT (13)
+#define   REG_SHCSR__BUSFAULTPENDED   BIT (14)
+#define   REG_SHCSR__SVCALLPENDED     BIT (15)
+#define   REG_SHCSR__MEMFAULTENA      BIT (16)
+#define   REG_SHCSR__BUSFAULTENA      BIT (17)
+#define   REG_SHCSR__USGFAULTENA      BIT (18)
+#define   REG_SHCSR__SECUREFAULTENA   BIT (19)
+#define   REG_SHCSR__SECUREFAULTPENDED  BIT (20)
+#define   REG_SHCSR__HARDFAULTPENDED    BIT (21)
+#define REG_CFSR      SECREG(REG_CFSR)
+#define REG_CFSR_S    0xE000'ED28
+#define REG_CFSR_NS   0xE002'ED28
+#define   REG_CFSR__MMFSR          BITS( 0, 7)
+#define     REG_CFSR__MMFSR__IACCVIOL   BIT ( 0)
+#define     REG_CFSR__MMFSR__DACCVIOL   BIT ( 1)
+#define     REG_CFSR__MMFSR__MUNSTKERR  BIT ( 3)
+#define     REG_CFSR__MMFSR__MSTKERR    BIT ( 4)
+#define     REG_CFSR__MMFSR__MLSPERR    BIT ( 5)
+#define     REG_CFSR__MMFSR__MMARVALID  BIT ( 7)
+#define   REG_CFSR__BFSR           BITS( 8,15)
+#define     REG_CFSR__BFSR__IBUSERR     BIT ( 8+ 0)
+#define     REG_CFSR__BFSR__PRECISERR   BIT ( 8+ 1)
+#define     REG_CFSR__BFSR__IMPRECISERR BIT ( 8+ 2)
+#define     REG_CFSR__BFSR__UNSTKERR    BIT ( 8+ 3)
+#define     REG_CFSR__BFSR__STKERR      BIT ( 8+ 4)
+#define     REG_CFSR__BFSR__LSPERR      BIT ( 8+ 5)
+#define     REG_CFSR__BFSR__BFARVALID   BIT ( 8+ 7)
+#define   REG_CFSR__UFSR           BITS(16,31)
+#define     REG_CFSR__UFSR__UNDEFINSTR  BIT (16+ 0)
+#define     REG_CFSR__UFSR__INVSTATE    BIT (16+ 1)
+#define     REG_CFSR__UFSR__INVPC       BIT (16+ 2)
+#define     REG_CFSR__UFSR__NOCP        BIT (16+ 3)
+#define     REG_CFSR__UFSR__STKOF       BIT (16+ 4)
+#define     REG_CFSR__UFSR__UNALIGNED   BIT (16+ 8)
+#define     REG_CFSR__UFSR__DIVBYZERO   BIT (16+ 9)
 #define REG_HFSR      SECREG(REG_HFSR)
 #define REG_HFSR_S    0xE000'ED2C
 #define REG_HFSR_NS   0xE002'ED2C
-#define REG_HFSR__VECTTBL   BIT ( 1)
-#define REG_HFSR__FORCED    BIT (30)
-
-#define REG_SFSR      SECREG(REG_SFSR)
-#define REG_SFSR_S    0xE000'EDE4
-#define REG_SFSR_NS   0xE002'EDE4
-#define REG_SFSR__INVEP     BIT ( 0)
-#define REG_SFSR__INVIS     BIT ( 1)
-#define REG_SFSR__INVER     BIT ( 2)
-#define REG_SFSR__AUVIOL    BIT ( 3)
-#define REG_SFSR__INVTRAN   BIT ( 4)
-#define REG_SFSR__LSPERR    BIT ( 5)
-#define REG_SFSR__SFARVALID BIT ( 6)
-#define REG_SFSR__LSERR     BIT ( 7)
-
-#define REG_SFAR      SECREG(REG_SFAR)
-#define REG_SFAR_S    0xE000EDE8
-#define REG_SFAR_NS   0xE002EDE8
-
-#define REG_BFSR      SECREG(REG_BFSR)
-#define REG_BFSR_S    0xE000ED29
-#define REG_BFSR_NS   0xE002ED29
-#define   REG_BFSR__IBUSERR     BIT ( 0)
-#define   REG_BFSR__PRECISERR   BIT ( 1)
-#define   REG_BFSR__IMPRECISERR BIT ( 2)
-#define   REG_BFSR__UNSTKERR    BIT ( 3)
-#define   REG_BFSR__STKERR      BIT ( 4)
-#define   REG_BFSR__LSPERR      BIT ( 5)
-#define   REG_BFSR__BFARVALID   BIT ( 7)
-
+#define   REG_HFSR__VECTTBL   BIT ( 1)
+#define   REG_HFSR__FORCED    BIT (30)
+#define REG_DFSR      0xE000'ED30
+#define   REG_DFSR__HALTED          BIT ( 0)
+#define   REG_DFSR__BKPT            BIT ( 1)
+#define   REG_DFSR__DWTTRAP         BIT ( 2)
+#define   REG_DFSR__VCATCH          BIT ( 3)
+#define   REG_DFSR__EXTERNAL        BIT ( 4)
+#define REG_MMFAR     SECREG(REG_MMFAR)
+#define REG_MMFAR_S   0xE000'ED34
+#define REG_MMFAR_NS  0xE002'ED34
+#define   REG_MMFAR__ADDRESS    BITS ( 0,31)
 #define REG_BFAR      SECREG(REG_BFAR)
 #define REG_BFAR_S    0xE000ED38
 #define REG_BFAR_NS   0xE002ED38
 #define   REG_BFAR__ADDRESS BITS( 0,31)
 
-#define REG_MMFSR     SECREG(REG_MMFSR)
-#define REG_MMFSR_S   0xE000'ED28
-#define REG_MMFSR_NS  0xE002'ED28
-#define   REG_MMFSR__IACCVIOL   BIT ( 0)
-#define   REG_MMFSR__DACCVIOL   BIT ( 1)
-#define   REG_MMFSR__MUNSTKERR  BIT ( 3)
-#define   REG_MMFSR__MSTKERR    BIT ( 4)
-#define   REG_MMFSR__MLSPERR    BIT ( 5)
-#define   REG_MMFSR__MMARVALID  BIT ( 7)
+#define REG_CPACR         SECREG(REG_CPACR)
+#define REG_CPACR_S       0xE000'ED88
+#define REG_CPACR_NS      0xE002'ED88
+#define   REG_CPACR__CPn(N)   BITS(2*(N),2*(N)+1)
+#define REG_NSACR     0xE000'ED8C
+#define   REG_NSACR__CP10   BIT(10)
+#define   REG_NSACR__CP(N)  BIT( N)
 
-#define REG_MMFAR     SECREG(REG_MMFAR)
-#define REG_MMFAR_S   0xE000'ED34
-#define REG_MMFAR_NS  0xE002'ED34
-#define   REG_MMFAR__ADDRESS    BITS ( 0,31)
-
+/* MPU: Memory Protection Unit {{{4
+ * ---------------------------
+ */
 #define REG_MPU_TYPE    SECREG(REG_MPU_TYPE)
 #define REG_MPU_TYPE_S  0xE000ED90
 #define REG_MPU_TYPE_NS 0xE002ED90
@@ -348,61 +407,9 @@ private:
 #define REG_MPU_MAIR1_S   0xE000EDC4
 #define REG_MPU_MAIR1_NS  0xE002EDC4
 
-#define REG_DWT_CTRL      SECREG(REG_DWT_CTRL)
-#define REG_DWT_CTRL_S    0xE000'1000
-#define REG_DWT_CTRL_NS   0xE002'1000
-#define   REG_DWT_CTRL__NUMCOMP   BITS(28,31)
-#define   REG_DWT_CTRL__NOTRCPKT  BIT (27)
-#define   REG_DWT_CTRL__NOCYCCNT  BIT (25)
-
-#define REG_DWT_FUNCTION(N) (0xE000'1028 + 16*(N))
-#define   REG_DWT_FUNCTION__MATCH     BITS( 0, 3)
-#define   REG_DWT_FUNCTION__ACTION    BITS( 4, 5)
-#define   REG_DWT_FUNCTION__DATAVSIZE BITS(10,11)
-#define   REG_DWT_FUNCTION__MATCHED   BIT (24)
-#define   REG_DWT_FUNCTION__ID        BITS(27,31)
-
-#define REG_DWT_COMP(N)     (0xE000'1020 + 16*(N))
-
-#define REG_FP_CTRL       0xE000'2000
-#define   REG_FP_CTRL__ENABLE       BIT ( 0)
-#define   REG_FP_CTRL__KEY          BIT ( 1)
-#define   REG_FP_CTRL__NUM_CODE_LO  BITS( 4, 7)
-#define   REG_FP_CTRL__NUM_CODE_HI  BITS(12,14)
-#define   REG_FP_CTRL__NUM_LIT      BITS( 8,11)
-#define   REG_FP_CTRL__REV          BITS(28,31)
-
-#define REG_SHCSR         SECREG(REG_SHCSR)
-#define REG_SHCSR_S       0xE000'ED24
-#define REG_SHCSR_NS      0xE002'ED24
-#define   REG_SHCSR__MEMFAULTACT      BIT ( 0)
-#define   REG_SHCSR__BUSFAULTACT      BIT ( 1)
-#define   REG_SHCSR__HARDFAULTACT     BIT ( 2)
-#define   REG_SHCSR__USGFAULTACT      BIT ( 3)
-#define   REG_SHCSR__SECUREFAULTACT   BIT ( 4)
-#define   REG_SHCSR__NMIACT           BIT ( 5)
-#define   REG_SHCSR__SVCALLACT        BIT ( 7)
-#define   REG_SHCSR__MONITORACT       BIT ( 8)
-#define   REG_SHCSR__PENDSVACT        BIT (10)
-#define   REG_SHCSR__SYSTICKACT       BIT (11)
-#define   REG_SHCSR__USGFAULTPENDED   BIT (12)
-#define   REG_SHCSR__MEMFAULTPENDED   BIT (13)
-#define   REG_SHCSR__BUSFAULTPENDED   BIT (14)
-#define   REG_SHCSR__SVCALLPENDED     BIT (15)
-#define   REG_SHCSR__MEMFAULTENA      BIT (16)
-#define   REG_SHCSR__BUSFAULTENA      BIT (17)
-#define   REG_SHCSR__USGFAULTENA      BIT (18)
-#define   REG_SHCSR__SECUREFAULTENA   BIT (19)
-#define   REG_SHCSR__SECUREFAULTPENDED  BIT (20)
-#define   REG_SHCSR__HARDFAULTPENDED    BIT (21)
-
-#define REG_NSACR     0xE000'ED8C
-#define REG_NSACR__CP10   BIT(10)
-
-#define REG_FP_COMP(N)     (0xE000'2008+4*(N))
-#define   REG_FP_COMPn__BE             BIT ( 0)
-#define   REG_FP_COMPn__BPADDR         BITS( 1,31)
-
+/* SAU: Security Attribution Unit {{{4
+ * ------------------------------
+ */
 #define REG_SAU_CTRL      0xE000'EDD0
 #define   REG_SAU_CTRL__ENABLE        BIT ( 0)
 #define   REG_SAU_CTRL__ALLNS         BIT ( 1)
@@ -414,67 +421,93 @@ private:
 #define REG_SAU_RLAR__NSC     BIT ( 1)
 #define REG_SAU_RLAR__LADDR   BITS( 5,31)
 
-#define REG_NSACR         0xE000'ED8C
-#define   REG_NSACR__CP(N) BIT(N)
+#define REG_SFSR      SECREG(REG_SFSR)
+#define REG_SFSR_S    0xE000'EDE4
+#define REG_SFSR_NS   0xE002'EDE4
+#define REG_SFSR__INVEP     BIT ( 0)
+#define REG_SFSR__INVIS     BIT ( 1)
+#define REG_SFSR__INVER     BIT ( 2)
+#define REG_SFSR__AUVIOL    BIT ( 3)
+#define REG_SFSR__INVTRAN   BIT ( 4)
+#define REG_SFSR__LSPERR    BIT ( 5)
+#define REG_SFSR__SFARVALID BIT ( 6)
+#define REG_SFSR__LSERR     BIT ( 7)
 
-#define REG_CPACR         SECREG(REG_CPACR)
-#define REG_CPACR_S       0xE000'ED88
-#define REG_CPACR_NS      0xE002'ED88
-#define   REG_CPACR__CPn(N)   BITS(2*(N),2*(N)+1)
+#define REG_SFAR      SECREG(REG_SFAR)
+#define REG_SFAR_S    0xE000EDE8
+#define REG_SFAR_NS   0xE002EDE8
 
-#define REG_CPPWR         SECREG(REG_CPPWR)
-#define REG_CPPWR_S       0xE000'E00C
-#define REG_CPPWR_NS      0xE002'E00C
-#define   REG_CPPWR__SUn(N)   BIT (N*2)
-#define   REG_CPPWR__SUSn(N)  BIT (N*2+1)
+/* DCB: Debug Control Block {{{4
+ * ------------------------
+ */
+#define REG_DHCSR     0xE000'EDF0
+#define REG_DHCSR_NS  0xE002'EDF0
+#define   REG_DHCSR__S_HALT     BIT(17)
+#define   REG_DHCSR__S_LOCKUP   BIT(19)
+#define   REG_DHCSR__S_SDE      BIT(20)
+#define   REG_DHCSR__C_DEBUGEN      BIT ( 0)
+#define   REG_DHCSR__C_HALT         BIT ( 1)
+#define   REG_DHCSR__C_STEP         BIT ( 2)
+#define   REG_DHCSR__C_MASKINTS     BIT ( 3)
+#define REG_DEMCR     0xE000'EDFC
+#define REG_DEMCR_NS  0xE002'EDFC
+#define   REG_DEMCR__MON_EN     BIT(16)
+#define   REG_DEMCR__MON_PEND   BIT(17)
+#define   REG_DEMCR__MON_STEP   BIT(18)
+#define   REG_DEMCR__SDME       BIT(20)
+#define   REG_DEMCR__TRCENA     BIT(24)
+#define REG_DAUTHCTRL 0xE000'EE04
+#define   REG_DAUTHCTRL__SPIDENSEL  BIT ( 0)
+#define   REG_DAUTHCTRL__INTSPIDEN  BIT ( 1)
+#define   REG_DAUTHCTRL__SPNIDENSEL BIT ( 2)
+#define   REG_DAUTHCTRL__INTSPNIDEN BIT ( 3)
 
-#define REG_ICSR_S        0xE000'ED04
-#define REG_ICSR_NS       0xE002'ED04
-#define   REG_ICSR__VECTACTIVE  BITS( 0, 8)
-#define   REG_ICSR__RETTOBASE   BIT (11)
-#define   REG_ICSR__VECTPENDING BITS(12,20)
-#define   REG_ICSR__ISRPENDING  BIT (22)
-#define   REG_ICSR__ISRPREEMPT  BIT (23)
-#define   REG_ICSR__STTNS       BIT (24)
-#define   REG_ICSR__PENDSTCLR   BIT (25)
-#define   REG_ICSR__PENDSTSET   BIT (26)
-#define   REG_ICSR__PENDSVCLR   BIT (27)
-#define   REG_ICSR__PENDSVSET   BIT (28)
-#define   REG_ICSR__PENDNMICLR  BIT (30)
-#define   REG_ICSR__PENDNMISET  BIT (31)
+/* STIR {{{4
+ * ----
+ */
 
-#define REG_SCR           SECREG(REG_SCR)
-#define REG_SCR_S         0xE000'ED10
-#define REG_SCR_NS        0xE000'ED10
-#define   REG_SCR__SLEEPONEXIT    BIT ( 1)
+/* FPE: Floating-Point Extension {{{4
+ * -----------------------------
+ */
+#define REG_FPCCR     SECREG(REG_FPCCR)
+#define REG_FPCCR_S   0xE000'EF34
+#define REG_FPCCR_NS  0xE002'EF34
+#define   REG_FPCCR__LSPACT         BIT ( 0)
+#define   REG_FPCCR__USER           BIT ( 1)
+#define   REG_FPCCR__S              BIT ( 2)
+#define   REG_FPCCR__THREAD         BIT ( 3)
+#define   REG_FPCCR__HFRDY          BIT ( 4)
+#define   REG_FPCCR__TS             BIT (26)
+#define   REG_FPCCR__CLRONRET       BIT (28)
+#define   REG_FPCCR__LSPENS         BIT (29)
+#define   REG_FPCCR__LSPEN          BIT (30)
+#define   REG_FPCCR__ASPEN          BIT (31)
 
-#define REG_NVIC_ITNSn(N) (0xE000'E380+4*(N))
+#define REG_FPCAR_S   0xE000'EF38
+#define REG_FPCAR_NS  0xE002'EF38
 
-#define REG_SHPR1_S       0xE000'ED18
-#define REG_SHPR1_NS      0xE002'ED18
-#define   REG_SHPR1__PRI_4  BITS( 0, 7)
-#define   REG_SHPR1__PRI_5  BITS( 8,15)
-#define   REG_SHPR1__PRI_6  BITS(16,23)
-#define   REG_SHPR1__PRI_7  BITS(24,31)
-#define REG_SHPR2_S       0xE000'ED1C
-#define REG_SHPR2_NS      0xE002'ED1C
-#define   REG_SHPR2__PRI_8  BITS( 0, 7)
-#define   REG_SHPR2__PRI_9  BITS( 8,15)
-#define   REG_SHPR2__PRI_10 BITS(16,23)
-#define   REG_SHPR2__PRI_11 BITS(24,31)
-#define REG_SHPR3_S       0xE000'ED20
-#define REG_SHPR3_NS      0xE002'ED20
-#define   REG_SHPR3__PRI_12 BITS( 0, 7)
-#define   REG_SHPR3__PRI_13 BITS( 8,15)
-#define   REG_SHPR3__PRI_14 BITS(16,23)
-#define   REG_SHPR3__PRI_15 BITS(24,31)
+#define REG_FPDSCR_S  0xE000'EF3C
+#define REG_FPDSCR_NS 0xE002'EF3C
+#define   REG_FPDSCR__RMODE     BITS(22,23)
+#define   REG_FPDSCR__FZ        BIT (24)
+#define   REG_FPDSCR__DN        BIT (25)
+#define   REG_FPDSCR__AHP       BIT (26)
 
-#define REG_NVIC_IPRn_S(N)  (0xE000'E400 + 4*(N))
-#define REG_NVIC_IPRn_NS(N) (0xE002'E400 + 4*(N))
+/* Cache Maintenance Operations {{{4
+ * ----------------------------
+ */
 
-#define REG_NVIC_ISPRn_S(N)  (0xE000'E200 + 4*(N))
-#define REG_NVIC_ISPRn_NS(N) (0xE002'E200 + 4*(N))
+/* DIB: Debug Identification Block {{{4
+ * -------------------------------
+ */
 
+/* TPIU: Trace Port Interface Unit {{{4
+ * -------------------------------
+ */
+
+/* Architectural Registers {{{4
+ * -----------------------
+ */
 #define PRIMASK__PM     BIT(0)
 #define FAULTMASK__FM   BIT(0)
 
@@ -499,6 +532,9 @@ private:
 #define MSPLIM__LIMIT     BITS( 3,31)
 #define PSPLIM__LIMIT     BITS( 3,31)
 
+/* Payloads {{{4
+ * --------
+ */
 #define RETPSR__EXCEPTION BITS( 0, 8)
 #define RETPSR__SPREALIGN BIT ( 9)
 #define RETPSR__IT_ICI_LO BITS(10,15)
@@ -645,7 +681,7 @@ struct CpuState {
 #define NUM_MPU_REGION_NS   8
 #define NUM_SAU_REGION      8
 struct CpuNest {
-  uint32_t fpdscrS{}, fpdscrNS{}, fpccrS{BIT(2)|BIT(30)|BIT(31)}, fpccrNS{BIT(2)|BIT(30)|BIT(31)}, fpcarS{}, fpcarNS{}, vtorS{0x2000'4000}, vtorNS{0x2000'4000}, sauCtrl{}, mpuTypeS{}, mpuTypeNS{}, mpuCtrlS{}, mpuCtrlNS{}, mpuMair0S{}, mpuMair0NS{}, mpuMair1S{}, mpuMair1NS{}, mpuRbarS[NUM_MPU_REGION_S]{}, mpuRbarNS[NUM_MPU_REGION_NS]{}, mpuRlarS[NUM_MPU_REGION_S]{}, mpuRlarNS[NUM_MPU_REGION_NS]{}, sauRbar[NUM_SAU_REGION]{}, sauRlar[NUM_SAU_REGION]{}, aircrS{}, aircrNS{}, demcrS{}, demcrNS{}, dhcsrS{}, dhcsrNS{}, dauthCtrl{}, mmfsrS{}, mmfsrNS{}, bfarS{}, bfarNS{}, bfsrS{}, bfsrNS{}, shcsrS{}, shcsrNS{}, shpr1S{}, shpr1NS{}, hfsrS{}, hfsrNS{}, ufsrS{}, ufsrNS{}, fpCtrl{}, ccrS{}, ccrNS{}, nvicNonSecure[16]{}, nvicIntrPrio[124]{};
+  uint32_t fpdscrS{}, fpdscrNS{}, fpccrS{BIT(2)|BIT(30)|BIT(31)}, fpccrNS{BIT(2)|BIT(30)|BIT(31)}, fpcarS{}, fpcarNS{}, vtorS{0x2000'4000}, vtorNS{0x2000'4000}, sauCtrl{}, mpuTypeS{}, mpuTypeNS{}, mpuCtrlS{}, mpuCtrlNS{}, mpuMair0S{}, mpuMair0NS{}, mpuMair1S{}, mpuMair1NS{}, mpuRbarS[NUM_MPU_REGION_S]{}, mpuRbarNS[NUM_MPU_REGION_NS]{}, mpuRlarS[NUM_MPU_REGION_S]{}, mpuRlarNS[NUM_MPU_REGION_NS]{}, sauRbar[NUM_SAU_REGION]{}, sauRlar[NUM_SAU_REGION]{}, aircrS{}, aircrNS{}, demcrS{}, demcrNS{}, dhcsrS{}, dhcsrNS{}, dauthCtrl{}, cfsrS{}, cfsrNS{}, bfarS{}, bfarNS{}, shcsrS{}, shcsrNS{}, shpr1S{}, shpr1NS{}, hfsrS{}, hfsrNS{}, fpCtrl{}, ccrS{}, ccrNS{}, nvicNonSecure[16]{}, nvicIntrPrio[124]{};
 };
 
 /* IDevice {{{3
@@ -851,20 +887,16 @@ private:
       case REG_DHCSR:         return _n.dhcsrS;
       case REG_DHCSR_NS:      return _n.dhcsrNS;
       case REG_DAUTHCTRL:     return _n.dauthCtrl;
-      case REG_MMFSR_S:       return _n.mmfsrS;
-      case REG_MMFSR_NS:      return _n.mmfsrNS;
+      case REG_CFSR_S:        return _n.cfsrS;
+      case REG_CFSR_NS:       return _n.cfsrNS;
       case REG_BFAR_S:        return _n.bfarS;
       case REG_BFAR_NS:       return _n.bfarNS;
-      case REG_BFSR_S:        return _n.bfsrS;
-      case REG_BFSR_NS:       return _n.bfsrNS;
       case REG_SHCSR_S:       return _n.shcsrS;
       case REG_SHCSR_NS:      return _n.shcsrNS;
       case REG_SHPR1_S:       return _n.shpr1S;
       case REG_SHPR1_NS:      return _n.shpr1NS;
       case REG_HFSR_S:        return _n.hfsrS;
       case REG_HFSR_NS:       return _n.hfsrNS;
-      case REG_UFSR_S:        return _n.ufsrS;
-      case REG_UFSR_NS:       return _n.ufsrNS;
       case REG_FP_CTRL:       return _n.fpCtrl;
       case REG_CCR_S:         return (_n.ccrS  & 0b1110000011100011011) | BIT(0) | BIT(9);
       case REG_CCR_NS:        return (_n.ccrNS & 0b1110000011100011011) | BIT(0) | BIT(9);
@@ -878,8 +910,9 @@ private:
         if (addr >= 0xE000E400 && addr < 0xE000E5F0)
           return _n.nvicIntrPrio[(addr - 0xE000E400)/4];
 
-        printf("Unsupported nest load 0x%08x\n", addr);
-        abort();
+        // "Privileged accesses to unimplemented registers are Res0."
+        // Return 0 for unimplemented registers.
+        return 0;
     }
   }
 
@@ -938,16 +971,12 @@ private:
       case REG_DEMCR_NS:  _n.demcrNS  = v; break;
       case REG_DHCSR:     _n.dhcsrS   = v; break;
       case REG_DHCSR_NS:  _n.dhcsrNS  = v; break;
-      case REG_MMFSR_S:   _n.mmfsrS   = v; break;
-      case REG_MMFSR_NS:  _n.mmfsrNS  = v; break;
+      case REG_CFSR_S:    _n.cfsrS    = v; break;
+      case REG_CFSR_NS:   _n.cfsrNS   = v; break;
       case REG_BFAR_S:    _n.bfarS    = v; break;
       case REG_BFAR_NS:   _n.bfarNS   = v; break;
-      case REG_BFSR_S:    _n.bfsrS    = v; break;
-      case REG_BFSR_NS:   _n.bfsrNS   = v; break;
       case REG_HFSR_S:    _n.hfsrS    = v; break;
       case REG_HFSR_NS:   _n.hfsrNS   = v; break;
-      case REG_UFSR_S:    _n.ufsrS    = v; break;
-      case REG_UFSR_NS:   _n.ufsrNS   = v; break;
       case REG_CCR_S:
         _n.ccrS     = _MaskOrNonMain((v & 0b1110000011100011011) | BIT(0) | BIT(9),
           BITS(16,18)|BIT(10)|BIT( 8)|BIT( 4)|BIT( 1), BIT( 3)); break;
@@ -1386,7 +1415,7 @@ private:
    * implementation is to raise an UNALIGNED UsageFault.
    */
   void _ThrowUnaligned() {
-    InternalOr32(REG_UFSR, REG_UFSR__UNALIGNED);
+    InternalOr32(REG_CFSR, REG_CFSR__UFSR__UNALIGNED);
     auto excInfo = _CreateException(UsageFault, false, false/*UNKNOWN*/);
     _HandleException(excInfo);
   }
@@ -1645,7 +1674,7 @@ private:
         && !(   ( GETBITSM(_s.xpsr, XPSR__EXCEPTION) == 0 && GETBITSM(newPSR, RETPSR__EXCEPTION) == 0)
              || ( GETBITSM(_s.xpsr, XPSR__EXCEPTION) == 1 && GETBITSM(newPSR, RETPSR__EXCEPTION) != 0))) {
       if (_HaveMainExt())
-        InternalOr32(REG_UFSR, REG_UFSR__INVPC);
+        InternalOr32(REG_CFSR, REG_CFSR__UFSR__INVPC);
 
       // Create the exception. NOTE: If Main Extension not implemented then the fault
       // always escalates to a HardFault.
@@ -2128,7 +2157,7 @@ private:
         _s.r[spreg] = limit;
 
       if (_HaveMainExt())
-        InternalOr32(REG_UFSR, REG_UFSR__STKOF);
+        InternalOr32(REG_CFSR, REG_CFSR__UFSR__STKOF);
 
       excInfo = _CreateException(UsageFault, false, false/*UNKNOWN*/);
       if (!excEntry)
@@ -2542,7 +2571,7 @@ private:
     result.memAttrs.ns = ns;
 
     if (!aligned && result.memAttrs.memType == MemType_Device && perms.apValid) {
-      InternalOr32(REG_UFSR, REG_UFSR__UNALIGNED);
+      InternalOr32(REG_CFSR, REG_CFSR__UFSR__UNALIGNED);
       excInfo = _CreateException(UsageFault, false, false/*UNKNOWN*/);
     }
 
@@ -2640,7 +2669,7 @@ private:
     if (addr == _Align(addr, size)) {
       value = _MemA_with_priv(addr, size, priv, true);
     } else if (InternalLoad32(REG_CCR) & REG_CCR__UNALIGN_TRP) {
-      InternalOr32(REG_UFSR, REG_UFSR__UNALIGNED);
+      InternalOr32(REG_CFSR, REG_CFSR__UFSR__UNALIGNED);
       auto excInfo = _CreateException(UsageFault, false, UNKNOWN_VAL(false));
       _HandleException(excInfo);
     } else { // if unaligned access
@@ -2659,7 +2688,7 @@ private:
     if (addr == _Align(addr, size))
       _MemA_with_priv(addr, size, priv, true, value);
     else if (InternalLoad32(REG_CCR) & REG_CCR__UNALIGN_TRP) {
-      InternalOr32(REG_UFSR, REG_UFSR__UNALIGNED);
+      InternalOr32(REG_CFSR, REG_CFSR__UFSR__UNALIGNED);
       auto excInfo = _CreateException(UsageFault, false, UNKNOWN_VAL(false));
       _HandleException(excInfo);
     } else { // if unaligned access
@@ -2703,7 +2732,7 @@ private:
     ExcInfo excInfo = _DefaultExcInfo();
     if (!_IsAligned(addr, size)) {
       if (_HaveMainExt())
-        InternalOr32(REG_UFSR, REG_UFSR__UNALIGNED);
+        InternalOr32(REG_CFSR, REG_CFSR__UFSR__UNALIGNED);
       excInfo = _CreateException(UsageFault, true, secure);
     }
 
@@ -2720,12 +2749,12 @@ private:
         value = 0; // UNKNOWN
         if (_HaveMainExt()) {
           if (accType == AccType_STACK)
-            InternalOr32(REG_BFSR, REG_BFSR__UNSTKERR);
+            InternalOr32(REG_CFSR, REG_CFSR__BFSR__UNSTKERR);
           else if (accType == AccType_NORMAL || accType == AccType_ORDERED) {
             uint32_t bfar = InternalLoad32(REG_BFAR);
             bfar = CHGBITSM(bfar, REG_BFAR__ADDRESS, addr);
             InternalStore32(REG_BFAR, bfar);
-            InternalOr32(REG_BFSR, REG_BFSR__BFARVALID | REG_BFSR__PRECISERR);
+            InternalOr32(REG_CFSR, REG_CFSR__BFSR__BFARVALID | REG_CFSR__BFSR__PRECISERR);
           }
         }
 
@@ -2748,7 +2777,7 @@ private:
 
     if (!_IsAligned(addr, size)) {
       if (_HaveMainExt())
-        InternalOr32(REG_UFSR, REG_UFSR__UNALIGNED);
+        InternalOr32(REG_CFSR, REG_CFSR__UFSR__UNALIGNED);
       excInfo = _CreateException(UsageFault, true, secure);
     }
 
@@ -2777,12 +2806,12 @@ private:
 
         if (_HaveMainExt()) {
           if (accType == AccType_STACK)
-            InternalOr32(REG_BFSR, REG_BFSR__STKERR);
+            InternalOr32(REG_CFSR, REG_CFSR__BFSR__STKERR);
           else if (accType == AccType_LAZYFP)
-            InternalOr32(REG_BFSR, REG_BFSR__LSPERR);
+            InternalOr32(REG_CFSR, REG_CFSR__BFSR__LSPERR);
           else if (accType == AccType_NORMAL || accType == AccType_ORDERED) {
             InternalStore32(REG_BFAR, addr);
-            InternalOr32(REG_BFSR, REG_BFSR__BFARVALID | REG_BFSR__PRECISERR);
+            InternalOr32(REG_CFSR, REG_CFSR__BFSR__BFARVALID | REG_CFSR__BFSR__PRECISERR);
           }
         }
 
@@ -3007,21 +3036,21 @@ private:
       uint8_t fsr = 0;
       switch (accType) {
         case AccType_IFETCH:
-          fsr |= REG_MMFSR__IACCVIOL;
+          fsr |= REG_CFSR__MMFSR__IACCVIOL;
           break;
         case AccType_STACK:
           if (isWrite)
-            fsr |= REG_MMFSR__MSTKERR;
+            fsr |= REG_CFSR__MMFSR__MSTKERR;
           else
-            fsr |= REG_MMFSR__MUNSTKERR;
+            fsr |= REG_CFSR__MMFSR__MUNSTKERR;
           break;
         case AccType_LAZYFP:
-          fsr |= REG_MMFSR__MLSPERR;
+          fsr |= REG_CFSR__MMFSR__MLSPERR;
           break;
         case AccType_NORMAL:
         case AccType_ORDERED:
-          fsr |= REG_MMFSR__MMARVALID;
-          fsr |= REG_MMFSR__DACCVIOL;
+          fsr |= REG_CFSR__MMFSR__MMARVALID;
+          fsr |= REG_CFSR__MMFSR__DACCVIOL;
           break;
         default:
           assert(false);
@@ -3029,12 +3058,12 @@ private:
       }
 
       if (isSecure) {
-        InternalOr32(REG_MMFSR_S, fsr);
-        if (fsr & REG_MMFSR__MMARVALID)
+        InternalOr32(REG_CFSR_S, fsr);
+        if (fsr & REG_CFSR__MMFSR__MMARVALID)
           InternalStore32(REG_MMFAR_S, addr);
       } else {
-        InternalOr32(REG_MMFSR_NS, fsr);
-        if (fsr & REG_MMFSR__MMARVALID)
+        InternalOr32(REG_CFSR_NS, fsr);
+        if (fsr & REG_CFSR__MMFSR__MMARVALID)
           InternalStore32(REG_MMFAR_NS, addr);
       }
     }
@@ -4140,7 +4169,7 @@ private:
     uint32_t excNo = GETBITSM(psr, XPSR__EXCEPTION);
     if (exc.fault == NoFault && (mode == PEMode_Handler) == !excNo) {
       if (_HaveMainExt())
-        InternalOr32(REG_UFSR, REG_UFSR__INVPC);
+        InternalOr32(REG_CFSR, REG_CFSR__UFSR__INVPC);
       return _CreateException(UsageFault, false, false/*UNKNOWN*/);
     }
 
@@ -4250,9 +4279,9 @@ private:
     ExcInfo excInfo;
     if (!enabled) {
       if (toSecure)
-        InternalOr32(REG_UFSR_S, REG_UFSR__NOCP);
+        InternalOr32(REG_CFSR_S, REG_CFSR__UFSR__NOCP);
       else
-        InternalOr32(REG_UFSR_NS, REG_UFSR__NOCP);
+        InternalOr32(REG_CFSR_NS, REG_CFSR__UFSR__NOCP);
       excInfo = _CreateException(UsageFault, true, toSecure);
     } else
       excInfo = _DefaultExcInfo();
@@ -4293,7 +4322,7 @@ private:
       if (!_IsActiveForState(retExcNo, targetDomainSecure)) {
         error = true;
         if (_HaveMainExt()) {
-          InternalOr32(REG_UFSR, REG_UFSR__INVPC);
+          InternalOr32(REG_CFSR, REG_CFSR__UFSR__INVPC);
           excNo = UsageFault;
         } else
           excNo = HardFault;
@@ -4556,14 +4585,14 @@ private:
                 // UNDEFINSTR UsageFaults for unallocated encodings even if the
                 // coprocessor is disabled.
                 if (IMPL_DEF_DECODE_CP_SPACE)
-                  InternalOr32(REG_UFSR, REG_UFSR__UNDEFINSTR);
+                  InternalOr32(REG_CFSR, REG_CFSR__UFSR__UNDEFINSTR);
                 else {
-                  InternalOr32(REG_UFSR, REG_UFSR__NOCP);
+                  InternalOr32(REG_CFSR, REG_CFSR__UFSR__NOCP);
                   toSecure = cpFaultState;
                 }
               }
             } else
-              InternalOr32(REG_UFSR, REG_UFSR__UNDEFINSTR);
+              InternalOr32(REG_CFSR, REG_CFSR__UFSR__UNDEFINSTR);
 
             // If Main Extension is not implemented the fault will escalate to a HardFault.
             ExcInfo excInfo = _CreateException(UsageFault, true, toSecure);
@@ -4857,9 +4886,7 @@ private:
         InternalStore32(REG_SFSR, sfsr);
         excInfo = _CreateException(SecureFault, true, true);
       } else {
-        uint32_t ufsr = InternalLoad32(REG_UFSR);
-        ufsr |= REG_UFSR__INVSTATE;
-        InternalStore32(REG_UFSR, ufsr);
+        InternalOr32(REG_CFSR, REG_CFSR__UFSR__INVSTATE);
         excInfo = _CreateException(UsageFault, false, false/*unknown*/);
       }
       _HandleException(excInfo);
@@ -4945,7 +4972,7 @@ private:
   bool _FPB_CheckBreakPoint(uint32_t iaddr, int size, bool isIFetch, bool isSecure) {
     bool match = _FPB_CheckMatchAddress(iaddr);
     if (!match && size == 4 && _FPB_CheckMatchAddress(iaddr+2))
-      match = _ConstrainUnpredictableBool(false/*Unpredictable_FPBreakpoint*/);
+      match = _ConstrainUnpredictableBool(true/*Unpredictable_FPBreakpoint*/);
     return match;
   }
 
@@ -5413,7 +5440,7 @@ private:
       std::tie(error, value) = _GetMem(memAddrDesc, 2);
       if (error) {
         value = UINT16_MAX; // UNKNOWN
-        InternalOr32(REG_BFSR, REG_BFSR__IBUSERR);
+        InternalOr32(REG_CFSR, REG_CFSR__BFSR__IBUSERR);
         excInfo = _CreateException(BusFault, false, false/*UNKNOWN*/);
         TRACE("fetch failed\n");
       }
@@ -5763,7 +5790,7 @@ private:
     ExcInfo           excInfo;
     AddressDescriptor memAddrDesc;
     if (addr != _Align(addr, size)) {
-      InternalOr32(REG_UFSR, REG_UFSR__UNALIGNED);
+      InternalOr32(REG_CFSR, REG_CFSR__UFSR__UNALIGNED);
       excInfo = _CreateException(UsageFault, false, UNKNOWN_VAL(false));
     } else
       std::tie(excInfo, memAddrDesc) =
@@ -5820,7 +5847,7 @@ private:
    * --------------------------
    */
   void _GenerateIntegerZeroDivide() {
-    InternalOr32(REG_UFSR, REG_UFSR__DIVBYZERO);
+    InternalOr32(REG_CFSR, REG_CFSR__UFSR__DIVBYZERO);
 
     auto excInfo = _CreateException(UsageFault, false, UNKNOWN_VAL(false));
     _HandleException(excInfo);
@@ -5839,7 +5866,7 @@ private:
    * -----------------------------
    */
   void _GenerateCoprocessorException() {
-    InternalOr32(REG_UFSR, REG_UFSR__UNDEFINSTR);
+    InternalOr32(REG_CFSR, REG_CFSR__UFSR__UNDEFINSTR);
     auto excInfo = _CreateException(UsageFault, false, UNKNOWN_VAL(false));
     _HandleException(excInfo);
   }
@@ -16417,7 +16444,7 @@ private:
       if (IMPL_DEF_SPLIM_EXCEPTION_ON_INVAL_MEM_ACCESS) {
         if (applyLimit && addr < limit) {
           if (_HaveMainExt())
-            InternalOr32(REG_UFSR, REG_UFSR__STKOF);
+            InternalOr32(REG_CFSR, REG_CFSR__UFSR__STKOF);
           // If Main Extension is not implemented the fault always escalates to
           // HardFault.
           auto excInfo = _CreateException(UsageFault, false, UNKNOWN_VAL(false));
