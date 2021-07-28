@@ -174,6 +174,8 @@ private:
 #define IMPL_DEF_OVERRIDDEN_EXCEPTIONS_PENDED         1
 #define IMPL_DEF_TAIL_CHAINING_SUPPORTED              1
 #define IMPL_DEF_DROP_PREV_GEN_EXC                    1
+#define IMPL_DEF_BASELINE_NO_SW_ACCESS_DWT            0
+#define IMPL_DEF_BASELINE_NO_SW_ACCESS_FPB            0
 
 /* Register Definitions {{{3
  * ====================
@@ -187,12 +189,11 @@ private:
 /* DWT: Data Watchpoint and Trace {{{4
  * ------------------------------
  */
-#define REG_DWT_CTRL      SECREG(REG_DWT_CTRL)
-#define REG_DWT_CTRL_S    0xE000'1000
-#define REG_DWT_CTRL_NS   0xE002'1000
+#define REG_DWT_CTRL      0xE000'1000
 #define   REG_DWT_CTRL__NUMCOMP   BITS(28,31)
 #define   REG_DWT_CTRL__NOTRCPKT  BIT (27)
 #define   REG_DWT_CTRL__NOCYCCNT  BIT (25)
+#define   REG_DWT_CTRL__NOPRFCNT  BIT (24)
 #define REG_DWT_COMP(N)     (0xE000'1020 + 16*(N))
 #define REG_DWT_FUNCTION(N) (0xE000'1028 + 16*(N))
 #define   REG_DWT_FUNCTION__MATCH     BITS( 0, 3)
@@ -271,7 +272,7 @@ private:
 #define   REG_AIRCR__VECTKEY        BITS(16,31)
 #define REG_SCR           SECREG(REG_SCR)
 #define REG_SCR_S         0xE000'ED10
-#define REG_SCR_NS        0xE000'ED10
+#define REG_SCR_NS        0xE002'ED10
 #define   REG_SCR__SLEEPONEXIT    BIT ( 1)
 #define REG_CCR       SECREG(REG_CCR)
 #define REG_CCR_S     0xE000'ED14
@@ -352,7 +353,9 @@ private:
 #define REG_HFSR_NS   0xE002'ED2C
 #define   REG_HFSR__VECTTBL   BIT ( 1)
 #define   REG_HFSR__FORCED    BIT (30)
-#define REG_DFSR      0xE000'ED30
+#define REG_DFSR      SECREG(REG_DFSR)
+#define REG_DFSR_S    0xE000'ED30
+#define REG_DFSR_NS   0xE002'ED30
 #define   REG_DFSR__HALTED          BIT ( 0)
 #define   REG_DFSR__BKPT            BIT ( 1)
 #define   REG_DFSR__DWTTRAP         BIT ( 2)
@@ -390,14 +393,37 @@ private:
 #define   REG_MPU_CTRL__HFNMIENA    BIT ( 1)
 #define   REG_MPU_CTRL__PRIVDEFENA  BIT ( 2)
 
+#define REG_MPU_RNR_S   0xE000'ED98
+#define REG_MPU_RNR_NS  0xE002'ED98
+
+#define REG_MPU_RBAR_S  0xE000'ED9C
+#define REG_MPU_RBAR_NS 0xE002'ED9C
+
 #define REG_MPU_RBAR__XN        BIT ( 0)
 #define REG_MPU_RBAR__AP        BITS( 1, 2)
 #define REG_MPU_RBAR__SH        BITS( 3, 4)
 #define REG_MPU_RBAR__BASE      BITS( 5,31)
 
+#define REG_MPU_RLAR_S  0xE000'EDA0
+#define REG_MPU_RLAR_NS 0xE002'EDA0
+
 #define REG_MPU_RLAR__EN        BIT ( 0)
 #define REG_MPU_RLAR__ATTR_IDX  BITS( 1, 3)
 #define REG_MPU_RLAR__LIMIT     BITS(5,31)
+
+#define REG_MPU_RBAR_A1_S 0xE000'EDA4
+#define REG_MPU_RBAR_A2_S 0xE000'EDAC
+#define REG_MPU_RBAR_A3_S 0xE000'EDB4
+#define REG_MPU_RBAR_A1_NS 0xE002'EDA4
+#define REG_MPU_RBAR_A2_NS 0xE002'EDAC
+#define REG_MPU_RBAR_A3_NS 0xE002'EDB4
+
+#define REG_MPU_RLAR_A1_S 0xE000'EDA8
+#define REG_MPU_RLAR_A2_S 0xE000'EDB0
+#define REG_MPU_RLAR_A3_S 0xE000'EDB8
+#define REG_MPU_RLAR_A1_NS 0xE002'EDA8
+#define REG_MPU_RLAR_A2_NS 0xE002'EDB0
+#define REG_MPU_RLAR_A3_NS 0xE002'EDB8
 
 #define REG_MPU_MAIR0     SECREG(REG_MPU_MAIR0)
 #define REG_MPU_MAIR0_S   0xE000EDC0
@@ -415,11 +441,14 @@ private:
 #define   REG_SAU_CTRL__ALLNS         BIT ( 1)
 #define REG_SAU_TYPE      0xE000'EDD4
 #define   REG_SAU_TYPE__SREGION       BITS( 0, 7)
-
-#define REG_SAU_RBAR__BADDR   BITS( 5,31)
-#define REG_SAU_RLAR__ENABLE  BIT ( 0)
-#define REG_SAU_RLAR__NSC     BIT ( 1)
-#define REG_SAU_RLAR__LADDR   BITS( 5,31)
+#define REG_SAU_RNR       0xE000'EDD8
+#define   REG_SAU_RNR__REGION         BITS( 0, 7)
+#define REG_SAU_RBAR      0xE000'EDDC
+#define   REG_SAU_RBAR__BADDR   BITS( 5,31)
+#define REG_SAU_RLAR      0xE000'EDE0
+#define   REG_SAU_RLAR__ENABLE  BIT ( 0)
+#define   REG_SAU_RLAR__NSC     BIT ( 1)
+#define   REG_SAU_RLAR__LADDR   BITS( 5,31)
 
 #define REG_SFSR      SECREG(REG_SFSR)
 #define REG_SFSR_S    0xE000'EDE4
@@ -440,7 +469,8 @@ private:
 /* DCB: Debug Control Block {{{4
  * ------------------------
  */
-#define REG_DHCSR     0xE000'EDF0
+#define REG_DHCSR     SECREG(REG_DHCSR)
+#define REG_DHCSR_S   0xE000'EDF0
 #define REG_DHCSR_NS  0xE002'EDF0
 #define   REG_DHCSR__S_HALT     BIT(17)
 #define   REG_DHCSR__S_LOCKUP   BIT(19)
@@ -449,13 +479,24 @@ private:
 #define   REG_DHCSR__C_HALT         BIT ( 1)
 #define   REG_DHCSR__C_STEP         BIT ( 2)
 #define   REG_DHCSR__C_MASKINTS     BIT ( 3)
-#define REG_DEMCR     0xE000'EDFC
+#define REG_DEMCR     SECREG(REG_DEMCR)
+#define REG_DEMCR_S   0xE000'EDFC
 #define REG_DEMCR_NS  0xE002'EDFC
-#define   REG_DEMCR__MON_EN     BIT(16)
-#define   REG_DEMCR__MON_PEND   BIT(17)
-#define   REG_DEMCR__MON_STEP   BIT(18)
-#define   REG_DEMCR__SDME       BIT(20)
-#define   REG_DEMCR__TRCENA     BIT(24)
+#define   REG_DEMCR__VC_CORERESET BIT( 0)
+#define   REG_DEMCR__VC_MMERR     BIT( 4)
+#define   REG_DEMCR__VC_NOCPERR   BIT( 5)
+#define   REG_DEMCR__VC_CHKERR    BIT( 6)
+#define   REG_DEMCR__VC_STATERR   BIT( 7)
+#define   REG_DEMCR__VC_BUSERR    BIT( 8)
+#define   REG_DEMCR__VC_INTERR    BIT( 9)
+#define   REG_DEMCR__VC_HARDERR   BIT(10)
+#define   REG_DEMCR__VC_SFERR     BIT(11)
+#define   REG_DEMCR__MON_EN       BIT(16)
+#define   REG_DEMCR__MON_PEND     BIT(17)
+#define   REG_DEMCR__MON_STEP     BIT(18)
+#define   REG_DEMCR__MON_REQ      BIT(19)
+#define   REG_DEMCR__SDME         BIT(20)
+#define   REG_DEMCR__TRCENA       BIT(24)
 #define REG_DAUTHCTRL 0xE000'EE04
 #define   REG_DAUTHCTRL__SPIDENSEL  BIT ( 0)
 #define   REG_DAUTHCTRL__INTSPIDEN  BIT ( 1)
@@ -477,7 +518,14 @@ private:
 #define   REG_FPCCR__S              BIT ( 2)
 #define   REG_FPCCR__THREAD         BIT ( 3)
 #define   REG_FPCCR__HFRDY          BIT ( 4)
+#define   REG_FPCCR__MMRDY          BIT ( 5)
+#define   REG_FPCCR__BFRDY          BIT ( 6)
+#define   REG_FPCCR__SFRDY          BIT ( 7)
+#define   REG_FPCCR__MONRDY         BIT ( 8)
+#define   REG_FPCCR__SPLIMVIOL      BIT ( 9)
+#define   REG_FPCCR__UFRDY          BIT (10)
 #define   REG_FPCCR__TS             BIT (26)
+#define   REG_FPCCR__CLRONRETS      BIT (27)
 #define   REG_FPCCR__CLRONRET       BIT (28)
 #define   REG_FPCCR__LSPENS         BIT (29)
 #define   REG_FPCCR__LSPEN          BIT (30)
@@ -658,6 +706,7 @@ struct CpuState {
   uint32_t xpsr, spNS, psplimNS, psplimS, msplimNS, msplimS, fpscr;
   uint32_t primaskNS, primaskS, faultmaskNS, faultmaskS, basepriNS, basepriS, controlNS, controlS;
   SecurityState curState;
+  uint8_t excEnable[NUM_EXC];
   uint8_t excActive[NUM_EXC];
   uint8_t excPending[NUM_EXC];
   uint64_t d[16];
@@ -680,8 +729,64 @@ struct CpuState {
 #define NUM_MPU_REGION_S    8
 #define NUM_MPU_REGION_NS   8
 #define NUM_SAU_REGION      8
+#define NUM_DWT_COMP        4
+#define NUM_FPB_COMP        4
+#define CP_IMPL_MASK        0b11111111
+
+#if NUM_FPB_COMP > 126
+#  error Cannot have more than 126 FPB comparator registers
+#endif
+
 struct CpuNest {
-  uint32_t fpdscrS{}, fpdscrNS{}, fpccrS{BIT(2)|BIT(30)|BIT(31)}, fpccrNS{BIT(2)|BIT(30)|BIT(31)}, fpcarS{}, fpcarNS{}, vtorS{0x2000'4000}, vtorNS{0x2000'4000}, sauCtrl{}, mpuTypeS{}, mpuTypeNS{}, mpuCtrlS{}, mpuCtrlNS{}, mpuMair0S{}, mpuMair0NS{}, mpuMair1S{}, mpuMair1NS{}, mpuRbarS[NUM_MPU_REGION_S]{}, mpuRbarNS[NUM_MPU_REGION_NS]{}, mpuRlarS[NUM_MPU_REGION_S]{}, mpuRlarNS[NUM_MPU_REGION_NS]{}, sauRbar[NUM_SAU_REGION]{}, sauRlar[NUM_SAU_REGION]{}, aircrS{}, aircrNS{}, demcrS{}, demcrNS{}, dhcsrS{}, dhcsrNS{}, dauthCtrl{}, cfsrS{}, cfsrNS{}, bfarS{}, bfarNS{}, shcsrS{}, shcsrNS{}, shpr1S{}, shpr1NS{}, hfsrS{}, hfsrNS{}, fpCtrl{}, ccrS{}, ccrNS{}, nvicNonSecure[16]{}, nvicIntrPrio[124]{};
+  uint32_t dwtCtrl{};               // REG_DWT_CTRL, res0 if !DWT, unbanked, may not be accessible to SW if !Main
+  uint32_t dwtComp[15]{};           // REG_DWT_COMPn, res0 if !DWT, unbanked, may not be accessible to SW if !Main
+  uint32_t dwtFunction[15]{};       // REG_DWT_FUNCTIONn, res0 if !DWT, unbanked, may not be accessible to SW if !Main
+  uint32_t fpCtrl{};                // REG_FP_CTRL, res0 if !FPB, unbanked, may not be accessible to SW if !Main
+  uint32_t fpComp[NUM_FPB_COMP]{};  // REG_FP_COMPn, res0 if !FPB, unbanked, may not be accessible to SW if !Main
+  uint32_t cppwrS{}, cppwrNS{};     // REG_CPPWR, res0 if !Main, has NS alias, unbanked
+
+  uint32_t nvicItns[16]{};          // REG_NVIC_ITNSn, unbanked, NS: RAZ/WI
+  uint32_t nvicIpr[124]{};          // REG_NVIC_IPRn, unbanked
+
+  uint32_t cfsrS{}, cfsrNS{};
+  uint32_t hfsrS{}, hfsrNS{};
+  uint32_t dfsrS{}, dfsrNS{};
+  uint32_t mmfarS{}, mmfarNS{};
+  uint32_t bfarS{}, bfarNS{};
+
+  uint32_t shpr1S{}, shpr1NS{}, shpr2S{}, shpr2NS{}, shpr3S{}, shpr3NS{};
+  uint32_t ccrS{}, ccrNS{};
+  uint32_t scrS{}, scrNS{};
+  uint32_t aircrS{}, aircrNS{};
+  uint32_t cpacrS{}, cpacrNS{};
+  uint32_t nsacr{};
+
+  uint32_t mpuTypeS{}, mpuTypeNS{};
+  uint32_t mpuCtrlS{}, mpuCtrlNS{};
+  uint32_t mpuRnrS{}, mpuRnrNS{};
+  uint32_t mpuMair0S{}, mpuMair0NS{}, mpuMair1S{}, mpuMair1NS{};
+  uint32_t mpuRbarS[NUM_MPU_REGION_S]{}, mpuRbarNS[NUM_MPU_REGION_NS]{};
+  uint32_t mpuRlarS[NUM_MPU_REGION_S]{}, mpuRlarNS[NUM_MPU_REGION_NS]{};
+
+  uint32_t sauCtrl{};
+  uint32_t sauRnr{};
+  uint32_t sauRbar[NUM_SAU_REGION]{};
+  uint32_t sauRlar[NUM_SAU_REGION]{};
+
+  uint32_t sfsr{};
+  uint32_t sfar{};
+
+  uint32_t dauthCtrl{};
+
+  uint32_t fpccrS{}, fpccrNS{}; // unbanked bits live in fpccrS
+  uint32_t fpcarS{}, fpcarNS{};
+  uint32_t fpdscrS{}, fpdscrNS{};
+
+  uint32_t vtorS{}, vtorNS{};
+
+  uint32_t icsr{};
+  uint32_t dhcsr{};
+  uint32_t demcr{};
 };
 
 /* IDevice {{{3
@@ -712,7 +817,7 @@ struct IDevice {
  * --------------------
  * SimpleSimulatorConfig implements the SimulatorConfig concept. Any object can
  * be used so long as it can be copied and it supports the methods shown below.
- * 
+ *
  * A static implementation with constexpr methods could be used to enable
  * compile-time removal of branches unrelated to the chosen profile.
  */
@@ -757,31 +862,84 @@ struct Simulator {
    */
   void TopLevel() { _TopLevel(); }
 
-  /* Architectural Support Functions {{{3
-   * ===============================
-   */
 private:
-
-  /* _IsSEE {{{4
-   * ------
+  /* Memory-Mapped Register Implementation {{{3
+   * =====================================
    */
-  static bool _IsSEE(const Exception &e) { return e.GetType() == ExceptionType::SEE; }
-
-  /* _IsUNDEFINED {{{4
-   * ------------
-   */
-  static bool _IsUNDEFINED(const Exception &e) { return e.GetType() == ExceptionType::UNDEFINED; }
-
-  /* _IsExceptionTaken {{{4
-   * -----------------
-   */
-  static bool _IsExceptionTaken(const Exception &e) { return e.GetType() == ExceptionType::EndOfInstruction; }
 
   /* _NestReset {{{4
    * ----------
    */
   void _NestReset() {
     _n = CpuNest();
+
+    // REG_DWT_CTRL
+    if (_HaveDWT()) {
+      _n.dwtCtrl = PUTBITSM(REG_DWT_CTRL__NUMCOMP, NUM_DWT_COMP);
+      if (!_HaveMainExt())
+        _n.dwtCtrl |= REG_DWT_CTRL__NOTRCPKT | REG_DWT_CTRL__NOCYCCNT | REG_DWT_CTRL__NOPRFCNT;
+    }
+
+    // REG_DWT_FUNCTIONn
+    if (_HaveDWT()) {
+      for (size_t i=0; i<NUM_DWT_COMP; ++i) {
+        uint32_t id;
+        switch (i) {
+          case 0:
+            id = (_n.dwtCtrl & REG_DWT_CTRL__NOCYCCNT) ? 0b01010 /* IA DA DA+V */ : 0b01011 /* CC IA DA DA+V */;
+            break;
+          default:
+            id = 0b11110 /* IA IAL DA DAL DV LDV DA+V */;
+            break;
+        }
+        _n.dwtFunction[i] = PUTBITSM(REG_DWT_FUNCTION__ID, id);
+      }
+    }
+
+    // REG_FP_CTRL
+    _n.fpCtrl =
+        PUTBITSM(REG_FP_CTRL__REV, 1)
+      | PUTBITSM(REG_FP_CTRL__NUM_CODE_LO, GETBITS(NUM_FPB_COMP,0,3))
+      | PUTBITSM(REG_FP_CTRL__NUM_CODE_HI, GETBITS(NUM_FPB_COMP,4,6));
+
+    // REG_FPCCR
+    _n.fpccrS  = REG_FPCCR__S | REG_FPCCR__LSPEN | REG_FPCCR__ASPEN;
+    _n.fpccrNS = REG_FPCCR__ASPEN;
+
+    // REG_VTOR
+    _n.vtorS  = 0x2000'4000; // TODO
+    _n.vtorNS = 0x2000'4000;
+  }
+
+  /* NestAccessType {{{4
+   * --------------
+   */
+  enum NestAccessType {
+    NAT_SW,         // Load/store from software running on core
+    NAT_Internal,   // Core's internal logic is accessing register
+    NAT_External,   // JTAG, etc.
+  };
+
+  /* _NestCheckRegDWT {{{4
+   * ----------------
+   */
+  bool _NestCheckRegDWT(NestAccessType nat) {
+    return _HaveDWT() && (nat != NAT_SW || IMPL_DEF_BASELINE_NO_SW_ACCESS_DWT || _HaveMainExt());
+  }
+
+  /* _NestCheckRegFPB {{{4
+   * ----------------
+   */
+  bool _NestCheckRegFPB(NestAccessType nat) {
+    return _HaveFPB() && (nat != NAT_SW || IMPL_DEF_BASELINE_NO_SW_ACCESS_FPB || _HaveMainExt());
+  }
+
+  /* _NestMaskPrio {{{4
+   * -------------
+   */
+  uint8_t _NestMaskPrio(uint8_t m) {
+    // TODO
+    return m;
   }
 
   /* _NestAccessClassify {{{4
@@ -846,9 +1004,9 @@ private:
     if (targetRAZWI)
       v = 0;
     else if (targetNS)
-      v = _NestLoad32Actual(addr |  0x2'0000U);
+      v = _NestLoad32Actual(addr |  0x2'0000U, NAT_SW);
     else
-      v = _NestLoad32Actual(addr & ~0x2'0000U);
+      v = _NestLoad32Actual(addr & ~0x2'0000U, NAT_SW);
 
     return 0;
   }
@@ -856,59 +1014,298 @@ private:
   /* _NestLoad32Actual {{{4
    * -----------------
    */
-  uint32_t _NestLoad32Actual(phys_t addr) {
+  uint32_t _NestLoad32Actual(phys_t addr, NestAccessType nat) {
     phys_t baddr    = addr & ~0x2'0000U;
     bool   isNS     = !!(addr &  0x2'0000U);
     if (isNS)
       ASSERT(_HaveSecurityExt());
 
     switch (addr) {
-      case REG_FPDSCR_S:      return _n.fpdscrS;
-      case REG_FPDSCR_NS:     return _n.fpdscrNS;
-      case REG_FPCCR_S:       return _n.fpccrS;
-      case REG_FPCCR_NS:      return _n.fpccrNS;
-      case REG_FPCAR_S:       return _n.fpcarS;
-      case REG_FPCAR_NS:      return _n.fpcarNS;
-      case REG_VTOR_S:        return _n.vtorS;
-      case REG_VTOR_NS:       return _n.vtorNS;
-      case REG_SAU_CTRL:      return _n.sauCtrl;
+      case REG_DWT_CTRL:      return _NestCheckRegDWT(nat) ? _n.dwtCtrl : 0; // Res0
+
+      case REG_DWT_COMP( 0):
+      case REG_DWT_COMP( 1):
+      case REG_DWT_COMP( 2):
+      case REG_DWT_COMP( 3):
+      case REG_DWT_COMP( 4):
+      case REG_DWT_COMP( 5):
+      case REG_DWT_COMP( 6):
+      case REG_DWT_COMP( 7):
+      case REG_DWT_COMP( 8):
+      case REG_DWT_COMP( 9):
+      case REG_DWT_COMP(10):
+      case REG_DWT_COMP(11):
+      case REG_DWT_COMP(12):
+      case REG_DWT_COMP(13):
+      case REG_DWT_COMP(14):
+        return _NestCheckRegDWT(nat) ? _n.dwtComp[(addr - REG_DWT_COMP(0))/16] : 0; // Res0
+
+      case REG_DWT_FUNCTION( 0):
+      case REG_DWT_FUNCTION( 1):
+      case REG_DWT_FUNCTION( 2):
+      case REG_DWT_FUNCTION( 3):
+      case REG_DWT_FUNCTION( 4):
+      case REG_DWT_FUNCTION( 5):
+      case REG_DWT_FUNCTION( 6):
+      case REG_DWT_FUNCTION( 7):
+      case REG_DWT_FUNCTION( 8):
+      case REG_DWT_FUNCTION( 9):
+      case REG_DWT_FUNCTION(10):
+      case REG_DWT_FUNCTION(11):
+      case REG_DWT_FUNCTION(12):
+      case REG_DWT_FUNCTION(13):
+      case REG_DWT_FUNCTION(14):
+        if (_NestCheckRegDWT(nat)) {
+          uint32_t n = (addr - REG_DWT_FUNCTION(0))/16;
+          uint32_t v = _n.dwtFunction[n];
+          if (nat != NAT_Internal)
+            _n.dwtFunction[n] &= ~REG_DWT_FUNCTION__MATCHED;
+          return v;
+        } else
+          return 0; // Res0
+
+      case REG_FP_CTRL:       return _NestCheckRegFPB(nat) ? _n.fpCtrl : 0;
+
+      case REG_CPPWR_S:       return _HaveMainExt() ? _n.cppwrS  : 0;
+      case REG_CPPWR_NS:      return _HaveMainExt() ? _n.cppwrNS : 0;
+
+      case REG_CFSR_S:        return _HaveMainExt() ? _n.cfsrS   : 0;
+      case REG_CFSR_NS:       return _HaveMainExt() ? _n.cfsrNS  : 0;
+      case REG_HFSR_S:        return _HaveMainExt() ? _n.hfsrS   : 0;
+      case REG_HFSR_NS:       return _HaveMainExt() ? _n.hfsrNS  : 0;
+      case REG_DFSR_S:        return _HaveMainExt() || _HaveHaltingDebug() ? _n.dfsrS  : 0;
+      case REG_DFSR_NS:       return _HaveMainExt() || _HaveHaltingDebug() ? _n.dfsrNS : 0;
+
+      case REG_MMFAR_S:       return _HaveMainExt() ? _n.mmfarS  : 0;
+      case REG_MMFAR_NS:      return _HaveMainExt() ? _n.mmfarNS : 0;
+      case REG_BFAR_S:        return _HaveMainExt() ? _n.bfarS   : 0;
+      case REG_BFAR_NS:       return _HaveMainExt() ? _n.bfarNS  : 0;
+
+      case REG_SHPR1_S:       return _HaveMainExt() ? _n.shpr1S  : 0;
+      case REG_SHPR1_NS:      return _HaveMainExt() ? _n.shpr1NS : 0;
+      case REG_SHPR2_S:       return _n.shpr2S;
+      case REG_SHPR2_NS:      return _n.shpr2NS;
+      case REG_SHPR3_S:       return _n.shpr3S;
+      case REG_SHPR3_NS:      return _n.shpr3NS;
+
+      case REG_CCR_S:         return (_n.ccrS  & 0b1110000011100011011) | BIT(0) | BIT(9);
+      case REG_CCR_NS:        return (_n.ccrNS & 0b1110000011100011011) | BIT(0) | BIT(9);
+
+      case REG_SCR_S:         return _n.scrS;
+      case REG_SCR_NS:        return _n.scrNS;
+
+      case REG_AIRCR_S: {
+        uint32_t v = CHGBITSM(_n.aircrS , REG_AIRCR__VECTKEY, 0xFA05);
+        return v;
+      }
+      case REG_AIRCR_NS: {
+        uint32_t v = CHGBITSM(_n.aircrNS, REG_AIRCR__VECTKEY, 0xFA05);
+        if (_n.aircrS & REG_AIRCR__SYSRESETREQS)
+          v &= ~REG_AIRCR__SYSRESETREQ;
+        v = CHGBITSM(v, REG_AIRCR__BFHFNMINS, GETBITSM(_n.aircrS, REG_AIRCR__BFHFNMINS));
+        return v;
+      }
+
+      case REG_CPACR_S:       return _n.cpacrS;
+      case REG_CPACR_NS:      return _n.cpacrNS;
+
+      case REG_NSACR:         return _n.nsacr;
+
       case REG_MPU_TYPE_S:    return PUTBITSM(NUM_MPU_REGION_S,  REG_MPU_TYPE__DREGION);
       case REG_MPU_TYPE_NS:   return PUTBITSM(NUM_MPU_REGION_NS, REG_MPU_TYPE__DREGION);
+
       case REG_MPU_CTRL_S:    return _n.mpuCtrlS;
       case REG_MPU_CTRL_NS:   return _n.mpuCtrlNS;
+
+      case REG_MPU_RNR_S:     return _n.mpuRnrS;
+      case REG_MPU_RNR_NS:    return _n.mpuRnrNS;
+
       case REG_MPU_MAIR0_S:   return _n.mpuMair0S;
       case REG_MPU_MAIR0_NS:  return _n.mpuMair0NS;
       case REG_MPU_MAIR1_S:   return _n.mpuMair1S;
       case REG_MPU_MAIR1_NS:  return _n.mpuMair1NS;
-      case REG_AIRCR_S:       return _n.aircrS;
-      case REG_AIRCR_NS:      return _n.aircrNS;
-      case REG_DEMCR:         return _n.demcrS;
-      case REG_DEMCR_NS:      return _n.demcrNS;
-      case REG_DHCSR:         return _n.dhcsrS;
-      case REG_DHCSR_NS:      return _n.dhcsrNS;
-      case REG_DAUTHCTRL:     return _n.dauthCtrl;
-      case REG_CFSR_S:        return _n.cfsrS;
-      case REG_CFSR_NS:       return _n.cfsrNS;
-      case REG_BFAR_S:        return _n.bfarS;
-      case REG_BFAR_NS:       return _n.bfarNS;
-      case REG_SHCSR_S:       return _n.shcsrS;
-      case REG_SHCSR_NS:      return _n.shcsrNS;
-      case REG_SHPR1_S:       return _n.shpr1S;
-      case REG_SHPR1_NS:      return _n.shpr1NS;
-      case REG_HFSR_S:        return _n.hfsrS;
-      case REG_HFSR_NS:       return _n.hfsrNS;
-      case REG_FP_CTRL:       return _n.fpCtrl;
-      case REG_CCR_S:         return (_n.ccrS  & 0b1110000011100011011) | BIT(0) | BIT(9);
-      case REG_CCR_NS:        return (_n.ccrNS & 0b1110000011100011011) | BIT(0) | BIT(9);
+
+      case REG_MPU_RBAR_S:    return _n.mpuRnrS  < NUM_MPU_REGION_S  ? _n.mpuRbarS [_n.mpuRnrS ] : 0;
+      case REG_MPU_RBAR_A1_S: return _n.mpuRnrS+1< NUM_MPU_REGION_S  ? _n.mpuRbarS [_n.mpuRnrS+1] : 0;
+      case REG_MPU_RBAR_A2_S: return _n.mpuRnrS+2< NUM_MPU_REGION_S  ? _n.mpuRbarS [_n.mpuRnrS+2] : 0;
+      case REG_MPU_RBAR_A3_S: return _n.mpuRnrS+3< NUM_MPU_REGION_S  ? _n.mpuRbarS [_n.mpuRnrS+3] : 0;
+      case REG_MPU_RBAR_NS:   return _n.mpuRnrNS < NUM_MPU_REGION_NS ? _n.mpuRbarNS[_n.mpuRnrNS ] : 0;
+      case REG_MPU_RBAR_A1_NS:return _n.mpuRnrNS+1<NUM_MPU_REGION_NS ? _n.mpuRbarNS[_n.mpuRnrNS+1] : 0;
+      case REG_MPU_RBAR_A2_NS:return _n.mpuRnrNS+2<NUM_MPU_REGION_NS ? _n.mpuRbarNS[_n.mpuRnrNS+2] : 0;
+      case REG_MPU_RBAR_A3_NS:return _n.mpuRnrNS+3<NUM_MPU_REGION_NS ? _n.mpuRbarNS[_n.mpuRnrNS+3] : 0;
+
+      case REG_MPU_RLAR_S:    return _n.mpuRnrS  < NUM_MPU_REGION_S  ? _n.mpuRlarS [_n.mpuRnrS ] : 0;
+      case REG_MPU_RLAR_A1_S: return _n.mpuRnrS+1< NUM_MPU_REGION_S  ? _n.mpuRlarS [_n.mpuRnrS+1] : 0;
+      case REG_MPU_RLAR_A2_S: return _n.mpuRnrS+2< NUM_MPU_REGION_S  ? _n.mpuRlarS [_n.mpuRnrS+2] : 0;
+      case REG_MPU_RLAR_A3_S: return _n.mpuRnrS+3< NUM_MPU_REGION_S  ? _n.mpuRlarS [_n.mpuRnrS+3] : 0;
+      case REG_MPU_RLAR_NS:   return _n.mpuRnrNS < NUM_MPU_REGION_NS ? _n.mpuRlarNS[_n.mpuRnrNS] : 0;
+      case REG_MPU_RLAR_A1_NS:return _n.mpuRnrNS+1< NUM_MPU_REGION_NS ? _n.mpuRlarNS[_n.mpuRnrNS+1] : 0;
+      case REG_MPU_RLAR_A2_NS:return _n.mpuRnrNS+2< NUM_MPU_REGION_NS ? _n.mpuRlarNS[_n.mpuRnrNS+2] : 0;
+      case REG_MPU_RLAR_A3_NS:return _n.mpuRnrNS+3< NUM_MPU_REGION_NS ? _n.mpuRlarNS[_n.mpuRnrNS+3] : 0;
+
+      case REG_SAU_CTRL:      return _n.sauCtrl;
+      case REG_SAU_TYPE:      return PUTBITSM(NUM_SAU_REGION, REG_SAU_TYPE__SREGION);
+      case REG_SAU_RNR:       return _n.sauRnr;
+      case REG_SAU_RBAR:      return _n.sauRnr < NUM_SAU_REGION ? _n.sauRbar[_n.sauRnr] : 0;
+      case REG_SAU_RLAR:      return _n.sauRnr < NUM_SAU_REGION ? _n.sauRlar[_n.sauRnr] : 0;
+
+      case REG_SFSR_S:        return _HaveMainExt() ? _n.sfsr : 0;
+      case REG_SFAR_S:        return _HaveMainExt() ? _n.sfar : 0;
+
+      case REG_VTOR_S:        return _n.vtorS;
+      case REG_VTOR_NS:       return _n.vtorNS;
+
+      case REG_DAUTHCTRL:     return (_HaveMainExt() || _HaveHaltingDebug()) && _HaveSecurityExt() ? _n.dauthCtrl : 0;
+
+      case REG_FPCCR_S:
+        return _n.fpccrS;
+
+      case REG_FPCCR_NS: {
+        uint32_t secureOnlyMask = REG_FPCCR__S | REG_FPCCR__SFRDY | REG_FPCCR__TS | REG_FPCCR__CLRONRETS | REG_FPCCR__LSPENS;
+        if (_n.demcr & REG_DEMCR__SDME)
+          secureOnlyMask |= REG_FPCCR__MONRDY;
+        uint32_t bankedBitsMask = REG_FPCCR__LSPACT | REG_FPCCR__USER | REG_FPCCR__THREAD
+          | REG_FPCCR__MMRDY | REG_FPCCR__SPLIMVIOL | REG_FPCCR__UFRDY | REG_FPCCR__ASPEN;
+        uint32_t sharedBitsMask = ~bankedBitsMask;
+
+        return ((_n.fpccrNS & bankedBitsMask) | (_n.fpccrS & sharedBitsMask)) & ~secureOnlyMask;
+      }
+
+      case REG_FPCAR_S:       return _n.fpcarS;
+      case REG_FPCAR_NS:      return _n.fpcarNS;
+
+      case REG_FPDSCR_S:      return _n.fpdscrS;
+      case REG_FPDSCR_NS:     return _n.fpdscrNS;
+
+      case REG_ICSR_S:
+      case REG_ICSR_NS: {
+        uint32_t v = 0;
+        // VECTACTIVE
+        if (_HaveMainExt() || _HaveHaltingDebug())
+          v |= PUTBITSM(REG_ICSR__VECTACTIVE, GETBITSM(_s.xpsr, XPSR__EXCEPTION));
+        // RETTOBASE
+        if (_HaveMainExt()) {
+          int numActive = 0;
+          for (int i=0; i<ARRAYLEN(_s.excActive); ++i)
+            if (_s.excActive[i])
+              ++numActive;
+          if (numActive > 1)
+            v |= REG_ICSR__RETTOBASE;
+        }
+        // VECTPENDING
+        auto [pendingPrio, pendingExcNo, pendingIsSecure] = _PendingExceptionDetailsActual();
+        v |= PUTBITSM(pendingExcNo, REG_ICSR__VECTPENDING);
+        // ISRPENDING
+        if (_HaveMainExt() || _HaveHaltingDebug())
+          for (int i=16; i<NUM_EXC; ++i)
+            if (_s.excPending[i]) {
+              v |= REG_ICSR__ISRPENDING;
+              break;
+            }
+        // ISRPREEMPT
+        if ((_HaveMainExt() || _HaveHaltingDebug()) && pendingExcNo && _ExecutionPriority() > pendingPrio)
+          v |= REG_ICSR__ISRPREEMPT;
+        // STTNS
+        if (!isNS)
+          v |= (_n.icsr & REG_ICSR__STTNS);
+        // PENDSTSET
+        if (    (!isNS || _HaveSysTick() == 2
+                 || (_HaveSysTick() == 1 && !!(_n.icsr & REG_ICSR__STTNS)))
+             && (_s.excPending[SysTick] & BIT((int)isNS)) )
+          v |= REG_ICSR__PENDSTSET;
+        // PENDSVSET
+        if (_s.excPending[PendSV] & BIT((int)isNS))
+          v |= REG_ICSR__PENDSVSET;
+        // PENDNMISET
+        if (_s.excPending[NMI] && (!isNS || !!(_n.aircrS & REG_AIRCR__BFHFNMINS)))
+          v |= REG_ICSR__PENDNMISET;
+        return v;
+      }
+
+      case REG_SHCSR_S:
+      case REG_SHCSR_NS: {
+        uint32_t v = 0;
+        if (_HaveMainExt() && _IsActiveForState(MemManage, !isNS))
+          v |= REG_SHCSR__MEMFAULTACT;
+        if (_HaveMainExt() && _IsActiveForState(BusFault, !isNS))
+          v |= REG_SHCSR__BUSFAULTACT;
+        if (_IsActiveForState(HardFault, !isNS))
+          v |= REG_SHCSR__HARDFAULTACT;
+        if (_HaveMainExt() && _IsActiveForState(UsageFault, !isNS))
+          v |= REG_SHCSR__USGFAULTACT;
+        if (!isNS && _IsActiveForState(SecureFault, true))
+          v |= REG_SHCSR__SECUREFAULTACT;
+        if (_IsActiveForState(NMI, !isNS))
+          v |= REG_SHCSR__NMIACT;
+        if (_IsActiveForState(SVCall, !isNS))
+          v |= REG_SHCSR__SVCALLACT;
+        if (_IsActiveForState(DebugMonitor, !isNS))
+          v |= REG_SHCSR__MONITORACT;
+        if (_IsActiveForState(PendSV, !isNS))
+          v |= REG_SHCSR__PENDSVACT;
+        if (_IsActiveForState(SysTick, !isNS))
+          v |= REG_SHCSR__SYSTICKACT;
+
+        if (_HaveMainExt() && _IsPendingForState(UsageFault, !isNS))
+          v |= REG_SHCSR__USGFAULTPENDED;
+        if (_HaveMainExt() && _IsPendingForState(MemManage, !isNS))
+          v |= REG_SHCSR__MEMFAULTPENDED;
+        if (_HaveMainExt() && _IsPendingForState(BusFault, !isNS))
+          v |= REG_SHCSR__BUSFAULTPENDED;
+        if (_IsPendingForState(SVCall, !isNS))
+          v |= REG_SHCSR__SVCALLPENDED;
+
+        if (_HaveMainExt() && _IsEnabledForState(MemManage, !isNS))
+          v |= REG_SHCSR__MEMFAULTENA;
+        if (_HaveMainExt() && _IsEnabledForState(BusFault, !isNS))
+          v |= REG_SHCSR__BUSFAULTENA;
+        if (_HaveMainExt() && _IsEnabledForState(UsageFault, !isNS))
+          v |= REG_SHCSR__USGFAULTENA;
+        if (_HaveMainExt() && !isNS && _IsEnabledForState(SecureFault, true))
+          v |= REG_SHCSR__SECUREFAULTENA;
+
+        if (_HaveMainExt() && _IsPendingForState(SecureFault, true))
+          v |= REG_SHCSR__SECUREFAULTPENDED;
+
+        if (_IsPendingForState(HardFault, !isNS))
+          v |= REG_SHCSR__HARDFAULTPENDED;
+
+        return v;
+      }
+
+      case REG_DHCSR_S:
+      case REG_DHCSR_NS:
+        return _n.dhcsr;
+
+      case REG_DEMCR_S:
+      case REG_DEMCR_NS:
+        return _n.demcr;
+
+      // ----------------------------------------------
       default:
-        if (baddr >= 0xE000E200 && baddr < 0xE000E240)
+        // REG_NVIC_ISPRn, REG_NVIC_ICPRn
+        if ((baddr >= 0xE000'E200 && baddr < 0xE000'E240) || (baddr >= 0xE000'E280 && baddr < 0xE000'E2C0))
           return _NestLoadNvicPendingReg((addr/4)&0xF, /*secure=*/!isNS);
 
-        if (addr >= 0xE000E380 && addr < 0xE000E3C0)
-          return _n.nvicNonSecure[(addr/4)&0xF];
+        // REG_NVIC_ISERn, REG_NVIC_ICERn
+        if ((baddr >= 0xE000'E100 && baddr < 0xE000'E140) || (baddr >= 0xE000'E180 && baddr < 0xE000'E1C0))
+          return _NestLoadNvicEnableReg((addr/4)&0xF, /*secure=*/!isNS);
 
+        // REG_NVIC_IABRn
+        if (baddr >= 0xE000'E300 && baddr < 0xE000'E340)
+          return _NestLoadNvicActiveReg((addr/4)&0xF, /*secure=*/!isNS);
+
+        // REG_NVIC_ITNSn
+        if (addr >= 0xE000E380 && addr < 0xE000E3C0)
+          return _n.nvicItns[(addr/4)&0xF];
+
+        // REG_NVIC_IPRn
         if (addr >= 0xE000E400 && addr < 0xE000E5F0)
-          return _n.nvicIntrPrio[(addr - 0xE000E400)/4];
+          return _n.nvicIpr[(addr - 0xE000E400)/4];
+
+        // REG_FP_COMPn
+        if ((addr >= 0xE000'2008 && addr < 0xE000'2008 + NUM_FPB_COMP*4) && !(addr % 4))
+          return _NestCheckRegFPB(nat) ? _n.fpComp[(addr - 0xE000'2008)/4] : 0;
 
         // "Privileged accesses to unimplemented registers are Res0."
         // Return 0 for unimplemented registers.
@@ -916,15 +1313,63 @@ private:
     }
   }
 
+  /* _NestStoreNvicPendingReg {{{4
+   * ------------------------
+   */
+  void _NestStoreNvicPendingReg(uint32_t groupNo, uint32_t v, bool isSecure, bool setNotClear) {
+    uint32_t itns   = _n.nvicItns[groupNo];
+    int      limit  = (groupNo == 15) ? 15 : 32;
+    for (int i=0; i<limit; ++i)
+      if ((v & BIT(i)) && (isSecure | GETBIT(itns, i)))
+        _SetPending(16 + groupNo*32 + i, isSecure, setNotClear);
+  }
+
   /* _NestLoadNvicPendingReg {{{4
    * -----------------------
    */
   uint32_t _NestLoadNvicPendingReg(uint32_t groupNo, bool isSecure) {
     uint32_t v      = 0;
-    uint32_t itns   = _n.nvicNonSecure[groupNo];
+    uint32_t itns   = _n.nvicItns[groupNo];
     int      limit  = (groupNo == 15) ? 15 : 32;
     for (int i=0; i<limit; ++i)
       if (_s.excPending[16+groupNo*32+i] && (isSecure || GETBIT(itns, i)))
+        v |= BIT(i);
+    return v;
+  }
+
+  /* _NestStoreNvicEnableReg {{{4
+   * -----------------------
+   */
+  void _NestStoreNvicEnableReg(uint32_t groupNo, uint32_t v, bool isSecure, bool setNotClear) {
+    uint32_t itns  = _n.nvicItns[groupNo];
+    int      limit = (groupNo == 15) ? 15 : 32;
+    for (int i=0; i<limit; ++i)
+      if ((v & BIT(i)) && (isSecure | GETBIT(itns, i)))
+        _s.excEnable[16 + groupNo*32 + i] = setNotClear;
+  }
+
+  /* _NestLoadNvicEnableReg {{{4
+   * ----------------------
+   */
+  uint32_t _NestLoadNvicEnableReg(uint32_t groupNo, bool isSecure) {
+    uint32_t v      = 0;
+    uint32_t itns   = _n.nvicItns[groupNo];
+    int      limit  = (groupNo == 15) ? 15 : 32;
+    for (int i=0; i<limit; ++i)
+      if (_s.excEnable[16+groupNo*32+i] && (isSecure || GETBIT(itns, i)))
+        v |= BIT(i);
+    return v;
+  }
+
+  /* _NestLoadNvicActiveReg {{{4
+   * ----------------------
+   */
+  uint32_t _NestLoadNvicActiveReg(uint32_t groupNo, bool isSecure) {
+    uint32_t v      = 0;
+    uint32_t itns   = _n.nvicItns[groupNo];
+    int      limit  = (groupNo == 15) ? 15 : 32;
+    for (int i=0; i<limit; ++i)
+      if (_s.excActive[16+groupNo*32+i] && (isSecure || GETBIT(itns, i)))
         v |= BIT(i);
     return v;
   }
@@ -942,9 +1387,9 @@ private:
       return 0;
 
     if (targetNS)
-      _NestStore32Actual(addr |  0x2'0000U, v);
+      _NestStore32Actual(addr |  0x2'0000U, v, NAT_SW);
     else
-      _NestStore32Actual(addr & ~0x2'0000U, v);
+      _NestStore32Actual(addr & ~0x2'0000U, v, NAT_SW);
 
     return 0;
   }
@@ -952,42 +1397,694 @@ private:
   /* _NestStore32Actual {{{4
    * ------------------
    */
-  void _NestStore32Actual(phys_t addr, uint32_t v) {
+  void _NestStore32Actual(phys_t addr, uint32_t v, NestAccessType nat) {
     phys_t baddr    = addr & ~0x2'0000U;
     bool   isNS     = !!(addr &  0x2'0000U);
     if (isNS)
       ASSERT(_HaveSecurityExt());
 
     switch (addr) {
-      case REG_FPDSCR_S:  _n.fpdscrS  = v; break;
-      case REG_FPDSCR_NS: _n.fpdscrNS = v; break;
-      case REG_FPCCR_S:   _n.fpccrS   = v; break;
-      case REG_FPCCR_NS:  _n.fpccrNS  = v; break;
-      case REG_FPCAR_S:   _n.fpcarS   = v; break;
-      case REG_FPCAR_NS:  _n.fpcarNS  = v; break;
-      case REG_VTOR_S:    _n.vtorS    = v; break;
-      case REG_VTOR_NS:   _n.vtorNS   = v; break;
-      case REG_DEMCR:     _n.demcrS   = v; break;
-      case REG_DEMCR_NS:  _n.demcrNS  = v; break;
-      case REG_DHCSR:     _n.dhcsrS   = v; break;
-      case REG_DHCSR_NS:  _n.dhcsrNS  = v; break;
-      case REG_CFSR_S:    _n.cfsrS    = v; break;
-      case REG_CFSR_NS:   _n.cfsrNS   = v; break;
-      case REG_BFAR_S:    _n.bfarS    = v; break;
-      case REG_BFAR_NS:   _n.bfarNS   = v; break;
-      case REG_HFSR_S:    _n.hfsrS    = v; break;
-      case REG_HFSR_NS:   _n.hfsrNS   = v; break;
+      case REG_DWT_CTRL:
+        // !DWT:  res0
+        // !Main: might not be SW accessible
+        //
+        // 33222222 22221111 11111100 00000000  r: RO. c: 0 on cold reset. 0: Res0.
+        // 10987654 32109876 54321098 76543210  m: Res0 if !Main. M: Res1 if !Main. p: Res0 if !PRFCNT. t: Res0 if !TRCPKT/!NOCYCCNT. c: Res0 if !CYCCNT. u: Unknown on cold reset.
+        // rrrrr0rr cccccccc 000cuuuu uuuuuuuc
+        //     M MM mmpppppp    tcccc cccccccc
+        //                      c
+        if (_NestCheckRegDWT(nat)) {
+          uint32_t roBits = BITS(13,15) | BITS(24,31);
+          if (_n.dwtCtrl & REG_DWT_CTRL__NOCYCCNT)
+            roBits |= BITS(16,23) | BITS(0,12);
+          if (_n.dwtCtrl & REG_DWT_CTRL__NOTRCPKT)
+            roBits |= BIT (12);
+          if (_n.dwtCtrl & REG_DWT_CTRL__NOPRFCNT)
+            roBits |= BITS(16,21);
+          v &= ~roBits;
+          v |= _n.dwtCtrl & roBits;
+          _n.dwtCtrl = v;
+        }
+        break;
+
+      case REG_DWT_COMP( 0):
+      case REG_DWT_COMP( 1):
+      case REG_DWT_COMP( 2):
+      case REG_DWT_COMP( 3):
+      case REG_DWT_COMP( 4):
+      case REG_DWT_COMP( 5):
+      case REG_DWT_COMP( 6):
+      case REG_DWT_COMP( 7):
+      case REG_DWT_COMP( 8):
+      case REG_DWT_COMP( 9):
+      case REG_DWT_COMP(10):
+      case REG_DWT_COMP(11):
+      case REG_DWT_COMP(12):
+      case REG_DWT_COMP(13):
+      case REG_DWT_COMP(14):
+        if (_NestCheckRegDWT(nat)) {
+          uint32_t n      = (addr - REG_DWT_COMP(0))/16;
+          if (n < NUM_DWT_COMP) {
+            uint32_t roBits = 0;
+            if ((GETBITSM(_n.dwtFunction[n], REG_DWT_FUNCTION__MATCH) & 0b1110) == 0b0010)
+              roBits |= BIT(0);
+            v &= ~roBits;
+            _n.dwtComp[n] = v;
+          }
+        }
+        break;
+
+      case REG_DWT_FUNCTION( 0):
+      case REG_DWT_FUNCTION( 1):
+      case REG_DWT_FUNCTION( 2):
+      case REG_DWT_FUNCTION( 3):
+      case REG_DWT_FUNCTION( 4):
+      case REG_DWT_FUNCTION( 5):
+      case REG_DWT_FUNCTION( 6):
+      case REG_DWT_FUNCTION( 7):
+      case REG_DWT_FUNCTION( 8):
+      case REG_DWT_FUNCTION( 9):
+      case REG_DWT_FUNCTION(10):
+      case REG_DWT_FUNCTION(11):
+      case REG_DWT_FUNCTION(12):
+      case REG_DWT_FUNCTION(13):
+      case REG_DWT_FUNCTION(14):
+        if (_NestCheckRegDWT(nat)) {
+          uint32_t n      = (addr - REG_DWT_FUNCTION(0))/16;
+          if (n < NUM_DWT_COMP) {
+            uint32_t roBits = BITS( 6, 9) | BITS(12,31);
+            v &= ~roBits;
+            v |= _n.dwtFunction[n] & roBits;
+            _n.dwtFunction[n] = v;
+            if ((GETBITSM(v, REG_DWT_FUNCTION__MATCH) & 0b1110) == 0b0010)
+              _n.dwtComp[n] &= ~1;
+          }
+        }
+        break;
+
+      case REG_FP_CTRL:
+        if (_NestCheckRegFPB(nat) && (v & BIT(1))) {
+          uint32_t roBits = BITS( 1,31);
+          v &= ~roBits;
+          v |= _n.fpCtrl & roBits;
+          _n.fpCtrl = v;
+        }
+        break;
+
+      case REG_CPPWR_S:
+        if (_HaveMainExt())
+          // TODO make bits for unsupported coprocessors RAZ/WI
+          _n.cppwrS = v & (BITS( 0,15) | BITS(20,23));
+        break;
+
+      case REG_CPPWR_NS:
+        if (_HaveMainExt())
+          _n.cppwrNS = v & (BITS( 0,15) | BITS(20,23));
+        break;
+
+      case REG_CFSR_S:
+        if (_HaveMainExt()) {
+          if (nat == NAT_Internal)
+            _n.cfsrS = v;
+          else
+            _n.cfsrS &= ~v;
+        }
+        break;
+
+      case REG_CFSR_NS:
+        if (_HaveMainExt()) {
+          if (nat == NAT_Internal)
+            _n.cfsrNS = v;
+          else
+            _n.cfsrNS &= ~v;
+        }
+        break;
+
+      case REG_HFSR_S:
+        if (_HaveMainExt()) {
+          if (nat == NAT_Internal)
+            _n.hfsrS = v;
+          else
+            _n.hfsrS &= ~v;
+        }
+        break;
+
+      case REG_HFSR_NS:
+        if (_HaveMainExt()) {
+          if (nat == NAT_Internal)
+            _n.hfsrNS = v;
+          else
+            _n.hfsrNS &= ~v;
+        }
+        break;
+
+      case REG_DFSR_S:
+        if (_HaveMainExt() || _HaveHaltingDebug()) {
+          if (nat == NAT_Internal)
+            _n.dfsrS = v;
+          else
+            _n.dfsrS &= ~v;
+        }
+        break;
+
+      case REG_DFSR_NS:
+        if (_HaveMainExt() || _HaveHaltingDebug()) {
+          if (nat == NAT_Internal)
+            _n.dfsrNS = v;
+          else
+            _n.dfsrNS &= ~v;
+        }
+        break;
+
+      case REG_MMFAR_S:
+        if (_HaveMainExt())
+          _n.mmfarS = v;
+        break;
+
+      case REG_MMFAR_NS:
+        if (_HaveMainExt())
+          _n.mmfarNS = v;
+        break;
+
+      case REG_BFAR_S:
+        if (_HaveMainExt())
+          _n.bfarS = v;
+        break;
+
+      case REG_BFAR_NS:
+        if (_HaveMainExt())
+          _n.bfarNS = v;
+        break;
+
+      case REG_SHPR1_S:
+        if (_HaveMainExt()) {
+          v = CHGBITS(v, 0, 7, _NestMaskPrio(GETBITS(v, 0, 7)));
+          v = CHGBITS(v, 8,15, _NestMaskPrio(GETBITS(v, 8,15)));
+          v = CHGBITS(v,16,23, _NestMaskPrio(GETBITS(v,16,23)));
+          v = CHGBITS(v,24,31, _NestMaskPrio(GETBITS(v,24,31)));
+          _n.shpr1S = v;
+        }
+        break;
+
+      case REG_SHPR1_NS:
+        if (_HaveMainExt()) {
+          v = CHGBITS(v, 0, 7, _NestMaskPrio(GETBITS(v, 0, 7)));
+          v = CHGBITS(v, 8,15, _NestMaskPrio(GETBITS(v, 8,15)));
+          v = CHGBITS(v,16,23, _NestMaskPrio(GETBITS(v,16,23)));
+          v = CHGBITS(v,24,31, _NestMaskPrio(GETBITS(v,24,31)));
+          _n.shpr1NS = v;
+        }
+        break;
+
+      case REG_SHPR2_S:
+        v = CHGBITS(v, 0,23, 0);
+        v = CHGBITS(v,24,31, _NestMaskPrio(GETBITS(v,24,31)));
+        _n.shpr2S = v;
+        break;
+
+      case REG_SHPR2_NS:
+        v = CHGBITS(v, 0,23, 0);
+        v = CHGBITS(v,24,31, _NestMaskPrio(GETBITS(v,24,31)));
+        _n.shpr2NS = v;
+        break;
+
+      case REG_SHPR3_S:
+        v = CHGBITS(v, 0, 7, _HaveMainExt() ? _NestMaskPrio(GETBITS(v, 0, 7)) : 0); // TODO DEMCR.SDME
+        v = CHGBITS(v, 8,15, 0);
+        v = CHGBITS(v,16,23, _NestMaskPrio(GETBITS(v,16,23)));
+        v = CHGBITS(v,24,31, _NestMaskPrio(GETBITS(v,24,31))); // TODO Type 1 SysTick
+        _n.shpr3S = v;
+        break;
+
+      case REG_SHPR3_NS:
+        v = CHGBITS(v, 0, 7, _HaveMainExt() ? _NestMaskPrio(GETBITS(v, 0, 7)) : 0);
+        v = CHGBITS(v, 8,15, 0);
+        v = CHGBITS(v,16,23, _NestMaskPrio(GETBITS(v,16,23)));
+        v = CHGBITS(v,24,31, _NestMaskPrio(GETBITS(v,24,31)));
+        _n.shpr3NS = v;
+        break;
+
       case REG_CCR_S:
         _n.ccrS     = _MaskOrNonMain((v & 0b1110000011100011011) | BIT(0) | BIT(9),
           BITS(16,18)|BIT(10)|BIT( 8)|BIT( 4)|BIT( 1), BIT( 3)); break;
+
       case REG_CCR_NS:
         _n.ccrNS    = _MaskOrNonMain((v & 0b1110000011100011011) | BIT(0) | BIT(9),
           BITS(16,18)|BIT(10)|BIT( 8)|BIT( 4)|BIT( 1), BIT( 3)); break;
+
+      case REG_SCR_S:
+        _n.scrS = v & BITS(1,4);
+        break;
+
+      case REG_SCR_NS:
+        _n.scrNS = v & BITS(1,4);
+        break;
+
+      case REG_AIRCR_S:
+        if (GETBITSM(v, REG_AIRCR__VECTKEY) == 0x05FA) {
+          uint32_t roMask = BIT(15);
+          if (!_HaveMainExt())
+            roMask |= BITS( 8,10);
+          v = CHGBITSM(v, REG_AIRCR__VECTKEY, 0);
+          v &= ~roMask;
+          v |= _n.aircrS;
+          if (v & REG_AIRCR__SYSRESETREQ)
+            _SetPending(Reset, true, true);
+          v &= ~REG_AIRCR__SYSRESETREQ;
+          if (v & REG_AIRCR__VECTCLRACTIVE)
+            ; // TODO
+          v &= ~REG_AIRCR__VECTCLRACTIVE;
+          _n.aircrS = v;
+        }
+        break;
+
+      case REG_AIRCR_NS:
+        if (GETBITSM(v, REG_AIRCR__VECTKEY) == 0x05FA) {
+          // TODO VECTCLRACTIVE
+          uint32_t roMask = BIT(15) | BIT(14) | BIT(13) | BIT( 1);
+          if (!_HaveMainExt())
+            roMask |= BITS( 8,10);
+          if (_n.aircrS & REG_AIRCR__SYSRESETREQS)
+            roMask |= REG_AIRCR__SYSRESETREQ;
+          v = CHGBITSM(v, REG_AIRCR__VECTKEY, 0);
+          v &= ~roMask;
+          v |= _n.aircrNS;
+          if (v & REG_AIRCR__SYSRESETREQ)
+            _SetPending(Reset, true, true);
+          v &= ~REG_AIRCR__SYSRESETREQ;
+          if (v & REG_AIRCR__VECTCLRACTIVE)
+            ; // TODO
+          v &= ~REG_AIRCR__VECTCLRACTIVE;
+          _n.aircrNS = v;
+        }
+        break;
+
+      case REG_CPACR_S:
+        _n.cpacrS = v & (BITS(0,15) | BITS(20,23)); // TODO RAZ/WI for unimplemented coprocessors
+        break;
+
+      case REG_CPACR_NS:
+        _n.cpacrNS = v & (BITS(0,15) | BITS(20,23));
+        break;
+
+      case REG_NSACR:
+        _n.nsacr = v & (BITS( 0, 7) | BITS(10,11));
+        break;
+
+      case REG_MPU_TYPE_S:
+      case REG_MPU_TYPE_NS:
+        break;
+
+      case REG_MPU_CTRL_S:
+        _n.mpuCtrlS = v & BITS(0,2);
+        break;
+
+      case REG_MPU_CTRL_NS:
+        _n.mpuCtrlNS = v & BITS(0,2);
+        break;
+
+      case REG_MPU_RNR_S:
+        _n.mpuRnrS = v & BITS( 0, 7); // TODO CONSTRAINED UNPREDICTABLE
+        break;
+
+      case REG_MPU_RNR_NS:
+        _n.mpuRnrNS = v & BITS( 0, 7); // TODO CONSTRAINED UNPREDICTABLE
+        break;
+
+      case REG_MPU_MAIR0_S:
+        _n.mpuMair0S = v;
+        break;
+
+      case REG_MPU_MAIR0_NS:
+        _n.mpuMair0NS = v;
+        break;
+
+      case REG_MPU_MAIR1_S:
+        _n.mpuMair1S = v;
+        break;
+
+      case REG_MPU_MAIR1_NS:
+        _n.mpuMair1NS = v;
+        break;
+
+      case REG_MPU_RBAR_S:
+        if (_n.mpuRnrS < NUM_MPU_REGION_S)
+          _n.mpuRbarS[_n.mpuRnrS] = v;
+        break;
+
+      case REG_MPU_RBAR_A1_S:
+        if (_n.mpuRnrS+1 < NUM_MPU_REGION_S)
+          _n.mpuRbarS[_n.mpuRnrS+1] = v;
+        break;
+
+      case REG_MPU_RBAR_A2_S:
+        if (_n.mpuRnrS+2 < NUM_MPU_REGION_S)
+          _n.mpuRbarS[_n.mpuRnrS+2] = v;
+        break;
+
+      case REG_MPU_RBAR_A3_S:
+        if (_n.mpuRnrS+3 < NUM_MPU_REGION_S)
+          _n.mpuRbarS[_n.mpuRnrS+3] = v;
+        break;
+
+      case REG_MPU_RBAR_NS:
+        if (_n.mpuRnrNS < NUM_MPU_REGION_NS)
+          _n.mpuRbarNS[_n.mpuRnrNS] = v;
+        break;
+
+      case REG_MPU_RBAR_A1_NS:
+        if (_n.mpuRnrNS+1 < NUM_MPU_REGION_NS)
+          _n.mpuRbarNS[_n.mpuRnrNS+1] = v;
+        break;
+
+      case REG_MPU_RBAR_A2_NS:
+        if (_n.mpuRnrNS+2 < NUM_MPU_REGION_NS)
+          _n.mpuRbarNS[_n.mpuRnrNS+2] = v;
+        break;
+
+      case REG_MPU_RBAR_A3_NS:
+        if (_n.mpuRnrNS+3 < NUM_MPU_REGION_NS)
+          _n.mpuRbarNS[_n.mpuRnrNS+3] = v;
+        break;
+
+      case REG_MPU_RLAR_S:
+        if (_n.mpuRnrS < NUM_MPU_REGION_S)
+          _n.mpuRlarS[_n.mpuRnrS] = v;
+        break;
+
+      case REG_MPU_RLAR_A1_S:
+        if (_n.mpuRnrS+1 < NUM_MPU_REGION_S)
+          _n.mpuRlarS[_n.mpuRnrS+1] = v;
+        break;
+
+      case REG_MPU_RLAR_A2_S:
+        if (_n.mpuRnrS+2 < NUM_MPU_REGION_S)
+          _n.mpuRlarS[_n.mpuRnrS+2] = v;
+        break;
+
+      case REG_MPU_RLAR_A3_S:
+        if (_n.mpuRnrS+3 < NUM_MPU_REGION_S)
+          _n.mpuRlarS[_n.mpuRnrS+3] = v;
+        break;
+
+      case REG_MPU_RLAR_NS:
+        if (_n.mpuRnrNS < NUM_MPU_REGION_NS)
+          _n.mpuRlarNS[_n.mpuRnrNS] = v;
+        break;
+
+      case REG_MPU_RLAR_A1_NS:
+        if (_n.mpuRnrNS+1 < NUM_MPU_REGION_NS)
+          _n.mpuRlarNS[_n.mpuRnrNS+1] = v;
+        break;
+
+      case REG_MPU_RLAR_A2_NS:
+        if (_n.mpuRnrNS+2 < NUM_MPU_REGION_NS)
+          _n.mpuRlarNS[_n.mpuRnrNS+2] = v;
+        break;
+
+      case REG_MPU_RLAR_A3_NS:
+        if (_n.mpuRnrNS+3 < NUM_MPU_REGION_NS)
+          _n.mpuRlarNS[_n.mpuRnrNS+3] = v;
+        break;
+
+      case REG_SAU_CTRL:
+        _n.sauCtrl = v & BITS( 0, 1);
+        break;
+
+      case REG_SAU_TYPE:
+        break;
+
+      case REG_SAU_RNR:
+        if (NUM_SAU_REGION)
+          _n.sauRnr = v & REG_SAU_RNR__REGION;
+        // TODO CONSTRAINED UNPREDICTABLE
+        break;
+
+      case REG_SAU_RBAR:
+        if (_n.sauRnr < NUM_SAU_REGION)
+          _n.sauRbar[_n.sauRnr] = v & ~BITS( 0, 4);
+        break;
+
+      case REG_SAU_RLAR:
+        if (_n.sauRnr < NUM_SAU_REGION)
+          _n.sauRlar[_n.sauRnr] = v & ~BITS( 2, 4);
+        break;
+
+      case REG_SFSR_S:
+        if (_HaveMainExt()) {
+          if (nat == NAT_Internal)
+            _n.sfsr = v;
+          else
+            _n.sfsr &= ~v;
+        }
+        break;
+
+      case REG_SFAR_S:
+        if (_HaveMainExt())
+          _n.sfar = v;
+        break;
+
+      case REG_VTOR_S:    _n.vtorS    = v & BITS( 7,31); break;
+      case REG_VTOR_NS:   _n.vtorNS   = v & BITS( 7,31); break;
+
+      case REG_DAUTHCTRL:
+        if ((_HaveMainExt() || _HaveHaltingDebug()) && _HaveSecurityExt())
+          _n.dauthCtrl = v & BITS( 0, 3);
+        break;
+
+      case REG_FPCCR_S:
+        _n.fpccrS   = v & (BITS( 0, 10) | BITS(26,31));
+        break;
+
+      case REG_FPCCR_NS: {
+        uint32_t secureOnlyMask = REG_FPCCR__S | REG_FPCCR__SFRDY | REG_FPCCR__TS | REG_FPCCR__CLRONRETS | REG_FPCCR__LSPENS;
+        if (_n.demcr & REG_DEMCR__SDME)
+          secureOnlyMask |= REG_FPCCR__MONRDY;
+        uint32_t bankedBitsMask = REG_FPCCR__LSPACT | REG_FPCCR__USER | REG_FPCCR__THREAD
+          | REG_FPCCR__MMRDY | REG_FPCCR__SPLIMVIOL | REG_FPCCR__UFRDY | REG_FPCCR__ASPEN;
+        uint32_t sharedBitsMask = ~bankedBitsMask;
+        uint32_t roMask = BITS(11,25);
+
+        _n.fpccrS  = (_n.fpccrS & ~(sharedBitsMask & ~secureOnlyMask)) | (v & (sharedBitsMask & ~secureOnlyMask));
+        _n.fpccrNS = v & bankedBitsMask;
+      } break;
+
+
+      case REG_FPCAR_S:
+        if (_HaveFPExt())
+          _n.fpcarS = v & ~BITS( 0, 2);
+        break;
+
+      case REG_FPCAR_NS:
+        if (_HaveFPExt())
+          _n.fpcarNS = v & ~BITS( 0, 2);
+        break;
+
+      case REG_FPDSCR_S:  if (_HaveFPExt()) _n.fpdscrS  = v & BITS(22,26); break;
+      case REG_FPDSCR_NS: if (_HaveFPExt()) _n.fpdscrNS = v & BITS(22,26); break;
+
+      case REG_ICSR_S:
+      case REG_ICSR_NS:
+        // PENDSTSET, PENDSTCLR
+        if (v & (REG_ICSR__PENDSTSET | REG_ICSR__PENDSTCLR))
+           if (   (_HaveSysTick() == 2)
+               || (_HaveSysTick() == 1 && (!(_n.icsr & REG_ICSR__STTNS)) == !isNS))
+             _SetPending(SysTick, !isNS, !!(v & REG_ICSR__PENDSTSET));
+        // PENDSVCLR
+        // PENDSVSET
+        if (v & (REG_ICSR__PENDSVSET | REG_ICSR__PENDSVCLR))
+          _SetPending(PendSV, !isNS, !!(v & REG_ICSR__PENDSVSET));
+        // PENDNMICLR
+        // PENDNMISET
+        if (v & (REG_ICSR__PENDNMISET | REG_ICSR__PENDNMICLR))
+          if (!isNS || !!(_n.aircrS & REG_AIRCR__BFHFNMINS))
+            _SetPending(NMI, true, !!(v & REG_ICSR__PENDNMISET));
+        if (!isNS) {
+          uint32_t rwMask = 0;
+          if (_HaveSysTick() == 1)
+            rwMask |= REG_ICSR__STTNS;
+          _n.icsr = v & rwMask;
+        }
+        break;
+
+      case REG_SHCSR_S:
+      case REG_SHCSR_NS:
+        // ----- Actives
+        if (_HaveMainExt()) {
+          _SetActive(MemManage, !isNS, !!(v & REG_SHCSR__MEMFAULTACT));
+          _SetActive(BusFault, !isNS, !!(v & REG_SHCSR__BUSFAULTACT));
+        }
+        if (!(v & REG_SHCSR__HARDFAULTACT))
+          _SetActive(HardFault, !isNS, false);
+        if (_HaveMainExt())
+          _SetActive(UsageFault, !isNS, !!(v & REG_SHCSR__USGFAULTACT));
+        if (_HaveMainExt() && _HaveSecurityExt())
+          _SetActive(SecureFault, !isNS, !!(v & REG_SHCSR__SECUREFAULTACT));
+        if (!(v & REG_SHCSR__NMIACT))
+          // TODO: NMIACT: "This field ignores writes if the value being written
+          // is one, AIRCR.BFHFNMINS is zero, the access is from Non-secure state,
+          // the access is not via the NS alias, or the access is from a debugger
+          // when DHCSR.S_SDE is zero. This bit can only be cleared by access
+          // from the Secure state to the NS alias."
+          _SetActive(NMI, !isNS, false);
+        _SetActive(SVCall, !isNS, !!(v & REG_SHCSR__SVCALLACT));
+        if (_HaveMainExt())
+          _SetActive(DebugMonitor, !isNS, !!(v & REG_SHCSR__MONITORACT));
+        _SetActive(PendSV, !isNS, !!(v & REG_SHCSR__PENDSVACT));
+        _SetActive(SysTick, !isNS, !!(v & REG_SHCSR__SYSTICKACT));
+
+        // ----- Pendings
+        if (_HaveMainExt()) {
+          _SetPending(UsageFault, !isNS, !!(v & REG_SHCSR__USGFAULTPENDED));
+          _SetPending(MemManage, !isNS, !!(v & REG_SHCSR__MEMFAULTPENDED));
+          _SetPending(BusFault, !isNS, !!(v & REG_SHCSR__BUSFAULTPENDED));
+          _SetPending(SVCall, !isNS, !!(v & REG_SHCSR__SVCALLPENDED));
+          _SetPending(HardFault, !isNS, !!(v & REG_SHCSR__HARDFAULTPENDED));
+          if (_HaveSecurityExt())
+            _SetPending(SecureFault, !isNS, !!(v & REG_SHCSR__SECUREFAULTPENDED));
+        }
+
+        // ----- Enables
+        if (_HaveMainExt()) {
+          _SetEnable(MemManage, !isNS, !!(v & REG_SHCSR__MEMFAULTENA));
+          _SetEnable(BusFault, !isNS, !!(v & REG_SHCSR__BUSFAULTENA));
+          _SetEnable(UsageFault, !isNS, !!(v & REG_SHCSR__USGFAULTENA));
+          if (_HaveSecurityExt())
+            _SetEnable(SecureFault, !isNS, !!(v & REG_SHCSR__SECUREFAULTENA));
+        }
+        break;
+
+      case REG_DHCSR_S:
+      case REG_DHCSR_NS:
+        if (nat == NAT_Internal)
+          _n.dhcsr = v;
+        else if (GETBITS(v,16,31) == 0xA05F) {
+          uint32_t rwBits = BITS(0,3) | BIT(5);
+          if (nat != NAT_External)
+            rwBits &= ~BIT(0);
+          _n.dhcsr = (_n.dhcsr & BITS(16,31)) | (v & rwBits);
+        }
+        break;
+
+      case REG_DEMCR_S:
+      case REG_DEMCR_NS:
+        if (nat == NAT_Internal)
+          _n.demcr = v;
+        else {
+          uint32_t roBits = REG_DEMCR__SDME | REG_DEMCR__MON_PEND | REG_DEMCR__MON_EN
+            | BITS( 1, 3) | BITS(12,15) | BITS(21,23) | BITS(25,31);
+          if (!_HaveMainExt())
+            roBits |= REG_DEMCR__MON_REQ | REG_DEMCR__MON_STEP | REG_DEMCR__VC_SFERR | REG_DEMCR__VC_INTERR
+              | REG_DEMCR__VC_BUSERR | REG_DEMCR__VC_STATERR | REG_DEMCR__VC_CHKERR | REG_DEMCR__VC_NOCPERR
+              | REG_DEMCR__VC_MMERR;
+          if (!_HaveSecurityExt() || !_HaveHaltingDebug())
+            roBits |= REG_DEMCR__VC_SFERR;
+          if (!_HaveHaltingDebug())
+            roBits |= REG_DEMCR__VC_HARDERR | REG_DEMCR__VC_INTERR | REG_DEMCR__VC_BUSERR | REG_DEMCR__VC_STATERR
+              | REG_DEMCR__VC_CHKERR | REG_DEMCR__VC_NOCPERR | REG_DEMCR__VC_MMERR | REG_DEMCR__VC_CORERESET;
+          if (_HaveMainExt()) {
+            _SetPending(DebugMonitor, !isNS, !!(v & REG_DEMCR__MON_PEND));
+            _SetEnable (DebugMonitor, !isNS, !!(v & REG_DEMCR__MON_EN));
+          }
+          _n.demcr = v;
+        }
+        break;
+
+      // ----------------------------------------------
+
       default:
+        // REG_FP_COMPn
+        if ((addr >= 0xE000'2008 && addr < 0xE000'2008 + NUM_FPB_COMP*4) && !(addr % 4)) {
+          if (!_NestCheckRegFPB(nat))
+            return;
+
+          _n.fpComp[(addr - 0xE000'2008)/4] = v;
+          return;
+        }
+
+        // REG_NVIC_ICPRn
+        if (baddr >= 0xE000'E280 && baddr < 0xE000'E2C0) {
+          _NestStoreNvicPendingReg((baddr/4)&0xF, v, /*secure=*/!isNS, /*setNotClear=*/false);
+          return;
+        }
+
+        // REG_NVIC_ISPRn
+        if (baddr >= 0xE000'E200 && baddr < 0xE000'E240) {
+          _NestStoreNvicPendingReg((baddr/4)&0xF, v, /*secure=*/!isNS, /*setNotClear=*/true);
+          return;
+        }
+
+        // REG_NVIC_ICERn
+        if (baddr >= 0xE000'E180 && baddr < 0xE000'E1C0) {
+          _NestStoreNvicEnableReg((baddr/4)&0xF, v, /*isSecure=*/!isNS, /*setNotClear=*/false);
+          return;
+        }
+
+        // REG_NVIC_ISERn
+        if (baddr >= 0xE000'E100 && baddr < 0xE000'E140) {
+          _NestStoreNvicEnableReg((baddr/4)&0xF, v, /*isSecure=*/!isNS, /*setNotClear=*/true);
+          return;
+        }
+
+        // REG_NVIC_ITNSn
+        if (addr >= 0xE000E380 && addr < 0xE000E3C0) {
+          uint32_t n    = (addr/4) & 0xF;
+          uint32_t loEx = n*32 + 16;
+          uint32_t hiEx = loEx + 32;
+          uint32_t mask;
+          if (loEx >= NUM_EXC)
+            mask = 0;
+          else {
+            if (hiEx >= NUM_EXC)
+              hiEx = NUM_EXC-1;
+            mask = BITS(0, hiEx-loEx-1);
+          }
+
+          _n.nvicItns[n] = v & mask;
+          return;
+        }
+
+        // REG_NVIC_IPRn
+        if (addr >= 0xE000E400 && addr < 0xE000E5F0) {
+          uint32_t n = (addr/4) & 0xF;
+          uint32_t loEx = n*4 + 16;
+          uint32_t mask = 0;
+          if (loEx < NUM_EXC)
+            mask |= BITS(0, 7);
+          if (loEx+1 < NUM_EXC)
+            mask |= BITS(8,15);
+          if (loEx+2 < NUM_EXC)
+            mask |= BITS(16,23);
+          if (loEx+3 < NUM_EXC)
+            mask |= BITS(24,31);
+
+          _n.nvicIpr[n] = v & mask;
+          return;
+        }
+
         printf("Unsupported nest store 0x%08x <- 0x%08x\n", addr, v);
         abort();
     }
   }
+
+  /* Architectural Support Functions {{{3
+   * ===============================
+   */
+
+  /* _IsSEE {{{4
+   * ------
+   */
+  static bool _IsSEE(const Exception &e) { return e.GetType() == ExceptionType::SEE; }
+
+  /* _IsUNDEFINED {{{4
+   * ------------
+   */
+  static bool _IsUNDEFINED(const Exception &e) { return e.GetType() == ExceptionType::UNDEFINED; }
+
+  /* _IsExceptionTaken {{{4
+   * -----------------
+   */
+  static bool _IsExceptionTaken(const Exception &e) { return e.GetType() == ExceptionType::EndOfInstruction; }
 
   /* _MaskOrNonMain {{{4
    * --------------
@@ -1003,7 +2100,7 @@ private:
    */
   uint32_t InternalLoad32(phys_t addr) {
     ASSERT(addr >= 0xE000'0000);
-    return _NestLoad32Actual(addr);
+    return _NestLoad32Actual(addr, NAT_Internal);
   }
 
   /* InternalStore32 {{{4
@@ -1011,7 +2108,7 @@ private:
    */
   void InternalStore32(phys_t addr, uint32_t v) {
     ASSERT(addr >= 0xE000'0000);
-    _NestStore32Actual(addr, v);
+    _NestStore32Actual(addr, v, NAT_Internal);
   }
 
   /* InternalOr32 {{{4
@@ -2440,7 +3537,7 @@ private:
   void _SetSP_Process_Secure(uint32_t value) {
     _SetSP(RNameSP_Process_Secure, false, value);
   }
-  
+
   /* _SetRSPCheck {{{4
    * ------------
    */
@@ -2505,6 +3602,44 @@ private:
     }
 
     return active;
+  }
+
+  /* _IsPendingForState {{{4
+   * ------------------
+   * XXX
+   */
+  bool _IsPendingForState(int exc, bool isSecure) {
+    if (!_HaveSecurityExt())
+      isSecure = false;
+
+    bool pending;
+    if (_IsExceptionTargetConfigurable(exc))
+      pending = (_s.excPending[exc] && _ExceptionTargetsSecure(exc, isSecure) == isSecure);
+    else {
+      int idx = isSecure ? 0 : 1;
+      pending = !!(_s.excPending[exc] & BIT(idx));
+    }
+
+    return pending;
+  }
+
+  /* _IsEnabledForState {{{4
+   * ------------------
+   * XXX
+   */
+  bool _IsEnabledForState(int exc, bool isSecure) {
+    if (!_HaveSecurityExt())
+      isSecure = false;
+
+    bool enabled;
+    if (_IsExceptionTargetConfigurable(exc))
+      enabled = (_s.excEnable[exc] && _ExceptionTargetsSecure(exc, isSecure) == isSecure);
+    else {
+      int idx = isSecure ? 0 : 1;
+      enabled = !!(_s.excEnable[exc] & BIT(idx));
+    }
+
+    return enabled;
   }
 
   /* _IsExceptionTargetConfigurable {{{4
@@ -3618,6 +4753,23 @@ private:
     }
   }
 
+  /* _SetEnable {{{4
+   * ----------
+   * XXX
+   */
+  void _SetEnable(int exc, bool isSecure, bool setNotClear) {
+    if (!_HaveSecurityExt())
+      isSecure = false;
+
+    if (_IsExceptionTargetConfigurable(exc))
+      // TODO: should this be guarded by _ExceptionTargetsSecure(exc, false/*UNKNOWN*/) == isSecure?
+      _s.excEnable[exc] = setNotClear ? 0b11 : 0b00;
+    else {
+      uint32_t idx = isSecure ? 0 : 1;
+      _s.excEnable[exc] = CHGBITS(_s.excEnable[exc], idx, idx, setNotClear);
+    }
+  }
+
   /* _NextInstrITState {{{4
    * -----------------
    */
@@ -3643,6 +4795,8 @@ private:
    */
   // XXX: Unfortunately the ARM ISA manual exceptionally does not give a definition
   // for this function. Its definition has been estimated via reference to qemu's codebase.
+  //
+  // TODO: DHCSR.C_MASKINTS
   std::tuple<bool, int, bool> _PendingExceptionDetails() {
     // _NvicPendingPriority() has a value higher than the highest possible
     // priority value if there is no pending interrupt so there is an interrupt
@@ -7361,7 +8515,7 @@ private:
         abort();
     }
   }
- 
+
   /* _DecodeExecute16_01110x {{{4
    * -----------------------
    */
@@ -8328,7 +9482,7 @@ private:
       _DecodeExecute16_110111_11(instr, pc);
     }
   }
-  
+
   /* _DecodeExecute16_110111_10 {{{4
    * --------------------------
    */
@@ -9638,7 +10792,7 @@ private:
       }
     }
   }
-  
+
   /* _DecodeExecute32_1101_01xxx_10xxx {{{4
    * ---------------------------------
    */
@@ -10513,7 +11667,7 @@ private:
     // ---- EXECUTE -------------------------------------------------
     _Exec_LDAB(t, n);
   }
-  
+
   /* _DecodeExecute32_LDAH_T1 {{{4
    * ------------------------
    */
@@ -10531,7 +11685,7 @@ private:
     // ---- EXECUTE -------------------------------------------------
     _Exec_LDAH(t, n);
   }
-  
+
   /* _DecodeExecute32_LDA_T1 {{{4
    * -----------------------
    */
@@ -10549,7 +11703,7 @@ private:
     // ---- EXECUTE -------------------------------------------------
     _Exec_LDA(t, n);
   }
-  
+
   /* _DecodeExecute32_LDAEXB_T1 {{{4
    * --------------------------
    */
@@ -10567,7 +11721,7 @@ private:
     // ---- EXECUTE -------------------------------------------------
     _Exec_LDAEXB(t, n);
   }
-  
+
   /* _DecodeExecute32_LDAEXH_T1 {{{4
    * --------------------------
    */
@@ -10585,7 +11739,7 @@ private:
     // ---- EXECUTE -------------------------------------------------
     _Exec_LDAEXH(t, n);
   }
-  
+
   /* _DecodeExecute32_LDAEX_T1 {{{4
    * -------------------------
    */
@@ -10603,7 +11757,7 @@ private:
     // ---- EXECUTE -------------------------------------------------
     _Exec_LDAEX(t, n);
   }
-  
+
   /* _DecodeExecute32_0100_010_1_01x {{{4
    * -------------------------------
    */
@@ -10896,7 +12050,7 @@ private:
         abort();
     }
   }
- 
+
   /* _DecodeExecute32_STM_STMIA_STMEA_T2 {{{4
    * -----------------------------------
    */
@@ -11531,7 +12685,7 @@ private:
     // ---- EXECUTE -------------------------------------------------
     _Exec_ADC_register(d, n, m, setflags, shiftT, shiftN);
   }
-  
+
   /* _DecodeExecute32_SBC_register_T2 {{{4
    * --------------------------
    */
@@ -11561,7 +12715,7 @@ private:
     // ---- EXECUTE -------------------------------------------------
     _Exec_SBC_register(d, n, m, setflags, shiftT, shiftN);
   }
-  
+
   /* _DecodeExecute32_CMN_register_T2 {{{4
    * --------------------------------
    */
@@ -11587,7 +12741,7 @@ private:
     // ---- EXECUTE -------------------------------------------------
     _Exec_CMN_register(n, m, shiftT, shiftN);
   }
-  
+
   /* _DecodeExecute32_ADD_SP_plus_register_T3 {{{4
    * ----------------------------------------
    */
@@ -12595,7 +13749,7 @@ private:
     // ---- EXECUTE -------------------------------------------------
     _Exec_CMN_immediate(n, imm32);
   }
- 
+
   /* _DecodeExecute32_SBC_immediate_T1 {{{4
    * ---------------------------------
    */
@@ -12623,7 +13777,7 @@ private:
     // ---- EXECUTE -------------------------------------------------
     _Exec_SBC_immediate(d, n, setflags, imm32);
   }
- 
+
   /* _DecodeExecute32_ADC_immediate_T1 {{{4
    * ---------------------------------
    */
@@ -12651,7 +13805,7 @@ private:
     // ---- EXECUTE -------------------------------------------------
     _Exec_ADC_immediate(d, n, setflags, imm32);
   }
- 
+
   /* _DecodeExecute32_ADD_SP_plus_immediate_T3 {{{4
    * -----------------------------------------
    */
@@ -12679,7 +13833,7 @@ private:
     // ---- EXECUTE -------------------------------------------------
     _Exec_ADD_SP_plus_immediate(d, setflags, imm32);
   }
- 
+
   /* _DecodeExecute32_TEQ_immediate_T1 {{{4
    * ---------------------------------
    */
@@ -12887,7 +14041,7 @@ private:
     uint32_t imm3 = GETBITS(instr    ,12,14);
     uint32_t Rd   = GETBITS(instr    , 8,11);
     uint32_t imm8 = GETBITS(instr    , 0, 7);
-  
+
     if (!_HaveMainExt())
       throw Exception(ExceptionType::UNDEFINED);
 
@@ -13546,7 +14700,7 @@ private:
         abort();
     }
   }
-  
+
   /* _DecodeExecute32_CLREX_T1 {{{4
    * ------------------------
    */
@@ -15999,7 +17153,7 @@ private:
         throw Exception(ExceptionType::UNPREDICTABLE);
 
       uint32_t addr = _GetSP() - 8;
-   
+
       uint32_t savedPSR = 0;
       savedPSR = CHGBITSM(savedPSR, RETPSR__EXCEPTION, GETBITSM(_s.xpsr,      XPSR__EXCEPTION));
       savedPSR = CHGBITSM(savedPSR, RETPSR__SFPA,      GETBITSM(_s.controlS,  CONTROL__SFPA  ));
