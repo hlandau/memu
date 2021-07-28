@@ -65,13 +65,43 @@
  *  Floating point support
  */
 
-/* Simulator Debugging and Tracing Utilities {{{2
- * -----------------------------------------
+/* Simulator Compile-Time Configuration {{{2
+ * ====================================
  */
+#define NUM_MPU_REGION_S    8
+#define NUM_MPU_REGION_NS   8
+#define NUM_SAU_REGION      8
+#define NUM_DWT_COMP        4
+#define NUM_FPB_COMP        4
+#define CP_IMPL_MASK        0b11111111
+#define ENFORCE_SOFT_BITS   1
+
+// Implementation Defined Flags
+#define IMPL_DEF_DECODE_CP_SPACE                      1
+#define IMPL_DEF_EARLY_SG_CHECK                       1
+#define IMPL_DEF_SPLIM_CHECK_UNPRED_INSTR             1
+#define IMPL_DEF_SPLIM_EXCEPTION_ON_INVAL_MEM_ACCESS  1
+#define IMPL_DEF_IDAU_PRESENT                         0
+#define IMPL_DEF_PUSH_NON_VIOL_LOCATIONS              0
+#define IMPL_DEF_OVERRIDDEN_EXCEPTIONS_PENDED         1
+#define IMPL_DEF_TAIL_CHAINING_SUPPORTED              1
+#define IMPL_DEF_DROP_PREV_GEN_EXC                    1
+#define IMPL_DEF_BASELINE_NO_SW_ACCESS_DWT            0
+#define IMPL_DEF_BASELINE_NO_SW_ACCESS_FPB            0
+
+// Verify Configuration
+#if NUM_FPB_COMP > 126
+#  error Cannot have more than 126 FPB comparator registers
+#endif
+
 #ifndef EMU_TRACE
 #  define EMU_TRACE 0
 #endif
 
+
+/* Simulator Debugging and Tracing Utilities {{{2
+ * =========================================
+ */
 #if EMU_TRACE
 int g_emuTraceIndent;
 struct EmuTraceBlock {
@@ -91,7 +121,6 @@ struct EmuTraceBlock {
 
 #define ASSERT(Cond) do { if unlikely (!(Cond)) { printf("assertion fail on line %u: %s\n", __LINE__, #Cond); abort(); } } while(0)
 
-#define ENFORCE_SOFT_BITS 1
 #if ENFORCE_SOFT_BITS
 #  define CHECK01(BitsOff, BitsOn)                                          \
   do {                                                                      \
@@ -175,21 +204,6 @@ struct Exception :std::exception {
 private:
   ExceptionType _type;
 };
-
-/* Implementation Defined Flags {{{3
- * ----------------------------
- */
-#define IMPL_DEF_DECODE_CP_SPACE                      1
-#define IMPL_DEF_EARLY_SG_CHECK                       1
-#define IMPL_DEF_SPLIM_CHECK_UNPRED_INSTR             1
-#define IMPL_DEF_SPLIM_EXCEPTION_ON_INVAL_MEM_ACCESS  1
-#define IMPL_DEF_IDAU_PRESENT                         0
-#define IMPL_DEF_PUSH_NON_VIOL_LOCATIONS              0
-#define IMPL_DEF_OVERRIDDEN_EXCEPTIONS_PENDED         1
-#define IMPL_DEF_TAIL_CHAINING_SUPPORTED              1
-#define IMPL_DEF_DROP_PREV_GEN_EXC                    1
-#define IMPL_DEF_BASELINE_NO_SW_ACCESS_DWT            0
-#define IMPL_DEF_BASELINE_NO_SW_ACCESS_FPB            0
 
 /* Register Definitions {{{3
  * ====================
@@ -710,12 +724,14 @@ struct Permissions {
   uint8_t region;
 };
 
-#define EXIT_CAUSE__NORMAL          0
-#define EXIT_CAUSE__WFI             BIT(0)  // Last instruction was WFI
-#define EXIT_CAUSE__WFE             BIT(1)  // Last instruction was WFE
-#define EXIT_CAUSE__YIELD           BIT(2)  // Last instruction was YIELD
-#define EXIT_CAUSE__DBG             BIT(3)  // Last instruction was DBG. This is architecturally a NOP but is reported here for debugging use.
-#define EXIT_CAUSE__SLEEP_ON_EXIT   BIT(4)  // TODO
+enum :uint32_t {
+  EXIT_CAUSE__NORMAL          = 0,
+  EXIT_CAUSE__WFI             = BIT(0), // Last instruction was WFI
+  EXIT_CAUSE__WFE             = BIT(1), // Last instruction was WFE
+  EXIT_CAUSE__YIELD           = BIT(2), // Last instruction was YIELD
+  EXIT_CAUSE__DBG             = BIT(3), // Last instruction was DBG. This is architecturally a NOP but is reported here for debugging use.
+  EXIT_CAUSE__SLEEP_ON_EXIT   = BIT(4), // TODO
+};
 
 struct CpuState {
   union {
@@ -756,17 +772,6 @@ struct CpuState {
 /* Nest State {{{3
  * ----------
  */
-#define NUM_MPU_REGION_S    8
-#define NUM_MPU_REGION_NS   8
-#define NUM_SAU_REGION      8
-#define NUM_DWT_COMP        4
-#define NUM_FPB_COMP        4
-#define CP_IMPL_MASK        0b11111111
-
-#if NUM_FPB_COMP > 126
-#  error Cannot have more than 126 FPB comparator registers
-#endif
-
 struct CpuNest {
   uint32_t dwtCtrl{};               // REG_DWT_CTRL, res0 if !DWT, unbanked, may not be accessible to SW if !Main
   uint32_t dwtComp[15]{};           // REG_DWT_COMPn, res0 if !DWT, unbanked, may not be accessible to SW if !Main
@@ -822,10 +827,12 @@ struct CpuNest {
 /* IDevice {{{3
  * -------
  */
-#define DEBUG_PIN__DBGEN    BIT(0)
-#define DEBUG_PIN__NIDEN    BIT(1)
-#define DEBUG_PIN__SPIDEN   BIT(2)
-#define DEBUG_PIN__SPNIDEN  BIT(3)
+enum :uint32_t {
+  DEBUG_PIN__DBGEN      = BIT(0),
+  DEBUG_PIN__NIDEN      = BIT(1),
+  DEBUG_PIN__SPIDEN     = BIT(2),
+  DEBUG_PIN__SPNIDEN    = BIT(3),
+};
 
 struct IDevice {
   virtual int Load32(phys_t addr, uint32_t &v) { return -1; }
