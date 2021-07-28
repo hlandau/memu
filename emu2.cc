@@ -59,6 +59,7 @@
  *  Monitors/Load Exclusive/etc., _ClearExclusiveByAddress
  *  Proper register implementation
  *  Debug stuff
+ *  S_HALT support
  *  Full manual review
  *  Coprocessor handling
  *  Floating point support
@@ -859,8 +860,109 @@ struct Simulator {
 
   /* TopLevel {{{4
    * --------
+   * Steps the core by one iteration, (potentially) executing one instruction.
    */
   void TopLevel() { _TopLevel(); }
+
+  /* ColdReset {{{4
+   * ---------
+   * Performs a cold reset of the core.
+   */
+  void ColdReset() { _ColdReset(); }
+
+  /* IsLockedUp {{{4
+   * ----------
+   * Returns true iff the core is in locked up state.
+   */
+  bool IsLockedUp() const {
+    return GETBITSM(InternalLoad32(REG_DHCSR), REG_DHCSR__S_LOCKUP);
+  }
+
+#if 0
+  /* IsHalted {{{4
+   * --------
+   * Returns true iff the core is in the halted (debug) state.
+   */
+  bool IsHalted() const {
+    return GETBITSM(InternalLoad32(REG_DHCSR), REG_DHCSR__S_HALT);
+  }
+#endif
+
+  /* TriggerNMI {{{4
+   * ----------
+   * Externally trigger an NMI exception as pending.
+   */
+  void TriggerNMI() {
+    _SetPending(NMI, true, true);
+  }
+
+  /* TriggerExtInt {{{4
+   * -------------
+   * Externally trigger (or untrigger) an external interrupt. intrNo is the
+   * external interrupt number; 16 will be added to it to get the exception
+   * number, so this numbering starts at zero, not 16.
+   */
+  void TriggerExtInt(uint32_t intrNo, bool setNotClear=true) {
+    ASSERT(16+intrNo < _cfg.MaxExc());
+    _SetPending(16+intrNo, true, setNotClear);
+  }
+
+  /* DebugLoad {{{4
+   * ---------
+   * Performs a debug load from the simulated core's memory map, similar to an
+   * access performed via a Cortex-M debug D-AHB slave as might be typically
+   * used over JTAG.
+   *
+   * size:  1, 2 or 4. Width of transfer in bytes.
+   * hprot: Value of HPROT[0:6] as it would appear on an AHB-Lite bus. Bit 6
+   *   should be set for Non-Secure transfers and cleared for Secure transfers.
+   *   The result is placed in the low bits of v. Accesses are always little
+   *   endian and must be aligned. Returns nonzero on bus error.
+   *
+   */
+  int DebugLoad(phys_t addr, int size, uint32_t hprot, uint32_t &v) {
+    ASSERT(size == 4 || size == 2 || size == 1);
+    if (addr % size)
+      return -1;
+
+    AddressDescriptor ad{};
+    ad.memAttrs.ns      = !!(hprot & BIT(6));
+    ad.physAddr         = addr;
+    ad.accAttrs.isPriv  = true;
+    ad.accAttrs.accType = AccType_NORMAL;
+
+    if (size == 4)
+      return _Load32(ad, v);
+    else if (size == 2)
+      return _Load16(ad, v);
+    else
+      return _Load8 (ad, v);
+  }
+
+  /* DebugStore {{{4
+   * ----------
+   * Performs a debug store to the simulated core's memory map, similar to an
+   * access performed via a Cortex-M debug D-AHB slave as might be typically
+   * used over JTAG. See DebugLoad for arguments. Returns nonzero on bus error.
+   */
+  int DebugStore(phys_t addr, int size, uint32_t hprot, uint32_t v) {
+    ASSERT(size == 4 || size == 2 || size == 1);
+    if (addr % size)
+      return -1;
+
+    AddressDescriptor ad{};
+    ad.memAttrs.ns      = !!(hprot & BIT(6));
+    ad.physAddr         = addr;
+    ad.accAttrs.isPriv  = true;
+    ad.accAttrs.accType = AccType_NORMAL;
+
+    if (size == 4)
+      return _Store32(ad, v);
+    else if (size == 2)
+      return _Store16(ad, v);
+    else
+      return _Store8 (ad, v);
+  }
 
 private:
   /* Memory-Mapped Register Implementation {{{3
