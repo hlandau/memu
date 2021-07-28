@@ -46,11 +46,11 @@
 /* ARMv8-M Simulator                                                       {{{1
  * ============================================================================
  * TODO LIST:
- *  _SleepOnExit
- *  _WaitForInterrupt
- *  _WaitForEvent
+ *  _SleepOnExit          - sorta done
+ *  _WaitForInterrupt     - sorta done
+ *  _WaitForEvent         - sorta done
  *  _SendEvent
- *  DMB, DSB, ISB
+ *  DMB, DSB, ISB         - effectively no-ops
  *  _SCS_UpdateStatusRegs
  *
  *  Add missing TRACEIs
@@ -90,6 +90,19 @@ struct EmuTraceBlock {
 #endif
 
 #define ASSERT(Cond) do { if unlikely (!(Cond)) { printf("assertion fail on line %u: %s\n", __LINE__, #Cond); abort(); } } while(0)
+
+#define ENFORCE_SOFT_BITS 1
+#if ENFORCE_SOFT_BITS
+#  define CHECK01(BitsOff, BitsOn)                                          \
+  do {                                                                      \
+    if unlikely ((instr & (BitsOff)) || (~instr & (BitsOn))) {              \
+      TRACE("unpredictable encoding 0x%x, line %u\n", instr, __LINE__);     \
+      throw Exception(ExceptionType::UNDEFINED);                            \
+    }                                                                       \
+  } while (0)                                                            /**/
+#else
+#  define CHECK01(BitsOff, BitsOn)  do {} while (0)
+#endif
 
 /* Simulator Definitions {{{2
  * =====================
@@ -697,6 +710,13 @@ struct Permissions {
   uint8_t region;
 };
 
+#define EXIT_CAUSE__NORMAL          0
+#define EXIT_CAUSE__WFI             BIT(0)  // Last instruction was WFI
+#define EXIT_CAUSE__WFE             BIT(1)  // Last instruction was WFE
+#define EXIT_CAUSE__YIELD           BIT(2)  // Last instruction was YIELD
+#define EXIT_CAUSE__DBG             BIT(3)  // Last instruction was DBG. This is architecturally a NOP but is reported here for debugging use.
+#define EXIT_CAUSE__SLEEP_ON_EXIT   BIT(4)  // TODO
+
 struct CpuState {
   union {
     struct {
@@ -721,7 +741,16 @@ struct CpuState {
   uint32_t thisInstrDefaultCond;
 
   // Implementation-specific state
-  char curCondOverride; // _CurrentCond()
+  char      curCondOverride; // _CurrentCond()
+
+  // Implementation-specific state. The simulator is advanced by calling
+  // TopLevel in a loop. The caller may wish to control loop flow according to
+  // a number of conditions, such as whether a WFI instruction has just been
+  // executed. Therefore we arrange a way to report to the caller if the last
+  // instruction executed was "interesting". If exitCause is 0, the last
+  // instruction executed was not interesting, otherwise it is one of the
+  // values in EXIT_CAUSE__*.
+  uint32_t  exitCause;
 };
 
 /* Nest State {{{3
@@ -890,6 +919,25 @@ struct Simulator {
     return GETBITSM(InternalLoad32(REG_DHCSR), REG_DHCSR__S_HALT);
   }
 #endif
+
+  /* GetExitCause {{{4
+   * ------------
+   * After each return from TopLevel, which processes (at most) one
+   * instruction, the exit cause value is set to one of EXIT_CAUSE__*, which
+   * indicates whether the last instruction processed was an "interesting"
+   * instruction; that is, an instruction which may be grounds for changing the
+   * control flow of the loop calling TopLevel() (e.g., WFI, WFE). If the
+   * last instruction executed was not "interesting", this is set to zero.
+   */
+  uint32_t GetExitCause() const { return _s.exitCause; }
+
+  /* GetLastInstruction {{{4
+   * ------------------
+   * Returns the encoding of the last executed instruction. The second return
+   * value is the length of the instruction in bytes. If the core is locked up,
+   * returns {0, 0}.
+   */
+  std::tuple<uint32_t, int> GetLastInstruction() const { return {_s.thisInstr, _s.thisInstrLength}; }
 
   /* TriggerNMI {{{4
    * ----------
@@ -5357,6 +5405,7 @@ private:
    */
   void _SleepOnExit() {
     // TODO
+    _s.exitCause |= EXIT_CAUSE__SLEEP_ON_EXIT;
   }
 
   /* _WaitForInterrupt {{{4
@@ -5364,6 +5413,7 @@ private:
    */
   void _WaitForInterrupt() {
     // TODO
+    _s.exitCause |= EXIT_CAUSE__WFI;
   }
 
   /* _WaitForEvent {{{4
@@ -5371,7 +5421,9 @@ private:
    */
   void _WaitForEvent() {
     // TODO
+    _s.exitCause |= EXIT_CAUSE__WFE;
   }
+
   /* _IsIrqValid {{{4
    * -----------
    */
@@ -5779,6 +5831,9 @@ private:
    * It also handles pausing execution when in the lockup state.
    */
   void _TopLevel() {
+    // Implementation-specific: Set exit cause value
+    _s.exitCause = 0;
+
     // If the PE has locked up then abort execution of this instruction. Set
     // the length of the current instruction to 0 so NextInstrAddr() reports
     // the correct lockup address.
@@ -6867,9 +6922,10 @@ private:
    * --------------------
    */
   void _BKPTInstrDebugEvent() {
-    // TODO
-    // "Breakpoint causes a DebugMonitor exception or debug halt to occur depending on the configuration
-    //  of the debug support."
+    if (!_GenerateDebugEventResponse()) {
+      auto excInfo = _CreateException(HardFault, false, UNKNOWN_VAL(false));
+      _HandleException(excInfo);
+    }
   }
 
   /* _Hint_Yield {{{4
@@ -6878,6 +6934,7 @@ private:
    */
   void _Hint_Yield() {
     // TODO
+    _s.exitCause |= EXIT_CAUSE__YIELD;
   }
 
   /* _Hint_Debug {{{4
@@ -6886,6 +6943,7 @@ private:
    */
   void _Hint_Debug(uint32_t option) {
     // TODO
+    _s.exitCause |= EXIT_CAUSE__DBG;
   }
 
   /* _Hint_PreloadData {{{4
@@ -8108,6 +8166,8 @@ private:
     uint32_t Rm = GETBITS(instr, 3, 6);
     uint32_t NS = GETBITS(instr, 2, 2);
 
+    CHECK01(BITS(0,1), 0);
+
     uint32_t m              = Rm;
     bool     allowNonSecure = !!NS;
 
@@ -8134,6 +8194,8 @@ private:
     // ---- DECODE --------------------------------------------------
     uint32_t Rm = GETBITS(instr, 3, 6);
     uint32_t NS = GETBITS(instr, 2, 2);
+
+    CHECK01(BITS(0,1), 0);
 
     uint32_t m = Rm;
     bool allowNonSecure = !!NS;
@@ -8482,6 +8544,8 @@ private:
     uint32_t Rt = GETBITS(instr, 0, 2);
     uint32_t Rn = GETBITS(instr, 3, 5);
     uint32_t Rm = GETBITS(instr, 6, 8);
+
+    CHECK01(BIT(15), 0);
 
     uint32_t t      = Rt;
     uint32_t n      = Rn;
@@ -9181,6 +9245,8 @@ private:
     uint32_t Rd = GETBITS(instr, 0, 2);
     uint32_t Rm = GETBITS(instr, 3, 5);
 
+    CHECK01(BIT(6), 0);
+
     uint32_t d        = Rd;
     uint32_t m        = Rm;
     uint32_t rotation = 0;
@@ -9289,6 +9355,8 @@ private:
     uint32_t im = GETBITS(instr, 4, 4);
     uint32_t I  = GETBITS(instr, 1, 1);
     uint32_t F  = GETBITS(instr, 0, 0);
+
+    CHECK01(BITS(2,3), 0);
 
     bool enable   = !im;
     bool disable  = !!im;
@@ -9474,6 +9542,8 @@ private:
     // SEV § C2.4.145 T1
     // ---- DECODE --------------------------------------------------
 
+    CHECK01(BIT(11) | BIT(13), BITS(16+0,16+3));
+
     TRACEI(SEV, T1, "");
 
     // ---- EXECUTE -------------------------------------------------
@@ -9538,6 +9608,8 @@ private:
     // ---- DECODE --------------------------------------------------
     uint32_t Rn       = GETBITS(instr, 8,10);
     uint32_t regList  = GETBITS(instr, 0, 7);
+
+    CHECK01(BIT(13), 0);
 
     uint32_t n          = Rn;
     uint32_t registers  = regList;
@@ -10547,6 +10619,8 @@ private:
     uint32_t Rd     = GETBITS(instr    , 8,11);
     uint32_t Rm     = GETBITS(instr    , 0, 3);
 
+    CHECK01(0, BITS(12,15));
+
     uint32_t d        = Rd;
     uint32_t n        = Rn;
     uint32_t m        = Rm;
@@ -10567,6 +10641,8 @@ private:
     uint32_t Rn     = GETBITS(instr>>16, 0, 3);
     uint32_t Rd     = GETBITS(instr    , 8,11);
     uint32_t Rm     = GETBITS(instr    , 0, 3);
+
+    CHECK01(0, BITS(12,15));
 
     uint32_t d        = Rd;
     uint32_t n        = Rn;
@@ -11213,6 +11289,8 @@ private:
     if (!_HaveMainExt())
       throw Exception(ExceptionType::UNDEFINED);
 
+    CHECK01(BIT(6), 0);
+
     uint32_t d        = Rd;
     uint32_t m        = Rm;
     uint32_t rotation = (rotate<<3);
@@ -11261,6 +11339,8 @@ private:
     if (!_HaveMainExt())
       throw Exception(ExceptionType::UNDEFINED);
 
+    CHECK01(BIT(6), 0);
+
     uint32_t d        = Rd;
     uint32_t m        = Rm;
     uint32_t rotation = (rotate<<3);
@@ -11284,6 +11364,8 @@ private:
 
     if (!_HaveMainExt())
       throw Exception(ExceptionType::UNDEFINED);
+
+    CHECK01(BIT(6), 0);
 
     uint32_t d        = Rd;
     uint32_t m        = Rm;
@@ -11636,6 +11718,8 @@ private:
     uint32_t Rn = GETBITS(instr>>16, 0, 3);
     uint32_t Rt = GETBITS(instr    ,12,15);
 
+    CHECK01(0, BITS(0,3) | BITS(8,11));
+
     uint32_t t  = Rt;
     uint32_t n  = Rn;
 
@@ -11654,6 +11738,8 @@ private:
     // ---- DECODE --------------------------------------------------
     uint32_t Rn = GETBITS(instr>>16, 0, 3);
     uint32_t Rt = GETBITS(instr    ,12,15);
+
+    CHECK01(0, BITS(0,3) | BITS(8,11));
 
     uint32_t t  = Rt;
     uint32_t n  = Rn;
@@ -11674,6 +11760,8 @@ private:
     uint32_t Rn = GETBITS(instr>>16, 0, 3);
     uint32_t Rt = GETBITS(instr    ,12,15);
 
+    CHECK01(0, BITS(0,3) | BITS(8,11));
+
     uint32_t t  = Rt;
     uint32_t n  = Rn;
 
@@ -11693,6 +11781,8 @@ private:
     uint32_t Rn = GETBITS(instr>>16, 0, 3);
     uint32_t Rt = GETBITS(instr    ,12,15);
     uint32_t Rd = GETBITS(instr    , 0, 3);
+
+    CHECK01(0, BITS(8,11));
 
     uint32_t d  = Rd;
     uint32_t t  = Rt;
@@ -11718,6 +11808,8 @@ private:
     uint32_t Rt = GETBITS(instr    ,12,15);
     uint32_t Rd = GETBITS(instr    , 0, 3);
 
+    CHECK01(0, BITS(8,11));
+
     uint32_t d  = Rd;
     uint32_t t  = Rt;
     uint32_t n  = Rn;
@@ -11742,6 +11834,8 @@ private:
     uint32_t Rt = GETBITS(instr    ,12,15);
     uint32_t Rd = GETBITS(instr    , 0, 3);
 
+    CHECK01(0, BITS(8,11));
+
     uint32_t d  = Rd;
     uint32_t t  = Rt;
     uint32_t n  = Rn;
@@ -11765,6 +11859,8 @@ private:
     uint32_t Rn = GETBITS(instr>>16, 0, 3);
     uint32_t Rt = GETBITS(instr    ,12,15);
 
+    CHECK01(0, BITS(0,3) | BITS(8,11));
+
     uint32_t t  = Rt;
     uint32_t n  = Rn;
     if ((t == 13 || t == 15) || n == 15)
@@ -11782,6 +11878,8 @@ private:
     // ---- DECODE --------------------------------------------------
     uint32_t Rn = GETBITS(instr>>16, 0, 3);
     uint32_t Rt = GETBITS(instr    ,12,15);
+
+    CHECK01(0, BITS(0,3) | BITS(8,11));
 
     uint32_t t  = Rt;
     uint32_t n  = Rn;
@@ -11801,6 +11899,8 @@ private:
     uint32_t Rn = GETBITS(instr>>16, 0, 3);
     uint32_t Rt = GETBITS(instr    ,12,15);
 
+    CHECK01(0, BITS(0,3) | BITS(8,11));
+
     uint32_t t  = Rt;
     uint32_t n  = Rn;
     if ((t == 13 || t == 15) || n == 15)
@@ -11818,6 +11918,8 @@ private:
     // ---- DECODE --------------------------------------------------
     uint32_t Rn = GETBITS(instr>>16, 0, 3);
     uint32_t Rt = GETBITS(instr    ,12,15);
+
+    CHECK01(0, BITS(0,3) | BITS(8,11));
 
     uint32_t t  = Rt;
     uint32_t n  = Rn;
@@ -11837,6 +11939,8 @@ private:
     uint32_t Rn = GETBITS(instr>>16, 0, 3);
     uint32_t Rt = GETBITS(instr    ,12,15);
 
+    CHECK01(0, BITS(0,3) | BITS(8,11));
+
     uint32_t t  = Rt;
     uint32_t n  = Rn;
     if ((t == 13 || t == 15) || n == 15)
@@ -11854,6 +11958,8 @@ private:
     // ---- DECODE --------------------------------------------------
     uint32_t Rn = GETBITS(instr>>16, 0, 3);
     uint32_t Rt = GETBITS(instr    ,12,15);
+
+    CHECK01(0, BITS(0,3) | BITS(8,11));
 
     uint32_t t  = Rt;
     uint32_t n  = Rn;
@@ -11915,6 +12021,8 @@ private:
     uint32_t Rn = GETBITS(instr>>16, 0, 3);
     uint32_t Rt = GETBITS(instr    ,12,15);
 
+    CHECK01(0, BITS(0,3) | BITS(8,11));
+
     uint32_t t = Rt;
     uint32_t n = Rn;
 
@@ -11933,6 +12041,8 @@ private:
     // ---- DECODE --------------------------------------------------
     uint32_t Rn = GETBITS(instr>>16, 0, 3);
     uint32_t Rt = GETBITS(instr    ,12,15);
+
+    CHECK01(0, BITS(0,3) | BITS(8,11));
 
     uint32_t t = Rt;
     uint32_t n = Rn;
@@ -11953,6 +12063,8 @@ private:
     uint32_t Rn = GETBITS(instr>>16, 0, 3);
     uint32_t Rt = GETBITS(instr    ,12,15);
     uint32_t Rd = GETBITS(instr    , 0, 3);
+
+    CHECK01(0, BITS(8,11));
 
     uint32_t d = Rd;
     uint32_t t = Rt;
@@ -11977,6 +12089,8 @@ private:
     uint32_t Rn = GETBITS(instr>>16, 0, 3);
     uint32_t Rt = GETBITS(instr    ,12,15);
     uint32_t Rd = GETBITS(instr    , 0, 3);
+
+    CHECK01(0, BITS(8,11));
 
     uint32_t d = Rd;
     uint32_t t = Rt;
@@ -12004,6 +12118,8 @@ private:
 
     if (!_HaveMainExt())
       throw Exception(ExceptionType::UNDEFINED);
+
+    CHECK01(BITS(8,11), BITS(12,15));
 
     uint32_t n      = Rn;
     uint32_t m      = Rm;
@@ -12075,6 +12191,8 @@ private:
     uint32_t Rt   = GETBITS(instr    ,12,15);
     uint32_t imm8 = GETBITS(instr    , 0, 7);
 
+    CHECK01(0, BITS(8,11));
+
     uint32_t t      = Rt;
     uint32_t n      = Rn;
     uint32_t imm32  = _ZeroExtend(imm8<<2, 32);
@@ -12096,6 +12214,8 @@ private:
     uint32_t Rd = GETBITS(instr    , 8,11);
     uint32_t A  = GETBITS(instr    , 7, 7);
     uint32_t T  = GETBITS(instr    , 6, 6);
+
+    CHECK01(BITS(0,5), 0);
 
     uint32_t d            = Rd;
     uint32_t n            = Rn;
@@ -12171,6 +12291,8 @@ private:
     if (!_HaveMainExt())
       throw Exception(ExceptionType::UNDEFINED);
 
+    CHECK01(BIT(13) | BIT(15), 0);
+
     uint32_t n          = Rn;
     uint32_t registers  = (M<<14) | regList;
     bool     wback      = !!W;
@@ -12205,6 +12327,8 @@ private:
     if (!_HaveMainExt())
       throw Exception(ExceptionType::UNDEFINED);
 
+    CHECK01(BIT(13), 0);
+
     uint32_t n          = Rn;
     uint32_t registers  = (P<<15) | (M<<14) | regList;
     bool     wback      = !!W;
@@ -12237,6 +12361,8 @@ private:
 
     if (!_HaveMainExt())
       throw Exception(ExceptionType::UNDEFINED);
+
+    CHECK01(BIT(13) | BIT(15), 0);
 
     uint32_t  n         = Rn;
     uint32_t  registers = regList | (M<<14);
@@ -12271,6 +12397,8 @@ private:
 
     if (!_HaveMainExt())
       throw Exception(ExceptionType::UNDEFINED);
+
+    CHECK01(BIT(13), 0);
 
     uint32_t n          = Rn;
     uint32_t registers  = (P<<15) | (M<<14) | regList;
@@ -12625,6 +12753,8 @@ private:
     if (!_HaveMainExt())
       throw Exception(ExceptionType::UNDEFINED);
 
+    CHECK01(BIT(15), 0);
+
     uint32_t n        = Rn;
     uint32_t m        = Rm;
     auto [shiftT, shiftN] = _DecodeImmShift(type, (imm3<<2) | imm2);
@@ -12707,6 +12837,8 @@ private:
     if (!_HaveMainExt())
       throw Exception(ExceptionType::UNDEFINED);
 
+    CHECK01(BIT(15), 0);
+
     uint32_t d        = Rd;
     uint32_t m        = Rm;
     bool     setflags = !!S;
@@ -12742,6 +12874,8 @@ private:
     ASSERT(Rn != 0b1101);
     if (!_HaveMainExt())
       throw Exception(ExceptionType::UNDEFINED);
+
+    CHECK01(BIT(15), 0);
 
     uint32_t d        = Rd;
     uint32_t n        = Rn;
@@ -12783,6 +12917,8 @@ private:
     if (!_HaveMainExt())
       throw Exception(ExceptionType::UNDEFINED);
 
+    CHECK01(BIT(15), 0);
+
     uint32_t d        = Rd;
     uint32_t n        = Rn;
     uint32_t m        = Rm;
@@ -12813,6 +12949,8 @@ private:
     if (!_HaveMainExt())
       throw Exception(ExceptionType::UNDEFINED);
 
+    CHECK01(BIT(15), 0);
+
     uint32_t d        = Rd;
     uint32_t n        = Rn;
     uint32_t m        = Rm;
@@ -12841,6 +12979,8 @@ private:
     if (!_HaveMainExt())
       throw Exception(ExceptionType::UNDEFINED);
 
+    CHECK01(BIT(15), 0);
+
     uint32_t n = Rn;
     uint32_t m = Rm;
     auto [shiftT, shiftN] = _DecodeImmShift(type, (imm3<<2) | imm2);
@@ -12868,6 +13008,8 @@ private:
     ASSERT(!(Rd == 0b1111 && S));
     if (!_HaveMainExt())
       throw Exception(ExceptionType::UNDEFINED);
+
+    CHECK01(BIT(15), 0);
 
     uint32_t d        = Rd;
     uint32_t m        = Rm;
@@ -12903,6 +13045,8 @@ private:
     if (!_HaveMainExt())
       throw Exception(ExceptionType::UNDEFINED);
 
+    CHECK01(BIT(15), 0);
+
     uint32_t d        = Rd;
     uint32_t n        = Rn;
     uint32_t m        = Rm;
@@ -12930,6 +13074,8 @@ private:
 
     if (!_HaveMainExt())
       throw Exception(ExceptionType::UNDEFINED);
+
+    CHECK01(BIT(15), 0);
 
     uint32_t  n         = Rn;
     uint32_t  m         = Rm;
@@ -12961,6 +13107,8 @@ private:
     if (!_HaveMainExt())
       throw Exception(ExceptionType::UNDEFINED);
 
+    CHECK01(BIT(15), 0);
+
     uint32_t  d         = Rd;
     uint32_t  n         = Rn;
     uint32_t  m         = Rm;
@@ -12990,6 +13138,8 @@ private:
 
     if (!_HaveMainExt())
       throw Exception(ExceptionType::UNDEFINED);
+
+    CHECK01(BIT(15), 0);
 
     uint32_t  d         = Rd;
     uint32_t  m         = Rm;
@@ -13022,6 +13172,8 @@ private:
     if (!_HaveMainExt())
       throw Exception(ExceptionType::UNDEFINED);
 
+    CHECK01(BIT(15), 0);
+
     uint32_t  d         = Rd;
     uint32_t  n         = Rn;
     uint32_t  m         = Rm;
@@ -13048,6 +13200,8 @@ private:
     uint32_t imm2 = GETBITS(instr    , 6, 7);
     uint32_t type = GETBITS(instr    , 4, 5);
     uint32_t Rm   = GETBITS(instr    , 0, 3);
+
+    CHECK01(BIT(15), 0);
 
     // ---- EXECUTE -------------------------------------------------
     if (!_HaveMainExt())
@@ -13086,6 +13240,8 @@ private:
     if (!_HaveMainExt())
       throw Exception(ExceptionType::UNDEFINED);
 
+    CHECK01(BIT(15), 0);
+
     uint32_t d        = Rd;
     uint32_t n        = Rn;
     uint32_t m        = Rm;
@@ -13113,6 +13269,8 @@ private:
 
     if (!_HaveMainExt())
       throw Exception(ExceptionType::UNDEFINED);
+
+    CHECK01(BIT(15), 0);
 
     uint32_t n = Rn;
     uint32_t m = Rm;
@@ -13143,6 +13301,8 @@ private:
     if (!_HaveMainExt())
       throw Exception(ExceptionType::UNDEFINED);
 
+    CHECK01(BIT(15), 0);
+
     uint32_t d        = Rd;
     uint32_t n        = Rn;
     uint32_t m        = Rm;
@@ -13172,6 +13332,8 @@ private:
     ASSERT(Rn != 0b1111);
     if (!_HaveMainExt())
       throw Exception(ExceptionType::UNDEFINED);
+
+    CHECK01(BIT(15), 0);
 
     uint32_t  d         = Rd;
     uint32_t  n         = Rn;
@@ -13308,6 +13470,8 @@ private:
     uint32_t Rd     = GETBITS(instr    , 8,11);
     uint32_t SYSm   = GETBITS(instr    , 0, 7);
 
+    CHECK01(BIT(13) | BIT(16+4), BITS(16+0,16+3));
+
     uint32_t d = Rd;
 
     if ((d == 13 || d == 15))
@@ -13422,6 +13586,8 @@ private:
     if (!_HaveMainExt())
       throw Exception(ExceptionType::UNDEFINED);
 
+    CHECK01(BIT(11) | BIT(13), BITS(16+0,16+3));
+
     // Any decoding of 'option' is specified by the debug system.
 
     // ---- EXECUTE -------------------------------------------------
@@ -13437,6 +13603,8 @@ private:
 
     if (!_HaveMainExt())
       throw Exception(ExceptionType::UNDEFINED);
+
+    CHECK01(BIT(11) | BIT(13), BITS(16+0,16+3));
 
     // No additional decoding required.
 
@@ -13456,6 +13624,8 @@ private:
     if (!_HaveMainExt())
       throw Exception(ExceptionType::UNDEFINED);
 
+    CHECK01(BIT(11) | BIT(13), BITS(16+0,16+3));
+
     // No additional decoding required.
 
     TRACEI(YIELD, T2, "");
@@ -13473,6 +13643,8 @@ private:
 
     if (!_HaveMainExt())
       throw Exception(ExceptionType::UNDEFINED);
+
+    CHECK01(BIT(11) | BIT(13), BITS(16+0,16+3));
 
     // No additional decoding required.
 
@@ -13492,6 +13664,8 @@ private:
     if (!_HaveMainExt())
       throw Exception(ExceptionType::UNDEFINED);
 
+    CHECK01(BIT(11) | BIT(13), BITS(16+0,16+3));
+
     // No additional decoding required.
 
     TRACEI(WFI, T2, "");
@@ -13510,6 +13684,8 @@ private:
     if (!_HaveMainExt())
       throw Exception(ExceptionType::UNDEFINED);
 
+    CHECK01(BIT(11) | BIT(13), BITS(16+0,16+3));
+
     // No additional decoding required.
 
     TRACEI(SEV, T2, "");
@@ -13527,6 +13703,8 @@ private:
     uint32_t Rn     = GETBITS(instr>>16, 0, 3);
     uint32_t mask   = GETBITS(instr    ,10,11);
     uint32_t SYSm   = GETBITS(instr    , 0, 7);
+
+    CHECK01(BITS(8,9) | BIT(13) | BIT(16+4), 0);
 
     uint32_t n      = Rn;
 
@@ -14662,6 +14840,8 @@ private:
     if (!_HaveMainExt())
       throw Exception(ExceptionType::UNDEFINED);
 
+    CHECK01(BIT(5) | BIT(16+10), 0);
+
     uint32_t d            = Rd;
     uint32_t n            = Rn;
     uint32_t saturateTo   = satImm;
@@ -14692,6 +14872,8 @@ private:
     if (!_HaveMainExt())
       throw Exception(ExceptionType::UNDEFINED);
 
+    CHECK01(BIT(5) | BIT(16+10), 0);
+
     uint32_t d            = Rd;
     uint32_t n            = Rn;
     uint32_t saturateTo   = satImm;
@@ -14718,6 +14900,8 @@ private:
 
     if (!_HaveMainExt())
       throw Exception(ExceptionType::UNDEFINED);
+
+    CHECK01(BIT(5) | BIT(16+10), 0);
 
     uint32_t d            = Rd;
     uint32_t n            = Rn;
@@ -14749,6 +14933,8 @@ private:
 
     if (!_HaveMainExt())
       throw Exception(ExceptionType::UNDEFINED);
+
+    CHECK01(BIT(5) | BIT(16+10), 0);
 
     uint32_t d            = Rd;
     uint32_t n            = Rn;
@@ -14821,6 +15007,8 @@ private:
   void _DecodeExecute32_CLREX_T1(uint32_t instr, uint32_t pc) {
     // CLREX § C2.4.26 T1
     // ---- DECODE --------------------------------------------------
+
+    CHECK01(BIT(13), BITS(0,3) | BITS(8,11) | BITS(16+0,16+3));
     // No additional decoding required.
 
     // ---- EXECUTE -------------------------------------------------
@@ -14834,6 +15022,8 @@ private:
     // DSB § C2.4.35 T1
     // ---- DECODE --------------------------------------------------
     uint32_t option = GETBITS(instr, 0, 3);
+
+    CHECK01(BIT(13), BITS(8,11) | BITS(16+0,16+3));
 
     TRACEI(DSB, T1, "option=0x%x", option);
 
@@ -14849,6 +15039,8 @@ private:
     // ---- DECODE --------------------------------------------------
     uint32_t option = GETBITS(instr, 0, 3);
 
+    CHECK01(BIT(13), BITS(8,11) | BITS(16+0,16+3));
+
     TRACEI(DMB, T1, "option=0x%x", option);
 
     // ---- EXECUTE -------------------------------------------------
@@ -14862,6 +15054,8 @@ private:
     // ISB § C2.4.40 T1
     // ---- DECODE --------------------------------------------------
     uint32_t option = GETBITS(instr, 0, 3);
+
+    CHECK01(BIT(13), BITS(8,11) | BITS(16+0,16+3));
 
     TRACEI(ISB, T1, "option=0x%x", option);
 
@@ -14884,6 +15078,8 @@ private:
     ASSERT(Rn != 0b1111);
     if (!_HaveMainExt())
       throw Exception(ExceptionType::UNDEFINED);
+
+    CHECK01(BIT(5) | BIT(16+10), 0);
 
     uint32_t d      = Rd;
     uint32_t n      = Rn;
@@ -14914,6 +15110,8 @@ private:
 
     if (!_HaveMainExt())
       throw Exception(ExceptionType::UNDEFINED);
+
+    CHECK01(BIT(5) | BIT(16+10), 0);
 
     uint32_t d      = Rd;
     uint32_t msbit  = msb;
