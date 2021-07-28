@@ -53,7 +53,7 @@
  *  DMB, DSB, ISB
  *  _SCS_UpdateStatusRegs
  *
- *  32-bit Instructions
+ *  Add missing TRACEIs
  *
  *  Unpredictable encoding enforcement ((0), (1) bits)
  *  Monitors/Load Exclusive/etc., _ClearExclusiveByAddress
@@ -828,6 +828,8 @@ struct SimpleSimulatorConfig {
 
   int MaxExc() const { return this->maxExc; }
 
+  uint32_t InitialVtor() const { return this->initialVtor; }
+
   // -----------------------------------------
   bool      main            = true;         // Whether the simulated CPU supports the Main extension.
   bool      security        = true;         // Whether the simulated CPU supports the Security extension.
@@ -841,6 +843,7 @@ struct SimpleSimulatorConfig {
   uint32_t  mpuRegions      = 8;            // Number of MPU regions supported. 0 for no MPU.
   uint32_t  cpuid           = 0xFFFF'FFFF;  // Specifies the value of the CPUID register.
   int       maxExc          = NUM_EXC-1;    // Maximum number of exceptions supported.
+  uint32_t  initialVtor     = 0;            // Initial VTOR value
 };
 
 /* Simulator {{{2
@@ -918,7 +921,6 @@ struct Simulator {
    *   should be set for Non-Secure transfers and cleared for Secure transfers.
    *   The result is placed in the low bits of v. Accesses are always little
    *   endian and must be aligned. Returns nonzero on bus error.
-   *
    */
   int DebugLoad(phys_t addr, int size, uint32_t hprot, uint32_t &v) {
     ASSERT(size == 4 || size == 2 || size == 1);
@@ -1009,8 +1011,8 @@ private:
     _n.fpccrNS = REG_FPCCR__ASPEN;
 
     // REG_VTOR
-    _n.vtorS  = 0x2000'4000; // TODO
-    _n.vtorNS = 0x2000'4000;
+    _n.vtorS  = _cfg.InitialVtor();
+    _n.vtorNS = _cfg.InitialVtor();
   }
 
   /* NestAccessType {{{4
@@ -3363,6 +3365,8 @@ private:
         _HandleException(excInfo);
     } else
       _s.r[spreg] = value & ~3;
+
+    TRACE("SP(%u) <- 0x%x\n", spreg, _s.r[spreg]);
     return excInfo;
   }
 
@@ -6700,7 +6704,7 @@ private:
         excInfo = _CreateException(BusFault, false, false/*UNKNOWN*/);
         TRACE("fetch failed\n");
       }
-    } else TRACE("fetch addr validate failed\n");
+    } else TRACE("fetch addr validate failed 0x%x\n", addr);
 
     _HandleException(excInfo);
     if (_IsDWTEnabled())
@@ -8825,7 +8829,7 @@ private:
    */
   void _DecodeExecute16_1010xx(uint32_t instr, uint32_t pc) {
     // Add PC/SP (immediate)
-    if (!(instr & BIT(16+11)))
+    if (!(instr & BIT(11)))
       // ADR
       _DecodeExecute16_1010xx_0(instr, pc);
     else
@@ -12714,6 +12718,8 @@ private:
     if ((d == 15 && !S) || (m == 13 || m == 15))
       throw Exception(ExceptionType::UNPREDICTABLE);
 
+    TRACEI(SUB_SP_minus_reg, T1, "d=%u m=%u S=%u shiftT=%u shiftN=%u", d, m, setflags, shiftT, shiftN);
+
     // ---- EXECUTE -------------------------------------------------
     _Exec_SUB_SP_minus_register(d, m, setflags, shiftT, shiftN);
   }
@@ -12745,6 +12751,8 @@ private:
 
     if (d == 13 || (d == 15 && !S) || n == 15 || (m == 13 || m == 15))
       throw Exception(ExceptionType::UNPREDICTABLE);
+
+    TRACEI(SUB_reg, T2, "d=%u n=%u m=%u S=%u shiftT=%u shiftN=%u", d, n, m, setflags, shiftT, shiftN);
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_SUB_register(d, n, m, setflags, shiftT, shiftN);
@@ -13824,6 +13832,8 @@ private:
     if (d == 15 && !S)
       throw Exception(ExceptionType::UNPREDICTABLE);
 
+    TRACEI(SUB_SP_minus_imm, T2, "d=%u S=%u imm32=0x%x", d, setflags, imm32);
+
     // ---- EXECUTE -------------------------------------------------
     _Exec_SUB_SP_minus_immediate(d, setflags, imm32);
   }
@@ -14094,6 +14104,8 @@ private:
     uint32_t  imm32     = _T32ExpandImm((i<<11) | (imm3<<8) | imm8);
     if (d == 13 || (d == 15 && !S) || n == 15)
       throw Exception(ExceptionType::UNPREDICTABLE);
+
+    TRACEI(SUB_imm, T3, "d=%u n=%u[0x%x] S=%u imm32=0x%x", d, n, _GetR(n), setflags, imm32);
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_SUB_immediate(d, n, setflags, imm32);
@@ -20216,662 +20228,3 @@ private:
   Device         &_dev;
   SimulatorConfig _cfg;
 };
-
-/* Test Driver                                                             {{{1
- * ============================================================================
- */
-#if 1
-
-/* RamDevice {{{2
- * ---------
- */
-struct RamDevice final :IDevice {
-  RamDevice(phys_t base, size_t len) {
-    _base = base;
-    _len  = len;
-    _buf  = (uint8_t*)new uint32_t[(len+3)/4];
-    memset(_buf, 0, _len);
-  }
-
-  ~RamDevice() {
-    delete[] _buf;
-    _buf = nullptr;
-  }
-
-  void *GetBuffer() const { return _buf; }
-  size_t GetSize() const { return _len; }
-
-  bool Contains(phys_t addr) const {
-    return addr >= _base && addr < _base + _len;
-  }
-
-  int Load32(phys_t addr, uint32_t &v) override {
-    if (addr < _base || addr+3 >= _base + _len)
-      return -1;
-
-    addr -= _base;
-    v = *(uint32_t*)(_buf + addr);
-    return 0;
-  }
-
-  int Load16(phys_t addr, uint16_t &v) override {
-    if (addr < _base || addr+1 >= _base + _len)
-      return -1;
-
-    addr -= _base;
-    v = *(uint16_t*)(_buf + addr);
-    return 0;
-  }
-
-  int Load8(phys_t addr, uint8_t &v) override {
-    if (addr < _base || addr >= _base + _len)
-      return -1;
-
-    addr -= _base;
-    v = *(uint8_t*)(_buf + addr);
-    return 0;
-  }
-
-  int Store32(phys_t addr, uint32_t v) override {
-    if (addr < _base || addr+3 >= _base + _len)
-      return -1;
-
-    addr -= _base;
-    *(uint32_t*)(_buf + addr) = v;
-    return 0;
-  }
-
-  int Store16(phys_t addr, uint16_t v) override {
-    if (addr < _base || addr+1 >= _base + _len)
-      return -1;
-
-    addr -= _base;
-    *(uint16_t*)(_buf + addr) = v;
-    return 0;
-  }
-
-  int Store8(phys_t addr, uint8_t v) override {
-    if (addr < _base || addr >= _base + _len)
-      return -1;
-
-    addr -= _base;
-    *(uint8_t*)(_buf + addr) = v;
-    return 0;
-  }
-
-private:
-  phys_t   _base;
-  size_t   _len;
-  uint8_t *_buf;
-};
-
-/* RemapDevice {{{2
- * -----------
- */
-struct RemapDevice final :IDevice {
-  RemapDevice(phys_t addr, size_t len, phys_t dstAddr, IDevice &dev) :_addr(addr), _dstAddr(dstAddr), _len(len), _dev(dev) {}
-
-  bool Contains(phys_t addr, size_t n=1) const {
-    return addr >= _addr && addr + (n-1) < _addr + _len;
-  }
-
-  int Load32(phys_t addr, uint32_t &v) override {
-    if (!Contains(addr, 4))
-      return -1;
-
-    return _dev.Load32(addr - _addr + _dstAddr, v);
-  }
-
-  int Load16(phys_t addr, uint16_t &v) override {
-    if (!Contains(addr, 2))
-      return -1;
-
-    return _dev.Load16(addr - _addr + _dstAddr, v);
-  }
-
-  int Load8(phys_t addr, uint8_t &v) override {
-    if (!Contains(addr, 1))
-      return -1;
-
-    return _dev.Load8(addr - _addr + _dstAddr, v);
-  }
-
-  int Store32(phys_t addr, uint32_t v) override {
-    if (!Contains(addr, 4))
-      return -1;
-
-    return _dev.Store32(addr - _addr + _dstAddr, v);
-  }
-
-  int Store16(phys_t addr, uint16_t v) override {
-    if (!Contains(addr, 2))
-      return -1;
-
-    return _dev.Store16(addr - _addr + _dstAddr, v);
-  }
-
-  int Store8(phys_t addr, uint8_t v) override {
-    if (!Contains(addr, 1))
-      return -1;
-
-    return _dev.Store8(addr - _addr + _dstAddr, v);
-  }
-
-private:
-  phys_t    _addr, _dstAddr;
-  size_t    _len;
-  IDevice  &_dev;
-};
-
-/* STM32Device {{{2
- * -----------
- */
-struct STM32_RccDevice final :IDevice {
-  int Load32(phys_t addr, uint32_t &v) override {
-    addr -= 0x4002'1000;
-    switch (addr) {
-      case 0x00: v = _cr; break;
-      case 0x48: v = _ahb1Enr; break;
-      case 0x4C: v = _ahb2Enr; break;
-      case 0x58: v = _apb1Enr; break;
-      case 0x60: v = _apb2Enr; break;
-      case 0x88: v = _ccipr; break;
-      case 0x98: v = _crrcr; break;
-      default:   return -1;
-    }
-
-    return 0;
-  }
-
-  int Store32(phys_t addr, uint32_t v) override {
-    addr -= 0x4002'1000;
-    switch (addr) {
-      case 0x00:
-        _cr = v;
-        if (_cr & BIT(0))
-          _cr |= BIT(1);
-        else
-          _cr &= ~BIT(1);
-        break;
-      case 0x48:  _ahb1Enr = v; break;
-      case 0x4C:  _ahb2Enr = v; break;
-      case 0x58:  _apb1Enr = v; break;
-      case 0x60:  _apb2Enr = v; break;
-      case 0x88:  _ccipr = v; break;
-      case 0x98:  _crrcr = v; break;
-      default:    return -1;
-    }
-
-    return 0;
-  }
-
-private:
-  uint32_t _cr{0x63};
-  uint32_t _ahb1Enr{}, _ahb2Enr{}, _apb1Enr{}, _apb2Enr{}, _ccipr{}, _crrcr{};
-};
-
-struct STM32_IwdgDevice final :IDevice {
-  int Load32(phys_t addr, uint32_t &v) override {
-    addr -= 0x4000'3000;
-    switch (addr) {
-      case 0x00: v = 0; break;
-      default: return -1;
-    }
-
-    return 0;
-  }
-
-  int Store32(phys_t addr, uint32_t v) override {
-    addr -= 0x4000'3000;
-    switch (addr) {
-      case 0x00:
-        v &= 0xFFFF;
-        if (v == 0xCCCC)
-          _running = true;
-        else if (v == 0xAAAA)
-          /* IWDG kicked */;
-        else if (v == 0x5555)
-          _accessEnabled = true;
-        else
-          _accessEnabled = false;
-        break;
-      default: return -1;
-    }
-
-    return 0;
-  }
-
-private:
-  bool _running{};
-  bool _accessEnabled{};
-};
-
-struct STM32_GpioDevice final :IDevice {
-  STM32_GpioDevice(uint32_t base) :_base(base) {}
-
-  int Load32(phys_t addr, uint32_t &v) override {
-    addr -= _base;
-    switch (addr) {
-      case 0x00:  v = _moder; break;
-      case 0x04:  v = _otyper; break;
-      case 0x08:  v = _ospeedr; break;
-      case 0x0C:  v = _pupdr; break;
-      case 0x10:  v = _idr; break;
-      case 0x14:  v = _odr; break;
-      case 0x18:  v = _bsrr; break;
-      case 0x1C:  v = _lckr; break;
-      case 0x20:  v = _afrl; break;
-      case 0x24:  v = _afrh; break;
-      case 0x28:  v = _brr; break;
-      default:    return -1;
-    }
-
-    return 0;
-  }
-
-  int Store32(phys_t addr, uint32_t v) override {
-    addr -= _base;
-    switch (addr) {
-      case 0x00:  _moder = v; break;
-      case 0x04:  _otyper = v; break;
-      case 0x08:  _ospeedr = v; break;
-      case 0x0C:  _pupdr = v; break;
-      case 0x10:  _idr = v; break;
-      case 0x14:  _odr = v; break;
-      case 0x18:  _bsrr = v; break;
-      case 0x1C:  _lckr = v; break;
-      case 0x20:  _afrl = v; break;
-      case 0x24:  _afrh = v; break;
-      case 0x28:  _brr = v; break;
-      default:    return -1;
-    }
-
-    return 0;
-  }
-
-private:
-  uint32_t _base;
-  uint32_t _moder{}, _otyper{}, _ospeedr{}, _pupdr{}, _idr{}, _odr{}, _bsrr{}, _lckr{}, _afrl{}, _afrh{}, _brr{};
-};
-
-struct STM32_UsartDevice final :IDevice {
-  STM32_UsartDevice(phys_t base) :_base(base) {}
-
-  int Load32(phys_t addr, uint32_t &v) override {
-    addr -= _base;
-    switch (addr) {
-      case 0x00:  v = _cr1; break;
-      case 0x04:  v = _cr2; break;
-      case 0x08:  v = _cr3; break;
-      case 0x0C:  v = _brr; break;
-      case 0x10:  v = _gtpr; break;
-      case 0x14:  v = _rtor; break;
-      case 0x18:  v = _rqr; break;
-      case 0x1C:  v = _isr; break;
-      case 0x20:  v = _icr; break;
-      case 0x24:  v = _rdr; break;
-      case 0x28:  v = _tdr; break;
-      default:    return -1;
-    }
-
-    return 0;
-  }
-
-  int Store32(phys_t addr, uint32_t v) override {
-    addr -= _base;
-    switch (addr) {
-      case 0x00: _cr1 = v; break;
-      case 0x04: _cr2 = v; break;
-      case 0x08: _cr3 = v; break;
-      case 0x0C: _brr = v; break;
-      case 0x10: _gtpr = v; break;
-      case 0x14: _rtor = v; break;
-      case 0x18: _rqr = v; break;
-      case 0x1C: _isr = v; break;
-      case 0x20: _icr = v; break;
-      case 0x24: _rdr = v; break;
-      case 0x28: _tdr = v; break;
-      default: return -1;
-    }
-
-    return 0;
-  }
-
-private:
-  phys_t _base;
-  uint32_t _cr1{}, _cr2{}, _cr3{}, _brr{}, _gtpr{}, _rtor{}, _rqr{}, _isr{}, _icr{}, _rdr{}, _tdr{};
-};
-
-struct STM32_DmaDevice final :IDevice {
-  STM32_DmaDevice(phys_t base) :_base(base) {}
-
-  int Load32(phys_t addr, uint32_t &v) override {
-    addr -= _base;
-    switch (addr) {
-      case 0x00:  v = _isr; break;
-      case 0x04:  v = _ifcr; break;
-
-      case 0x08+0*20:  v = _ccr[0]; break;
-      case 0x08+1*20:  v = _ccr[1]; break;
-      case 0x08+2*20:  v = _ccr[2]; break;
-      case 0x08+3*20:  v = _ccr[3]; break;
-      case 0x08+4*20:  v = _ccr[4]; break;
-      case 0x08+5*20:  v = _ccr[5]; break;
-      case 0x08+6*20:  v = _ccr[6]; break;
-
-      case 0x0C+0*20:  v = _cndtr[0]; break;
-      case 0x0C+1*20:  v = _cndtr[1]; break;
-      case 0x0C+2*20:  v = _cndtr[2]; break;
-      case 0x0C+3*20:  v = _cndtr[3]; break;
-      case 0x0C+4*20:  v = _cndtr[4]; break;
-      case 0x0C+5*20:  v = _cndtr[5]; break;
-      case 0x0C+6*20:  v = _cndtr[6]; break;
-
-      case 0x10+0*20:  v = _cpar[0]; break;
-      case 0x10+1*20:  v = _cpar[1]; break;
-      case 0x10+2*20:  v = _cpar[2]; break;
-      case 0x10+3*20:  v = _cpar[3]; break;
-      case 0x10+4*20:  v = _cpar[4]; break;
-      case 0x10+5*20:  v = _cpar[5]; break;
-      case 0x10+6*20:  v = _cpar[6]; break;
-
-      case 0x14+0*20:  v = _cmar[0]; break;
-      case 0x14+1*20:  v = _cmar[1]; break;
-      case 0x14+2*20:  v = _cmar[2]; break;
-      case 0x14+3*20:  v = _cmar[3]; break;
-      case 0x14+4*20:  v = _cmar[4]; break;
-      case 0x14+5*20:  v = _cmar[5]; break;
-      case 0x14+6*20:  v = _cmar[6]; break;
-
-      case 0xA8: v = _cselr; break;
-
-      default:    return -1;
-    }
-
-    return 0;
-  }
-
-  int Store32(phys_t addr, uint32_t v) override {
-    addr -= _base;
-    switch (addr) {
-      case 0x00: _isr = v; break;
-      case 0x04: _ifcr = v; break;
-
-      case 0x08+0*20:  _ccr[0] = v; break;
-      case 0x08+1*20:  _ccr[1] = v; break;
-      case 0x08+2*20:  _ccr[2] = v; break;
-      case 0x08+3*20:  _ccr[3] = v; break;
-      case 0x08+4*20:  _ccr[4] = v; break;
-      case 0x08+5*20:  _ccr[5] = v; break;
-      case 0x08+6*20:  _ccr[6] = v; break;
-
-      case 0x0C+0*20:  _cndtr[0] = v; break;
-      case 0x0C+1*20:  _cndtr[1] = v; break;
-      case 0x0C+2*20:  _cndtr[2] = v; break;
-      case 0x0C+3*20:  _cndtr[3] = v; break;
-      case 0x0C+4*20:  _cndtr[4] = v; break;
-      case 0x0C+5*20:  _cndtr[5] = v; break;
-      case 0x0C+6*20:  _cndtr[6] = v; break;
-
-      case 0x10+0*20:  _cpar[0] = v; break;
-      case 0x10+1*20:  _cpar[1] = v; break;
-      case 0x10+2*20:  _cpar[2] = v; break;
-      case 0x10+3*20:  _cpar[3] = v; break;
-      case 0x10+4*20:  _cpar[4] = v; break;
-      case 0x10+5*20:  _cpar[5] = v; break;
-      case 0x10+6*20:  _cpar[6] = v; break;
-
-      case 0x14+0*20:  _cmar[0] = v; break;
-      case 0x14+1*20:  _cmar[1] = v; break;
-      case 0x14+2*20:  _cmar[2] = v; break;
-      case 0x14+3*20:  _cmar[3] = v; break;
-      case 0x14+4*20:  _cmar[4] = v; break;
-      case 0x14+5*20:  _cmar[5] = v; break;
-      case 0x14+6*20:  _cmar[6] = v; break;
-
-      case 0xA8: _cselr = v; break;
-
-      default:    return -1;
-    }
-    return 0;
-  }
-
-private:
-  phys_t _base;
-  uint32_t _isr{}, _ifcr{}, _ccr[8]{}, _cndtr[8]{}, _cpar[8]{}, _cmar[8]{}, _cselr{};
-};
-
-struct STM32Device final :IDevice {
-  int Load32(phys_t addr, uint32_t &v) override {
-    auto dev = (IDevice*)_Resolve(addr);
-    if (!dev) {
-      printf("  B:L32 %x -> BusFault\n", addr);
-      v = 0xFFFF'FFFF;
-      return -1;
-    }
-
-    int rc = dev->Load32(addr, v);
-    if (rc)
-      printf("  B:L32 %x -> BusFault\n", addr);
-    else
-      printf("  B:L32 %x -> 0x%x\n", addr, v);
-    return rc;
-  }
-
-  int Load16(phys_t addr, uint16_t &v) override {
-    auto dev = (IDevice*)_Resolve(addr);
-    if (!dev) {
-      printf("  B:L16 %x -> BusFault\n", addr);
-      v = 0xFFFF;
-      return -1;
-    }
-
-    int rc = dev->Load16(addr, v);
-    if (rc)
-      printf("  B:L16 %x -> BusFault\n", addr);
-    else
-      printf("  B:L16 %x -> 0x%x\n", addr, v);
-    return rc;
-  }
-
-  int Load8(phys_t addr, uint8_t &v) override {
-    printf("  B:L8 %x\n", addr);
-    auto dev = (IDevice*)_Resolve(addr);
-    if (!dev) {
-      printf("  B:L8  %x -> BusFault\n", addr);
-      v = 0xFF;
-      return -1;
-    }
-
-    int rc = dev->Load8(addr, v);
-    if (rc)
-      printf("  B:L8  %x -> BusFault\n", addr);
-    else
-      printf("  B:L8  %x -> 0x%x\n", addr, v);
-    return rc;
-  }
-
-  int Store32(phys_t addr, uint32_t v) override {
-    auto dev = (IDevice*)_Resolve(addr);
-    if (!dev) {
-      printf("  B:S32 %x <- 0x%x BusFault\n", addr, v);
-      return -1;
-    }
-
-    int rc = dev->Store32(addr, v);
-    if (rc)
-      printf("  B:S32 %x <- 0x%x BusFault\n", addr, v);
-    else
-      printf("  B:S32 %x <- 0x%x\n", addr, v);
-    return rc;
-  }
-
-  int Store16(phys_t addr, uint16_t v) override {
-    auto dev = (IDevice*)_Resolve(addr);
-    if (!dev) {
-      printf("  B:S16 %x <- 0x%x BusFault\n", addr, v);
-      return -1;
-    }
-
-    int rc = dev->Store16(addr, v);
-    if (rc)
-      printf("  B:S16 %x <- 0x%x BusFault\n", addr, v);
-    else
-      printf("  B:S16 %x <- 0x%x\n", addr, v);
-    return rc;
-  }
-
-  int Store8(phys_t addr, uint8_t v) override {
-    auto dev = (IDevice*)_Resolve(addr);
-    if (!dev) {
-      printf("  B:S8  %x <- 0x%x BusFault\n", addr, v);
-      return -1;
-    }
-
-    int rc = dev->Store8(addr, v);
-    if (rc)
-      printf("  B:S8  %x <- 0x%x BusFault\n", addr, v);
-    else
-      printf("  B:S8  %x <- 0x%x\n", addr, v);
-    return rc;
-  }
-
-  RamDevice &GetSRAM1() { return _sram1; }
-
-private:
-  IDevice *_Resolve(phys_t addr) {
-    const phys_t sram1End   = 0x2000'0000 + _sram1.GetSize();
-    const phys_t sram2AEnd  = 0x1000'0000 + _sram2.GetSize();
-    const phys_t sram2BEnd  = 0x2000'C000 + _sram2.GetSize();
-
-    if (addr >= 0 && addr < 0x4'0000) {
-      // "Flash, system memory or SRAM depending on boot configuration"
-      return &_bootr;
-    } else if (addr >= 0x0800'0000 && addr < 0x0804'0000) {
-      // Flash memory
-      return nullptr;
-    } else if (addr >= 0x1000'0000 && addr < sram2AEnd) {
-      // SRAM2
-      return &_sram2r;
-    } else if (addr >= 0x1FFF'0000 && addr < 0x1FFF'7000) {
-      // System memory
-      return nullptr;
-    } else if (addr >= 0x1FFF'7000 && addr < 0x1FFF'7400) {
-      // OTP area
-      return nullptr;
-    } else if (addr >= 0x1FFF'7800 && addr < 0x1FFF'7810) {
-      // Option bytes
-      return nullptr;
-    } else if (addr >= 0x2000'0000 && addr < sram1End) {
-      // SRAM1
-      return &_sram1;
-    } else if (addr >= 0x2000'C000 && addr < sram2BEnd) {
-      // SRAM2
-      return &_sram2;
-    } else if (addr >= 0x4000'0000 && addr < 0x4000'9800) {
-      // Peripherals: APB1
-      return _ResolveAPB1(addr);
-    } else if (addr >= 0x4001'0000 && addr < 0x4001'6400) {
-      // Peripherals: APB2
-      return _ResolveAPB2(addr);
-    } else if (addr >= 0x4002'0000 && addr < 0x4002'4400) {
-      // Peripherals: AHB1
-      return _ResolveAHB1(addr);
-    } else if (addr >= 0x4800'0000 && addr < 0x5006'0C00) {
-      // Peripherals: AHB2
-      return _ResolveAHB2(addr);
-    } else if (addr >= 0x9000'0000 && addr < 0xA000'0000) {
-      // QUADSPI Flash bank
-      return nullptr;
-    } else if (addr >= 0xA000'1000 && addr < 0xC000'0000) {
-      // QUADSPI Registers
-      return nullptr;
-    } else
-      return nullptr;
-  }
-
-  IDevice *_ResolveAHB1(phys_t addr) {
-    if (addr >= 0x4002'0000 && addr < 0x4002'0400)
-      return &_dma1;
-
-    if (addr >= 0x4002'1000 && addr < 0x4002'1400)
-      return &_rcc;
-
-    return nullptr;
-  }
-
-  IDevice *_ResolveAHB2(phys_t addr) {
-    if (addr >= 0x4800'0000 && addr < 0x4800'0400)
-      return &_gpioA;
-    if (addr >= 0x4800'0400 && addr < 0x4800'0800)
-      return &_gpioB;
-    if (addr >= 0x4800'0800 && addr < 0x4800'0C00)
-      return &_gpioC;
-    if (addr >= 0x4800'0C00 && addr < 0x4800'1000)
-      return &_gpioD;
-    if (addr >= 0x4800'1000 && addr < 0x4800'1400)
-      return &_gpioE;
-    if (addr >= 0x4800'1C00 && addr < 0x4800'2000)
-      return &_gpioH;
-
-    return nullptr;
-  }
-
-  IDevice *_ResolveAPB1(phys_t addr) {
-    if (addr >= 0x4000'3000 && addr < 0x4000'3400)
-      return &_iwdg;
-
-    return nullptr;
-  }
-
-  IDevice *_ResolveAPB2(phys_t addr) {
-    if (addr >= 0x4001'3800 && addr < 0x4001'3C00)
-      return &_usart1;
-
-    return nullptr;
-  }
-
-  RamDevice           _sram1{0x2000'0000, 48*1024};
-  RamDevice           _sram2{0x2000'C000, 16*1024};
-  RemapDevice         _sram2r{0x1000'0000, 16*1024, 0x2000'C000, _sram2};
-  RemapDevice         _bootr{0x0000'0000, 256*1024, 0x2000'0000, _sram1};
-  STM32_RccDevice     _rcc;
-  STM32_IwdgDevice    _iwdg;
-  STM32_GpioDevice    _gpioA{0x4800'0000}, _gpioB{0x4800'0400}, _gpioC{0x4800'0800}, _gpioD{0x4800'0C00}, _gpioE{0x4800'1000}, _gpioH{0x4800'1C00};
-  STM32_UsartDevice   _usart1{0x4001'3800};
-  STM32_DmaDevice     _dma1{0x4002'0000};
-};
-
-/* main {{{2
- * ----
- */
-int main(int argc, char **argv) {
-  STM32Device dev;
-  RamDevice  &sram1     = dev.GetSRAM1();
-  void       *sram1Buf  = sram1.GetBuffer();
-  size_t      sram1Len  = sram1.GetSize();
-
-  FILE *f = fopen("../debang1.bin0", "rb");
-  if (!f)
-    return 1;
-
-  fseek(f, 0, SEEK_END);
-  size_t flen = ftell(f);
-  fseek(f, 0, SEEK_SET);
-
-  if (flen > sram1Len)
-    return 2;
-
-  if (fread((uint8_t*)sram1Buf + 0x4000, 1, flen, f) != flen)
-    return 3;
-
-  fclose(f);
-
-  Simulator sim(dev);
-
-  for (;;)
-    sim.TopLevel();
-
-  return 0;
-}
-#endif
