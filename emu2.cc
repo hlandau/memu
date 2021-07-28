@@ -133,6 +133,15 @@ struct EmuTraceBlock {
 #  define CHECK01(BitsOff, BitsOn)  do {} while (0)
 #endif
 
+#define CHECKV(MinVer)                               \
+  do {                                               \
+    if unlikely (_cfg.IsaVersion() < (MinVer)) {     \
+      TRACE("instruction not supported for this ISA version (encoding 0x%x, line %u)\n", instr, __LINE__); \
+      throw Exception(ExceptionType::UNDEFINED);     \
+    }                                                \
+  } while (0)                                     /**/
+
+
 /* Simulator Definitions {{{2
  * =====================
  */
@@ -866,6 +875,8 @@ struct SimpleSimulatorConfig {
 
   uint32_t InitialVtor() const { return this->initialVtor; }
 
+  int IsaVersion() const { return this->isaVersion; }
+
   // -----------------------------------------
   bool      main            = true;         // Whether the simulated CPU supports the Main extension.
   bool      security        = true;         // Whether the simulated CPU supports the Security extension.
@@ -880,6 +891,7 @@ struct SimpleSimulatorConfig {
   uint32_t  cpuid           = 0xFFFF'FFFF;  // Specifies the value of the CPUID register.
   int       maxExc          = NUM_EXC-1;    // Maximum number of exceptions supported.
   uint32_t  initialVtor     = 0;            // Initial VTOR value
+  int       isaVersion      = 8;            // ISA version (7 or 8)
 };
 
 /* Simulator {{{2
@@ -889,6 +901,10 @@ template<typename Device=IDevice, typename SimulatorConfig=SimpleSimulatorConfig
 struct Simulator {
   Simulator(Device &dev, const SimulatorConfig &cfg=SimulatorConfig()) :_dev(dev), _cfg(cfg) {
     ASSERT(cfg.MaxExc() < NUM_EXC);
+
+    ASSERT(cfg.IsaVersion() >= 7 && cfg.IsaVersion() <= 8);
+    if (_HaveSecurityExt())
+      ASSERT(cfg.IsaVersion() >= 8);
 
     _ColdReset();
   }
@@ -11496,6 +11512,8 @@ private:
     // ---- DECODE --------------------------------------------------
     // No encoding specific operations
 
+    CHECKV(8);
+
     // ---- EXECUTE -------------------------------------------------
     _Exec_SG();
   }
@@ -11726,6 +11744,7 @@ private:
     uint32_t Rt = GETBITS(instr    ,12,15);
 
     CHECK01(0, BITS(0,3) | BITS(8,11));
+    CHECKV(8);
 
     uint32_t t  = Rt;
     uint32_t n  = Rn;
@@ -11747,6 +11766,7 @@ private:
     uint32_t Rt = GETBITS(instr    ,12,15);
 
     CHECK01(0, BITS(0,3) | BITS(8,11));
+    CHECKV(8);
 
     uint32_t t  = Rt;
     uint32_t n  = Rn;
@@ -11768,6 +11788,7 @@ private:
     uint32_t Rt = GETBITS(instr    ,12,15);
 
     CHECK01(0, BITS(0,3) | BITS(8,11));
+    CHECKV(8);
 
     uint32_t t  = Rt;
     uint32_t n  = Rn;
@@ -11790,6 +11811,7 @@ private:
     uint32_t Rd = GETBITS(instr    , 0, 3);
 
     CHECK01(0, BITS(8,11));
+    CHECKV(8);
 
     uint32_t d  = Rd;
     uint32_t t  = Rt;
@@ -11816,6 +11838,7 @@ private:
     uint32_t Rd = GETBITS(instr    , 0, 3);
 
     CHECK01(0, BITS(8,11));
+    CHECKV(8);
 
     uint32_t d  = Rd;
     uint32_t t  = Rt;
@@ -11842,6 +11865,7 @@ private:
     uint32_t Rd = GETBITS(instr    , 0, 3);
 
     CHECK01(0, BITS(8,11));
+    CHECKV(8);
 
     uint32_t d  = Rd;
     uint32_t t  = Rt;
@@ -11867,6 +11891,7 @@ private:
     uint32_t Rt = GETBITS(instr    ,12,15);
 
     CHECK01(0, BITS(0,3) | BITS(8,11));
+    CHECKV(8);
 
     uint32_t t  = Rt;
     uint32_t n  = Rn;
@@ -11887,6 +11912,7 @@ private:
     uint32_t Rt = GETBITS(instr    ,12,15);
 
     CHECK01(0, BITS(0,3) | BITS(8,11));
+    CHECKV(8);
 
     uint32_t t  = Rt;
     uint32_t n  = Rn;
@@ -11907,6 +11933,7 @@ private:
     uint32_t Rt = GETBITS(instr    ,12,15);
 
     CHECK01(0, BITS(0,3) | BITS(8,11));
+    CHECKV(8);
 
     uint32_t t  = Rt;
     uint32_t n  = Rn;
@@ -11927,6 +11954,7 @@ private:
     uint32_t Rt = GETBITS(instr    ,12,15);
 
     CHECK01(0, BITS(0,3) | BITS(8,11));
+    CHECKV(8);
 
     uint32_t t  = Rt;
     uint32_t n  = Rn;
@@ -11947,6 +11975,7 @@ private:
     uint32_t Rt = GETBITS(instr    ,12,15);
 
     CHECK01(0, BITS(0,3) | BITS(8,11));
+    CHECKV(8);
 
     uint32_t t  = Rt;
     uint32_t n  = Rn;
@@ -11967,6 +11996,7 @@ private:
     uint32_t Rt = GETBITS(instr    ,12,15);
 
     CHECK01(0, BITS(0,3) | BITS(8,11));
+    CHECKV(8);
 
     uint32_t t  = Rt;
     uint32_t n  = Rn;
@@ -12223,6 +12253,7 @@ private:
     uint32_t T  = GETBITS(instr    , 6, 6);
 
     CHECK01(BITS(0,5), 0);
+    CHECKV(8);
 
     uint32_t d            = Rd;
     uint32_t n            = Rn;
