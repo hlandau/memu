@@ -6654,6 +6654,17 @@ private:
         break;
       case SysTick:
         if (_HaveSysTick() == 2) {
+          // XXX. The ISA manual does not give a definition here but suggests
+          // that targetSecure should equal whether the S or NS SysTick timer
+          // is raising. This is only applicable if we are in a context of handling
+          // an exception and this function is called from other places. However,
+          // it *should* never be called for SysTick if _HaveSysTick() == 2, because
+          // then !_IsExceptionTargetConfigurable(SysTick), and this function
+          // never be called when !_IsExceptionTargetConfigurable() for SysTick specifically
+          // unless we are actually handling an actually pending exception. In this circumstance,
+          // we will be called by _PendingExceptionDetailsActual() and isSecure will be
+          // equal to the correct value.
+          targetSecure = isSecure;
         } else if (_HaveSysTick() == 1)
           // SysTick target state is configurable
           targetSecure = !(InternalLoad32(REG_ICSR_S) & REG_ICSR__STTNS);
