@@ -55,14 +55,16 @@
  *
  *  Add missing TRACEIs
  *
- *  Unpredictable encoding enforcement ((0), (1) bits)
  *  Monitors/Load Exclusive/etc., _ClearExclusiveByAddress
- *  Proper register implementation
+ *  Proper register implementation -- ~done for essential registers
  *  Debug stuff
  *  S_HALT support
  *  Full manual review
  *  Coprocessor handling
  *  Floating point support
+ *
+ *  SCR.SEVONPEND: Exceptions entering the pending state should cause SetEventRegister
+ *  Check NVIC usage of _excEnable/_excPending/_excActive; should we use _SetPending etc.?
  */
 
 /* Simulator Compile-Time Configuration {{{2
@@ -743,30 +745,55 @@ enum :uint32_t {
 };
 
 struct CpuState {
+  // General-purpose registers, including the banked versions of SP.
   union {
     struct {
       uint32_t r0,r1,r2,r3,r4,r5,r6,r7,r8,r9,r10,r11,r12,spMainNS,spProcessNS,lr,pc,spMainS,spProcessS;
     };
     uint32_t r[_RName_Max];
   };
-  uint32_t xpsr, spNS, psplimNS, psplimS, msplimNS, msplimS, fpscr;
+
+  // Special architectural registers, accessed via MRS/MSR or VMRS/VMSR.
+  uint32_t xpsr, psplimNS, psplimS, msplimNS, msplimS, fpscr;
   uint32_t primaskNS, primaskS, faultmaskNS, faultmaskS, basepriNS, basepriS, controlNS, controlS;
+
+  // Security state (Secure or Non-Secure).
   SecurityState curState;
+
+  // Exception enable, active, and pending flags.
+  // For exceptions which are banked between security states (e.g. MemManage,
+  // UsageFault, SVCall, PendSV, and SysTick if dual SysTick timers are present):
+  //   bit 0: Secure enabled/active/pending (unused if no security ext)
+  //   bit 1: Non-Secure enabled/active/pending
+  // For unbanked exceptions (e.g. NMI, BusFault, DebugMonitor, SysTick if only
+  // a single SysTick timer is present, and external interrupts), these are
+  // 0b11 if enabled/active/pending and 0b00 otherwise.
   uint8_t excEnable[NUM_EXC];
   uint8_t excActive[NUM_EXC];
   uint8_t excPending[NUM_EXC];
+
+  // Floating point registers.
   uint64_t d[16];
-  bool event, pendingReturnOperation;
-  bool itStateChanged;
-  bool pcChanged;
-  uint8_t nextInstrITState;
-  uint32_t nextInstrAddr;
-  uint32_t thisInstr;
-  uint8_t  thisInstrLength;
+
+  // Miscellaneous flags, including the event flag.
+  bool event;                     // The event flag.
+  bool pendingReturnOperation;
+  bool itStateChanged;            // Used to override next ITSTATE.
+  bool pcChanged;                 // Used to override next instruction address, e.g. when branching.
+  uint8_t nextInstrITState;       // Used only if itStateChanged is set. New ITSTATE.
+  uint32_t nextInstrAddr;         // Used only if pcChanged is set. Branch target address.
+
+  // Information about the current instruction.
+  uint32_t thisInstr;             // instruction encoding
+  uint8_t  thisInstrLength;       // in bytes (2 or 4, or 0 if in lockup)
   uint32_t thisInstrDefaultCond;
 
-  // Implementation-specific state
-  char      curCondOverride; // _CurrentCond()
+  // Implementation-specific state. If set to a non-negative value, this is
+  // used for _CurrentCond() instead of thisInstrDefaultCond. Can be used in
+  // the decoder of a specific instruction to override the condition code (e.g.
+  // for branch instructions which have a condition code field rather than
+  // using ITSTATE). Defaults and is reset to -1 at the start of each cycle.
+  char      curCondOverride;
 
   // Implementation-specific state. The simulator is advanced by calling
   // TopLevel in a loop. The caller may wish to control loop flow according to
@@ -1495,8 +1522,19 @@ private:
     uint32_t itns   = _n.nvicItns[groupNo];
     int      limit  = (groupNo == 15) ? 15 : 32;
     for (int i=0; i<limit; ++i)
-      if ((v & BIT(i)) && (isSecure | GETBIT(itns, i)))
-        _SetPending(16 + groupNo*32 + i, isSecure, setNotClear);
+      if (v & BIT(i))
+        _SetPending(16 + groupNo*32 + i, isSecure, setNotClear, true);
+  }
+
+  /* _NestStoreNvicEnableReg {{{4
+   * -----------------------
+   */
+  void _NestStoreNvicEnableReg(uint32_t groupNo, uint32_t v, bool isSecure, bool setNotClear) {
+    uint32_t itns  = _n.nvicItns[groupNo];
+    int      limit = (groupNo == 15) ? 15 : 32;
+    for (int i=0; i<limit; ++i)
+      if (v & BIT(i))
+        _SetEnable(16 + groupNo*32 + i, isSecure, setNotClear, true);
   }
 
   /* _NestLoadNvicPendingReg {{{4
@@ -1507,20 +1545,9 @@ private:
     uint32_t itns   = _n.nvicItns[groupNo];
     int      limit  = (groupNo == 15) ? 15 : 32;
     for (int i=0; i<limit; ++i)
-      if (_s.excPending[16+groupNo*32+i] && (isSecure || GETBIT(itns, i)))
+      if (_IsPendingForState(16+groupNo*32+i, isSecure))
         v |= BIT(i);
     return v;
-  }
-
-  /* _NestStoreNvicEnableReg {{{4
-   * -----------------------
-   */
-  void _NestStoreNvicEnableReg(uint32_t groupNo, uint32_t v, bool isSecure, bool setNotClear) {
-    uint32_t itns  = _n.nvicItns[groupNo];
-    int      limit = (groupNo == 15) ? 15 : 32;
-    for (int i=0; i<limit; ++i)
-      if ((v & BIT(i)) && (isSecure | GETBIT(itns, i)))
-        _s.excEnable[16 + groupNo*32 + i] = setNotClear;
   }
 
   /* _NestLoadNvicEnableReg {{{4
@@ -1528,10 +1555,9 @@ private:
    */
   uint32_t _NestLoadNvicEnableReg(uint32_t groupNo, bool isSecure) {
     uint32_t v      = 0;
-    uint32_t itns   = _n.nvicItns[groupNo];
     int      limit  = (groupNo == 15) ? 15 : 32;
     for (int i=0; i<limit; ++i)
-      if (_s.excEnable[16+groupNo*32+i] && (isSecure || GETBIT(itns, i)))
+      if (_IsEnabledForState(16+groupNo*32+i, isSecure))
         v |= BIT(i);
     return v;
   }
@@ -1544,7 +1570,7 @@ private:
     uint32_t itns   = _n.nvicItns[groupNo];
     int      limit  = (groupNo == 15) ? 15 : 32;
     for (int i=0; i<limit; ++i)
-      if (_s.excActive[16+groupNo*32+i] && (isSecure || GETBIT(itns, i)))
+      if (_IsActiveForState(16+groupNo*32+i, isSecure))
         v |= BIT(i);
     return v;
   }
@@ -2068,12 +2094,12 @@ private:
         // PENDSVCLR
         // PENDSVSET
         if (v & (REG_ICSR__PENDSVSET | REG_ICSR__PENDSVCLR))
-          _SetPending(PendSV, !isNS, !!(v & REG_ICSR__PENDSVSET));
+          _SetPending(PendSV, !isNS, !!(v & REG_ICSR__PENDSVSET), true);
         // PENDNMICLR
         // PENDNMISET
         if (v & (REG_ICSR__PENDNMISET | REG_ICSR__PENDNMICLR))
           if (!isNS || !!(_n.aircrS & REG_AIRCR__BFHFNMINS))
-            _SetPending(NMI, true, !!(v & REG_ICSR__PENDNMISET));
+            _SetPending(NMI, true, !!(v & REG_ICSR__PENDNMISET), true);
         if (!isNS) {
           uint32_t rwMask = 0;
           if (_HaveSysTick() == 1)
@@ -2110,22 +2136,22 @@ private:
 
         // ----- Pendings
         if (_HaveMainExt()) {
-          _SetPending(UsageFault, !isNS, !!(v & REG_SHCSR__USGFAULTPENDED));
-          _SetPending(MemManage, !isNS, !!(v & REG_SHCSR__MEMFAULTPENDED));
-          _SetPending(BusFault, !isNS, !!(v & REG_SHCSR__BUSFAULTPENDED));
-          _SetPending(SVCall, !isNS, !!(v & REG_SHCSR__SVCALLPENDED));
-          _SetPending(HardFault, !isNS, !!(v & REG_SHCSR__HARDFAULTPENDED));
+          _SetPending(UsageFault, !isNS, !!(v & REG_SHCSR__USGFAULTPENDED), true);
+          _SetPending(MemManage, !isNS, !!(v & REG_SHCSR__MEMFAULTPENDED), true);
+          _SetPending(BusFault, !isNS, !!(v & REG_SHCSR__BUSFAULTPENDED), true);
+          _SetPending(SVCall, !isNS, !!(v & REG_SHCSR__SVCALLPENDED), true);
+          _SetPending(HardFault, !isNS, !!(v & REG_SHCSR__HARDFAULTPENDED), true);
           if (_HaveSecurityExt())
-            _SetPending(SecureFault, !isNS, !!(v & REG_SHCSR__SECUREFAULTPENDED));
+            _SetPending(SecureFault, !isNS, !!(v & REG_SHCSR__SECUREFAULTPENDED), true);
         }
 
         // ----- Enables
         if (_HaveMainExt()) {
-          _SetEnable(MemManage, !isNS, !!(v & REG_SHCSR__MEMFAULTENA));
-          _SetEnable(BusFault, !isNS, !!(v & REG_SHCSR__BUSFAULTENA));
-          _SetEnable(UsageFault, !isNS, !!(v & REG_SHCSR__USGFAULTENA));
+          _SetEnable(MemManage, !isNS, !!(v & REG_SHCSR__MEMFAULTENA), true);
+          _SetEnable(BusFault, !isNS, !!(v & REG_SHCSR__BUSFAULTENA), true);
+          _SetEnable(UsageFault, !isNS, !!(v & REG_SHCSR__USGFAULTENA), true);
           if (_HaveSecurityExt())
-            _SetEnable(SecureFault, !isNS, !!(v & REG_SHCSR__SECUREFAULTENA));
+            _SetEnable(SecureFault, !isNS, !!(v & REG_SHCSR__SECUREFAULTENA), true);
         }
         break;
 
@@ -2458,7 +2484,10 @@ private:
    * ----------
    */
   void _SendEvent() {
-    // TODO
+    // XXX: This is supposed to set the event register of every PE in a multiprocessor system.
+    // The manual does not state whether this should include this PE or not. A literal reading
+    // says yes, so we do so.
+    _SetEventRegister();
   }
 
   /* _InstructionSynchronizationBarrier {{{4
@@ -4917,14 +4946,19 @@ private:
 
   /* _SetPending {{{4
    * -----------
+   * XXX. This function has been augmented relative to the ISA manual's
+   * definition to add an additional check parameter allowing us to choose to
+   * test _ExceptionTargetsSecure, which is useful for implementing NVIC
+   * registers.
    */
-  void _SetPending(int exc, bool isSecure, bool setNotClear) {
+  void _SetPending(int exc, bool isSecure, bool setNotClear, bool check=false) {
     if (!_HaveSecurityExt())
       isSecure = false;
 
-    if (_IsExceptionTargetConfigurable(exc))
-      _s.excPending[exc] = setNotClear ? 0b11 : 0b00;
-    else {
+    if (_IsExceptionTargetConfigurable(exc)) {
+      if (!check || _ExceptionTargetsSecure(exc, isSecure) == isSecure)
+        _s.excPending[exc] = setNotClear ? 0b11 : 0b00;
+    } else {
       uint32_t idx = isSecure ? 0 : 1;
       _s.excPending[exc] = CHGBITS(_s.excPending[exc], idx, idx, setNotClear);
     }
@@ -4932,16 +4966,17 @@ private:
 
   /* _SetEnable {{{4
    * ----------
-   * XXX
+   * XXX. This does not appear in the ISA manual but has been constructed
+   * analagously to _SetPending.
    */
-  void _SetEnable(int exc, bool isSecure, bool setNotClear) {
+  void _SetEnable(int exc, bool isSecure, bool setNotClear, bool check=false) {
     if (!_HaveSecurityExt())
       isSecure = false;
 
-    if (_IsExceptionTargetConfigurable(exc))
-      // TODO: should this be guarded by _ExceptionTargetsSecure(exc, false/*UNKNOWN*/) == isSecure?
-      _s.excEnable[exc] = setNotClear ? 0b11 : 0b00;
-    else {
+    if (_IsExceptionTargetConfigurable(exc)) {
+      if (!check || _ExceptionTargetsSecure(exc, isSecure) == isSecure)
+        _s.excEnable[exc] = setNotClear ? 0b11 : 0b00;
+    } else {
       uint32_t idx = isSecure ? 0 : 1;
       _s.excEnable[exc] = CHGBITS(_s.excEnable[exc], idx, idx, setNotClear);
     }
@@ -5279,7 +5314,7 @@ private:
       isSecure = false;
 
     if (_IsExceptionTargetConfigurable(exc)) {
-      if (_ExceptionTargetsSecure(exc, false/*UNKNOWN*/) == isSecure)
+      if (_ExceptionTargetsSecure(exc, isSecure/*UNKNOWN TODO*/) == isSecure)
         _s.excActive[exc] = setNotClear ? 0b11 : 0b00;
     } else {
       uint32_t idx = isSecure ? 0 : 1;
