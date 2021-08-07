@@ -3,6 +3,10 @@
 #include <assert.h>
 #include <exception>
 #include <tuple>
+#include <chrono>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
 
 /* Preprocessor Utilities                                                  {{{1
  * ============================================================================
@@ -128,7 +132,7 @@ struct EmuTraceBlock {
   do {                                                                      \
     if unlikely ((instr & (BitsOff)) || (~instr & (BitsOn))) {              \
       TRACE("unpredictable encoding 0x%x, line %u\n", instr, __LINE__);     \
-      throw Exception(ExceptionType::UNDEFINED);                            \
+      THROW_UNDEFINED();                            \
     }                                                                       \
   } while (0)                                                            /**/
 #else
@@ -139,7 +143,7 @@ struct EmuTraceBlock {
   do {                                               \
     if unlikely (_cfg.IsaVersion() < (MinVer)) {     \
       TRACE("instruction not supported for this ISA version (encoding 0x%x, line %u)\n", instr, __LINE__); \
-      throw Exception(ExceptionType::UNDEFINED);     \
+      THROW_UNDEFINED();     \
     }                                                \
   } while (0)                                     /**/
 
@@ -185,12 +189,13 @@ struct ExcInfo {
 
 using phys_t = uint32_t;
 
-#define UNDEFINED_DEC() do { printf("W:         UNDEFINED %u\n", __LINE__); throw Exception(ExceptionType::UNDEFINED); } while (0)
+#define THROW_UNPREDICTABLE() do { TRACE("W: unpredictable on %u\n", __LINE__); throw Exception(ExceptionType::UNPREDICTABLE); } while (0)
+#define THROW_UNDEFINED()     do { TRACE("W: undefined on %u\n", __LINE__); throw Exception(ExceptionType::UNDEFINED); } while (0)
+#define UNDEFINED_DEC() do { printf("W:         UNDEFINED %u\n", __LINE__); THROW_UNDEFINED(); } while (0)
 #define TODO_DEC()      do { printf("W: %08x  TODO insn on line %u\n", pc, __LINE__); UNDEFINED_DEC(); } while (0)
   // For CONSTRAINED UNPREDICTABLE which we choose to implement as UNDEFINED
 #define CUNPREDICTABLE_UNDEFINED() UNDEFINED_DEC()
 #define CUNPREDICTABLE_UNALIGNED() do { _ThrowUnaligned(); } while (0)
-
 
 /* Exception {{{3
  * ---------
@@ -211,6 +216,17 @@ struct Exception :std::exception {
   Exception(ExceptionType type) :_type(type) {}
 
   ExceptionType GetType() const { return _type; }
+
+  const char *what() const noexcept override final {
+    switch (GetType()) {
+      case ExceptionType::SEE:              return "SEE";
+      case ExceptionType::UNDEFINED:        return "UNDEFINED";
+      case ExceptionType::UNPREDICTABLE:    return "UNPREDICTABLE";
+      case ExceptionType::EndOfInstruction: return "EndOfInstruction";
+      case ExceptionType::Internal:         return "Internal";
+      default: return "?";
+    }
+  }
 
 private:
   ExceptionType _type;
@@ -267,6 +283,21 @@ private:
 /* SysTick: SysTick Timer {{{4
  * ----------------------
  */
+#define REG_SYST_CSR_S    0xE000'E010
+#define REG_SYST_CSR_NS   0xE002'E010
+#define   REG_SYST_CSR__ENABLE    BIT ( 0)
+#define   REG_SYST_CSR__TICKINT   BIT ( 1)
+#define   REG_SYST_CSR__CLKSOURCE BIT ( 2)
+#define   REG_SYST_CSR__COUNTFLAG BIT (16)
+#define REG_SYST_RVR_S    0xE000'E014
+#define REG_SYST_RVR_NS   0xE002'E014
+#define REG_SYST_CVR_S    0xE000'E018
+#define REG_SYST_CVR_NS   0xE002'E018
+#define REG_SYST_CALIB_S  0xE000'E01C
+#define REG_SYST_CALIB_NS 0xE002'E01C
+#define   REG_SYST_CALIB__TENMS   BITS( 0,23)
+#define   REG_SYST_CALIB__SKEW    BIT (30)
+#define   REG_SYST_CALIB__NOREF   BIT (31)
 
 /* NVIC: Nested Vectored Interrupt Controller {{{4
  * ------------------------------------------
@@ -858,6 +889,10 @@ struct CpuNest {
   uint32_t icsr{};
   uint32_t dhcsr{};
   uint32_t demcr{};
+
+  uint32_t systCsrS{REG_SYST_CSR__CLKSOURCE}, systCsrNS{REG_SYST_CSR__CLKSOURCE};
+  uint32_t systRvrS{}, systRvrNS{};
+  uint32_t systCalibS{}, systCalibNS{};
 };
 
 /* IDevice {{{3
@@ -903,6 +938,7 @@ struct SimpleSimulatorConfig {
   uint32_t InitialVtor() const { return this->initialVtor; }
 
   int IsaVersion() const { return this->isaVersion; }
+  int SysTick() const { return this->sysTick; }
 
   // -----------------------------------------
   bool      main            = true;         // Whether the simulated CPU supports the Main extension.
@@ -919,12 +955,379 @@ struct SimpleSimulatorConfig {
   int       maxExc          = NUM_EXC-1;    // Maximum number of exceptions supported.
   uint32_t  initialVtor     = 0;            // Initial VTOR value
   int       isaVersion      = 8;            // ISA version (7 or 8)
+  uint64_t  systIntFreq     = 100'000'000;  // SysTick frequency when CLKSOURCE=1 (PE).
+  uint64_t  systExtFreq     = 0;            // SysTick frequency when CLKSOURCE=0 (external). 0 to disable.
+};
+
+/* DeadlineCaller {{{2
+ * ==============
+ * Simple utility class which calls a specified callback on another thread at a
+ * specified deadline.
+ */
+struct DeadlineCaller {
+  using time_point = std::chrono::steady_clock::time_point;
+
+  DeadlineCaller() {}
+
+  // Can be safely destroyed at any time. Any callback will be cancelled.
+  ~DeadlineCaller() {
+    {
+      std::unique_lock lk{_m};
+      _teardown = true;
+      _cb       = nullptr;
+    }
+    _cv.notify_all();
+    if (_t.joinable())
+      _t.join();
+  }
+
+  /* Start {{{3
+   * -----
+   * Set a new deadline. If there is an existing deadline pending it is
+   * cancelled. The function f will be called at or after the deadline and will
+   * be passed the opaque value arg. Passing a default-constructed time_point
+   * or a null f has the same effect as calling stop.
+   */
+  void Start(time_point deadline, void (*f)(void *arg), void *arg) {
+    if (!deadline.time_since_epoch().count() || !f) {
+      Stop();
+      return;
+    }
+
+    _EnsureThread();
+
+    {
+      std::unique_lock lk{_m};
+      _deadline = deadline;
+      _cb       = f;
+      _cbArg    = arg;
+    }
+    _cv.notify_all();
+  }
+
+  /* Stop {{{3
+   * ----
+   * Cancel any existing deadline, if any.
+   */
+  void Stop() {
+    std::unique_lock lk{_m};
+    _cb = nullptr;
+  }
+
+private:
+  void _EnsureThread() {
+    if (_t.joinable())
+      return;
+
+    _t = std::thread{[this]() { _TMain(); }};
+  }
+
+  /* _TMain {{{3
+   * ------
+   */
+  void _TMain() {
+    std::unique_lock lk{_m};
+    for (;;) {
+      if (_teardown)
+        break;
+
+      if (_cb)
+        _cv.wait_until(lk, _deadline);
+      else
+        _cv.wait(lk);
+
+      if (_cb && std::chrono::steady_clock::now() >= _deadline) {
+        auto cb    = _cb;
+        auto cbArg = _cbArg;
+        _cb = nullptr;
+        lk.unlock();
+        cb(cbArg);
+        lk.lock();
+      }
+    }
+  } // }}}3
+
+private:
+  std::mutex                  _m;
+  std::condition_variable_any _cv;                // protected by _m
+  time_point                  _deadline;          //
+  bool                        _teardown{};        //
+  void                      (*_cb)(void *arg){};  //
+  void                       *_cbArg;             //
+  std::thread                 _t;
+};
+
+/* ISysTickDevice {{{2
+ * ==============
+ * ISysTickDevice implements the SysTickDevice concept.
+ */
+struct ISysTickDevice {
+  /* SysTickSetConfig {{{3
+   * ----------------
+   * Called whenever the configuration of a SysTick timer is updated; whenever
+   * the CSR, RVR or CVR is written. freq is in Hz. tickInt is the value of
+   * REG_SYST_CSR__TICKINT. The reload value is updated to the given value
+   * which must be in range [0, 2**24-1]. If curValue is -1, it is not updated,
+   * else it is set to the given value.
+   */
+  virtual void SysTickSetConfig(bool enable, bool tickInt, uint64_t freq, uint32_t reloadValue, int curValue) = 0;
+
+  /* SysTickGetConfig {{{3
+   * ----------------
+   * Retrieves {enable, tickInt, freq, reloadValue}.
+   */
+  virtual std::tuple<bool, bool, uint64_t, uint32_t> SysTickGetConfig() = 0;
+
+  /* SysTickGetCurrent {{{3
+   * -----------------
+   * Gets the current value of the timer. The value must be less than 2**24.
+   * The value counts down.
+   */
+  virtual uint32_t SysTickGetCurrent() = 0;
+
+  /* SysTickGetCountFlag {{{3
+   * -------------------
+   * Gets and optionally clears the count flag.
+   */
+  virtual bool SysTickGetCountFlag(bool clear) = 0;
+
+  /* SysTickGetIntrFlag {{{3
+   * ------------------
+   * Gets and optionally clears the interrupt pending flag. tickInt must have been enabled.
+   */
+  virtual bool SysTickGetIntrFlag(bool clear) = 0;
+
+  /* SysTickSetCallback {{{3
+   * ------------------
+   * Sets a callback to be called on an unspecified thread whenever the tick
+   * interrupt occurs. Both tickInt and the timer itself must be enabled. To
+   * disable the callback after enabling it, pass nullptr.
+   */
+  virtual void SysTickSetCallback(void (*f)(void *arg), void *arg) = 0;
+};
+
+/* SysTickDevice_Real {{{2
+ * ==================
+ * This is a SysTick emulator which uses real-world time to model the timer. We
+ * use a system monotonic clock for this purpose.
+ *
+ * We implement the emulation as follows. There are two ways of expressing time
+ * used by this implementation: Epoch time and SysTick time. Our internal
+ * representation is Epoch time and we convert to SysTick time whenever queries
+ * are made against us (e.g. when SYST_CVR is read).
+ *
+ * Epoch time denotes time as the amount of time since an epoch. The epoch used
+ * is not the UNIX epoch but the time at which the SysTick emulator was last
+ * reconfigured in a way that affects the process of conversion between Epoch
+ * and SysTick time. The idea is that between any two such reconfiguration
+ * events, there is a fixed, linear (albeit modular) correspondance between
+ * Epoch and SysTick time. This means we don't have to perform any periodic
+ * computations to "maintain" the timer, and we consume no CPU time just
+ * tracking the advancement of time.
+ *
+ * Suppose there are two reconfiguration events C-1 and C-2. The passage of
+ * time might look like this:
+ *
+ *    Time (t) --->
+ *
+ *      C-1                                                    C-2
+ *       |                                                      |
+ *       |                                                      |
+ *      E=t                                                    E=t'
+ *
+ * At C-1 the epoch E is set to the current time t. For any subsequent reading
+ * of t (prior to event C-2) we can thus determine the amount of time which has
+ * passed since C-1. There is a linear albeit modular correspondance between
+ * the current value of (t-E) and the current value of the SysTick timer for
+ * this entire period between C-1 and C-2. The SysTick timer is a down-counter,
+ * therefore this produces a pattern like this:
+ *
+ *         SYST_RVR
+ *            |\    \
+ *            | \    \
+ *            |  \    \
+ *   SYST_CVR |   \    \
+ *            |    \    \
+ *            |-----------
+ *                   t -->
+ *
+ * We represent the number of clock cycles since the current epoch E as an
+ * unsigned 64-bit integer. The fastest Cortex-M, the Cortex-M7, can run at up
+ * to 600 MHz; in this case we would be able to count clock cycles for about
+ * 975 years before facing an overflow.
+ */
+struct SysTickDevice_Real final :ISysTickDevice {
+  void SysTickSetConfig(bool enable, bool tickInt, uint64_t freq, uint32_t reloadValue, int curValue) override {
+    std::unique_lock lk{_m};
+
+    if (enable != _enable || reloadValue != _reload || freq != _freq || (curValue >= 0 && curValue < BIT(24))) {
+      assert(freq);
+
+      // The device has been changed from being enabled to not enabled or vice
+      // versa; or the reload value has been changed; or the frequency has been
+      // changed; or the current value has been set directly. In any case this
+      // means our linear correspondance between Epoch and SysTick time has now
+      // changed, so we need to begin a new epoch.
+      //
+      // Note that the SysTick SYST_CVR register itself clears to zero whenever
+      // it is written, rather than to the written value, but we implement the
+      // setting of arbitrary current values in this class itself.
+      uint32_t newInitialCur = (curValue >= 0 && curValue < BIT(24)) ? curValue : SysTickGetCurrent();
+
+      _epoch      = std::chrono::steady_clock::now();
+      _enable     = enable;
+      _freq       = freq;
+      _reload     = reloadValue;
+      _initialCur = newInitialCur;
+    }
+
+    _tickInt = tickInt;
+    _XUpdateCallback();
+  }
+
+  std::tuple<bool, bool, uint64_t, uint32_t> SysTickGetConfig() override {
+    return {_enable, _tickInt, _freq, _reload};
+  }
+
+  uint32_t SysTickGetCurrent() override {
+    auto [cur, _] = _GetCurrentAndEra();
+    return cur;
+  }
+
+  bool SysTickGetCountFlag(bool clear) override {
+    auto [_, era] = _GetCurrentAndEra();
+
+    bool eraChanged = (_lastCountFlagEra != era);
+    if (clear)
+      _lastCountFlagEra = era;
+
+    return eraChanged;
+  }
+
+  bool SysTickGetIntrFlag(bool clear) override {
+    auto [_, era] = _GetCurrentAndEra();
+
+    bool intr = (_lastIntrEra != era);
+    if (clear)
+      _lastIntrEra = era;
+
+    return _tickInt && intr;
+  }
+
+  void SysTickSetCallback(void (*f)(void *arg), void *arg) override {
+    std::unique_lock lk{_m};
+
+    _cb     = f;
+    _cbArg  = arg;
+
+    if (!_cb)
+      return;
+
+    auto [_, era] = _GetCurrentAndEra();
+    _lastCbEra = era;
+
+    _XUpdateCallback();
+  }
+
+private:
+  using time_point = std::chrono::steady_clock::time_point;
+  // Functions beginning _X might be called on any thread (i.e., on the thread
+  // driving this object or the callback thread). Functions beginning _T are
+  // called only on our callback thread.
+  //
+  // Retrieve the number of virtual SysTick clock cycles which have occured
+  // since the last epoch. This is determined by _epoch, the current time, and
+  // _freq, our SysTick frequency in Hz. Implemented using fixed point
+  // arithmetic to ensure perfect precision.
+  uint64_t _GetClockCyclesSinceEpoch() {
+    auto now = std::chrono::steady_clock::now();
+    auto d   = _enable ? now - _epoch : decltype(now - _epoch){};
+
+    // We temporarily convert to a nanosecond representation here to find the
+    // number of nanoseconds to add to the integral number of seconds. This
+    // limits the duration d to be about 292 years assuming a signed 64-bit
+    // representation.
+    uint64_t ds  = std::chrono::duration_cast<std::chrono::seconds>(d).count(); // integer seconds since epoch
+    uint64_t dns = (std::chrono::duration_cast<std::chrono::nanoseconds>(d) % std::chrono::nanoseconds(1'000'000'000)).count(); // remainder in ns
+
+    return ds*_freq + (dns*_freq)/1'000'000'000; // number of clock cycles since epoch
+  }
+
+  // Retrieve the current value of the current value register, as well as an
+  // era value. The current value counts down from 2**24-1. The era value
+  // increases by one every time the current value wraps, and thus allows us to
+  // determine when to report that the count flag is set.
+  std::tuple<uint32_t, uint64_t> _GetCurrentAndEra() {
+    uint64_t cycles = _GetClockCyclesSinceEpoch() + (_reload - _initialCur);
+
+    uint32_t cur = _reload - (cycles % (_reload+1));
+    uint64_t era = cycles / (_reload+1);
+
+    return {cur, era};
+  }
+
+  // Determine the deadline at which the era will change.
+  time_point _XGetDeadline() { // must hold lock
+    if (!_enable || !_tickInt || !_cb)
+      return {};
+
+    //(era+1)*(_reload+1) - (_reload - _initialCur) = ((DLINE - _epoch) AS seconds)*_freq + (((DLINE - _epoch) AS ns)*_freq)/1'000'000'000;
+    //((era+1)*(_reload+1) - (_reload - _initialCur)) = ((DLINE - epoch) AS seconds)*_freq; // logical
+    //((era+1)*(_reload+1) - (_reload - _initialCur))/_freq = (DLINE - epoch) AS seconds; // logical
+    //FromSeconds(((era+1)*(_reload+1) - (_reload - _initialCur))/_freq) = (DLINE - epoch); // logical
+    //FromSeconds(((era+1)*(_reload+1) - (_reload - _initialCur))/_freq) + epoch = DLINE; // logical
+
+    uint64_t nsSinceEpoch = ((_lastCbEra+1)*(_reload+1) - (_reload - _initialCur))*1'000'000'000/_freq;
+
+    return _epoch + std::chrono::nanoseconds(nsSinceEpoch);
+  }
+
+  // Functions beginning _X might be called on any thread (i.e., on the thread
+  // driving this object or the callback thread).
+  void _XUpdateCallback() { // must hold lock
+    _dc.Start(_XGetDeadline(), [](void *arg) { static_cast<SysTickDevice_Real*>(arg)->_TCallback(); }, this);
+  }
+
+  // Functions beginning _T are called on our callback thread.
+  void _TCallback() {
+    std::unique_lock lk{_m};
+    auto cb     = _cb;
+    auto cbArg  = _cbArg;
+
+    if (cb) {
+      lk.unlock();
+      cb(cbArg);
+      lk.lock();
+
+      ++_lastCbEra;
+      _XUpdateCallback();
+    }
+  }
+
+private:
+  // Mutex.
+  std::mutex  _m;
+
+  // Values updated by SetConfig.
+  bool        _enable{}, _tickInt{};
+  uint64_t    _freq{};
+  uint32_t    _reload{};
+  uint32_t    _initialCur{};
+  time_point  _epoch{};
+
+  // Internal data.
+  uint64_t    _lastCountFlagEra{}, _lastIntrEra{}, _lastCbEra{};
+
+  // Callback handling.
+  DeadlineCaller  _dc;
+  void          (*_cb)(void *arg){};
+  void           *_cbArg{};
 };
 
 /* Simulator {{{2
  * =========
  */
-template<typename Device=IDevice, typename SimulatorConfig=SimpleSimulatorConfig>
+template<typename Device=IDevice, typename SimulatorConfig=SimpleSimulatorConfig, typename SysTickDevice=SysTickDevice_Real>
 struct Simulator {
   Simulator(Device &dev, const SimulatorConfig &cfg=SimulatorConfig()) :_dev(dev), _cfg(cfg) {
     ASSERT(cfg.MaxExc() < NUM_EXC);
@@ -932,6 +1335,13 @@ struct Simulator {
     ASSERT(cfg.IsaVersion() >= 7 && cfg.IsaVersion() <= 8);
     if (_HaveSecurityExt())
       ASSERT(cfg.IsaVersion() >= 8);
+
+    if (_HaveMainExt()) {
+      if (_HaveSecurityExt())
+        ASSERT(cfg.SysTick() == 2);
+      else
+        ASSERT(cfg.SysTick() == 1);
+    }
 
     _ColdReset();
   }
@@ -1063,6 +1473,16 @@ struct Simulator {
     else
       return _Store8 (ad, v);
   }
+
+  /* GetCpuState {{{4
+   * -----------
+   */
+  CpuState &GetCpuState() { return _s; }
+
+  /* GetCpuNest {{{4
+   * ----------
+   */
+  CpuNest &GetCpuNest() { return _n; }
 
 private:
   /* Memory-Mapped Register Implementation {{{3
@@ -1482,6 +1902,49 @@ private:
       case REG_DEMCR_S:
       case REG_DEMCR_NS:
         return _n.demcr;
+
+      case REG_SYST_CSR_S:
+        if (_HaveSysTick()) {
+          return _n.systCsrS | PUTBITSM(_SystGetCountFlag(/*ns=*/false, /*clear=*/nat == NAT_SW), REG_SYST_CSR__COUNTFLAG);
+        } else
+          return 0;
+      case REG_SYST_CSR_NS:
+        if (_HaveSysTick() == 2)
+          return _n.systCsrNS | PUTBITSM(_SystGetCountFlag(/*ns=*/true, /*clear=*/nat == NAT_SW), REG_SYST_CSR__COUNTFLAG);
+        else if (_HaveSysTick() == 1 && !!(_n.icsr & REG_ICSR__STTNS))
+          return _n.systCsrS | PUTBITSM(_SystGetCountFlag(/*ns=*/false, /*clear=*/nat == NAT_SW), REG_SYST_CSR__COUNTFLAG);
+        else
+          return 0;
+      case REG_SYST_RVR_S:
+        return _n.systRvrS;
+      case REG_SYST_RVR_NS:
+        if (_HaveSysTick() == 2)
+          return _n.systRvrNS;
+        else if (_HaveSysTick() == 1 && !!(_n.icsr & REG_ICSR__STTNS))
+          return _n.systRvrS;
+        else
+          return 0;
+      case REG_SYST_CVR_S:
+        return _SystGetCurrent(false);
+      case REG_SYST_CVR_NS:
+        if (_HaveSysTick() == 2)
+          return _SystGetCurrent(true);
+        else if (_HaveSysTick() == 1 && !!(_n.icsr & REG_ICSR__STTNS))
+          return _SystGetCurrent(false);
+        else
+          return 0;
+      case REG_SYST_CALIB_S:
+        if (_HaveSysTick())
+          return _n.systCalibS | REG_SYST_CALIB__NOREF;
+        else
+          return 0;
+      case REG_SYST_CALIB_NS:
+        if (_HaveSysTick() == 2)
+          return _n.systCalibNS | REG_SYST_CALIB__NOREF;
+        else if (_HaveSysTick() == 1 && !!(_n.icsr & REG_ICSR__STTNS))
+          return _n.systCalibS | REG_SYST_CALIB__NOREF;
+        else
+          return 0;
 
       // ----------------------------------------------
       default:
@@ -2191,6 +2654,66 @@ private:
         }
         break;
 
+      case REG_SYST_CSR_S:
+        if (_HaveSysTick()) {
+          if (!_SystCalcFreq(false))
+            v |= REG_SYST_CSR__CLKSOURCE;
+          _n.systCsrS = v & BITS(0,2);
+          _SystUpdate(/*ns=*/false, /*clearCount=*/false);
+        }
+        break;
+      case REG_SYST_CSR_NS:
+        if (_HaveSysTick() == 2) {
+          if (!_SystCalcFreq(false))
+            v |= REG_SYST_CSR__CLKSOURCE;
+          _n.systCsrNS = v & BITS(0,2);
+          _SystUpdate(/*ns=*/true, /*clearCount=*/false);
+        } else if (_HaveSysTick() == 1 && !!(_n.icsr & REG_ICSR__STTNS)) {
+          if (!_SystCalcFreq(false))
+            v |= REG_SYST_CSR__CLKSOURCE;
+          _n.systCsrS = v & BITS(0,2);
+          _SystUpdate(/*ns=*/false, /*clearCount=*/false);
+        }
+        break;
+
+      case REG_SYST_RVR_S:
+        if (_HaveSysTick()) {
+          _n.systRvrS = v & BITS(0,23);
+          _SystUpdate(/*ns=*/false, /*clearCount=*/false);
+        }
+        break;
+      case REG_SYST_RVR_NS:
+        if (_HaveSysTick() == 2) {
+          _n.systRvrNS = v & BITS(0,23);
+          _SystUpdate(/*ns=*/true, /*clearCount=*/false);
+        } else if (_HaveSysTick() == 1 && !!(_n.icsr & REG_ICSR__STTNS)) {
+          _n.systRvrS = v & BITS(0,23);
+          _SystUpdate(/*ns=*/false, /*clearCount=*/false);
+        }
+        break;
+
+      case REG_SYST_CVR_S:
+        if (_HaveSysTick())
+          _SystUpdate(/*ns=*/false, /*clearCount=*/true);
+        break;
+      case REG_SYST_CVR_NS:
+        if (_HaveSysTick() == 2)
+          _SystUpdate(/*ns=*/true, /*clearCount=*/true);
+        else if (_HaveSysTick() == 1 && !!(_n.icsr & REG_ICSR__STTNS))
+          _SystUpdate(/*ns=*/false, /*clearCount=*/true);
+        break;
+
+      case REG_SYST_CALIB_S:
+        if (_HaveSysTick())
+          _n.systCalibS = v & (BITS(0,23) | BIT(30));
+        break;
+      case REG_SYST_CALIB_NS:
+        if (_HaveSysTick() == 2)
+          _n.systCalibNS = v & (BITS(0,23) | BIT(30));
+        else if (_HaveSysTick() == 1 && !!(_n.icsr & REG_ICSR__STTNS))
+          _n.systCalibNS = v & (BITS(0,23) | BIT(30));
+        break;
+
       // ----------------------------------------------
 
       default:
@@ -2266,6 +2789,61 @@ private:
         printf("Unsupported nest store 0x%08x <- 0x%08x\n", addr, v);
         abort();
     }
+  }
+
+  /* _SystResolve {{{4
+   * ------------
+   */
+  SysTickDevice &_SystResolve(bool ns) {
+    assert(!ns || _HaveSysTick() == 2);
+    return ns ? _sysTickNS : _sysTickS;
+  }
+
+  /* _SystCalcFreq {{{4
+   * -------------
+   */
+  uint64_t _SystCalcFreq(bool clkSource) {
+    return clkSource ? _cfg.systIntFreq : _cfg.systExtFreq;
+  }
+
+  /* _SystGetCountFlag {{{4
+   * -----------------
+   * Get, and optionally clear, the count flag for a SysTick timer.
+   */
+  bool _SystGetCountFlag(bool ns, bool clear) {
+    return _SystResolve(ns).SysTickGetCountFlag(clear);
+  }
+
+  /* _SystGetIntrFlag {{{4
+   * ----------------
+   * Get, and optionally clear, the interrupt flag for a SysTick timer.
+   */
+  bool _SystGetIntrFlag(bool ns, bool clear) {
+    return _SystResolve(ns).SysTickGetIntrFlag(clear);
+  }
+
+  /* _SystGetCurrent {{{4
+   * ---------------
+   */
+  uint32_t _SystGetCurrent(bool ns) {
+    return _SystResolve(ns).SysTickGetCurrent();
+  }
+
+  /* _SystUpdate {{{4
+   * -----------
+   */
+  void _SystUpdate(bool ns, bool clearCount) {
+    uint32_t reloadValue = ns ? _n.systRvrNS : _n.systRvrS;
+    uint32_t csr         = ns ? _n.systCsrNS : _n.systCsrS;
+
+    bool enable     = !!(csr & REG_SYST_CSR__ENABLE);
+    bool tickInt    = !!(csr & REG_SYST_CSR__TICKINT);
+    bool clkSource  = !!(csr & REG_SYST_CSR__CLKSOURCE);
+
+    uint64_t freq = _SystCalcFreq(clkSource);
+
+    auto &st = _SystResolve(ns);
+    st.SysTickSetConfig(enable, tickInt, freq, reloadValue, clearCount ? 0 : -1);
   }
 
   /* Architectural Support Functions {{{3
@@ -2959,7 +3537,7 @@ private:
     uint32_t  framePtr  = _GetSP(spName);
 
     if (!_IsAligned(framePtr, 8))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // Only stack locations, not the load order are architected
     uint32_t newPSR, newPC;
@@ -3184,17 +3762,17 @@ private:
           break;
         case 0b01:
           if (GETBITS(imm12, 0, 7) == 0)
-            throw Exception(ExceptionType::UNPREDICTABLE);
+            THROW_UNPREDICTABLE();
           imm32 = (GETBITS(imm12, 0, 7)<<16) | GETBITS(imm12, 0, 7);
           break;
         case 0b10:
           if (GETBITS(imm12, 0, 7) == 0)
-            throw Exception(ExceptionType::UNPREDICTABLE);
+            THROW_UNPREDICTABLE();
           imm32 = (GETBITS(imm12, 0, 7)<<24) | (GETBITS(imm12, 0, 7)<<8);
           break;
         case 0b11:
           if (GETBITS(imm12, 0, 7) == 0)
-            throw Exception(ExceptionType::UNPREDICTABLE);
+            THROW_UNPREDICTABLE();
           imm32 = (GETBITS(imm12, 0, 7)<<24) | (GETBITS(imm12, 0, 7)<<16)
             | (GETBITS(imm12, 0, 7)<<8) | GETBITS(imm12, 0, 7);
           break;
@@ -3256,7 +3834,7 @@ private:
   /* _HaveSysTick {{{4
    * ------------
    */
-  int _HaveSysTick() { return 2; }
+  int _HaveSysTick() { return _cfg.SysTick(); }
 
   /* _NextInstrAddr {{{4
    * --------------
@@ -4213,7 +4791,7 @@ private:
       hit = true;
     else if (!(mpuCtrl & REG_MPU_CTRL__ENABLE)) {
       if (mpuCtrl & REG_MPU_CTRL__HFNMIENA)
-        throw Exception(ExceptionType::UNPREDICTABLE);
+        THROW_UNPREDICTABLE();
       else
         hit = true;
     } else if (!(mpuCtrl & REG_MPU_CTRL__HFNMIENA) && negativePri)
@@ -4291,7 +4869,7 @@ private:
         case 0b1100: memAttrs.device = DeviceType_GRE; break;
       }
       if (GETBITS(attrField, 0, 1))
-        throw Exception(ExceptionType::UNPREDICTABLE);
+        THROW_UNPREDICTABLE();
     } else {
       unpackInner = true;
       memAttrs.memType        = MemType_Normal;
@@ -4300,7 +4878,7 @@ private:
       memAttrs.shareable      = (sh & BIT(1));
       memAttrs.outerShareable = (sh == 0b10);
       if (sh == 0b01)
-        throw Exception(ExceptionType::UNPREDICTABLE);
+        THROW_UNPREDICTABLE();
 
       if (GETBITS(attrField, 6, 7) == 0b00) {
         memAttrs.outerAttrs       = 0b10;
@@ -4321,7 +4899,7 @@ private:
 
     if (unpackInner) {
       if (GETBITS(attrField, 0, 3) == 0b0000)
-        throw Exception(ExceptionType::UNPREDICTABLE);
+        THROW_UNPREDICTABLE();
       else {
         if (GETBITS(attrField, 2, 3) == 0b00) {
           memAttrs.innerAttrs     = 0b10;
@@ -4345,7 +4923,7 @@ private:
           memAttrs.innerAttrs     = 0b11;
           memAttrs.innerTransient = false;
         } else
-          throw Exception(ExceptionType::UNPREDICTABLE);
+          THROW_UNPREDICTABLE();
       }
     }
 
@@ -4367,7 +4945,7 @@ private:
         case 0b01: fault = false; break;
         case 0b10: fault = !isPriv || isWrite; break;
         case 0b11: fault = isWrite; break;
-        default: throw Exception(ExceptionType::UNPREDICTABLE);
+        default: THROW_UNPREDICTABLE();
       }
 
     if (!fault)
@@ -4447,7 +5025,7 @@ private:
 
     for (uint32_t i=0; i<numComp; ++i) {
       if (_IsDWTConfigUnpredictable(i))
-        throw Exception(ExceptionType::UNPREDICTABLE);
+        THROW_UNPREDICTABLE();
 
       bool daddrMatch   = _DWT_DataAddressMatch(i, daddr, dsize, read, nsReq);
       bool dvalueMatch  = _DWT_DataValueMatch(i, daddr, dvalue, dsize, read, nsReq);
@@ -4562,7 +5140,7 @@ private:
 
     // compAddr must be a multiple of compSize.
     if (_Align(compAddr, compSize) != compSize)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     bool addrMatch    = (_Align(addr, compSize) == _Align(compAddr, size));
     bool addrGreater  = (addr > compAddr);
@@ -5010,6 +5588,15 @@ private:
   //
   // TODO: DHCSR.C_MASKINTS
   std::tuple<bool, int, bool> _PendingExceptionDetails() {
+    // XXX: Not specified exactly where SysTick should be checked, so we choose
+    // to check it here like everything else.
+    bool systIntrS  = (_HaveSysTick() && _SystGetIntrFlag(false, true));
+    bool systIntrNS = (_HaveSysTick() == 2 && _SystGetIntrFlag(true, true));
+    if (systIntrS)
+      _SetPending(SysTick, true, true);
+    if (systIntrNS)
+      _SetPending(SysTick, false, true);
+
     // _NvicPendingPriority() has a value higher than the highest possible
     // priority value if there is no pending interrupt so there is an interrupt
     // to be handled iff this is true.
@@ -5498,7 +6085,7 @@ private:
     RName     spName    = _LookUpSP_with_security_mode(toSecure, mode);
     uint32_t  framePtr  = _GetSP(spName);
     if (!_IsAligned(framePtr, 8))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     uint32_t tmp;
     ExcInfo exc = _DefaultExcInfo();
@@ -5665,9 +6252,9 @@ private:
     bool error = false;
     assert(_CurrentMode() == PEMode_Handler);
     if (GETBITS(excReturn, 7,23) != BITS(0,16) || GETBITS(excReturn, 1, 1))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
     if (!_HaveFPExt() && !GETBITSM(excReturn, EXC_RETURN__FTYPE))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     bool targetDomainSecure = !!GETBITSM(excReturn, EXC_RETURN__ES);
     bool excStateNonSecure;
@@ -6608,7 +7195,7 @@ private:
       return;
 
     if (!(InternalLoad32(REG_DEMCR) & REG_DEMCR__MON_STEP))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     if (_ExceptionPriority(DebugMonitor, _IsSecure(), true) < _ExecutionPriority()) {
       InternalOr32(REG_DEMCR, REG_DEMCR__MON_PEND);
@@ -6707,7 +7294,7 @@ private:
 
     for (int i=0; i<GETBITSM(InternalLoad32(REG_DWT_CTRL), REG_DWT_CTRL__NUMCOMP); ++i) {
       if (_IsDWTConfigUnpredictable(i))
-        throw Exception(ExceptionType::UNPREDICTABLE);
+        THROW_UNPREDICTABLE();
 
       bool instrAddrMatch = _DWT_InstructionAddressMatch(i, iaddr);
       if (!instrAddrMatch)
@@ -6791,7 +7378,7 @@ private:
         enabled = priv;
         break;
       case 0b10:
-        throw Exception(ExceptionType::UNPREDICTABLE);
+        THROW_UNPREDICTABLE();
         break;
       case 0b11:
         enabled = true;
@@ -8241,13 +8828,13 @@ private:
     bool     allowNonSecure = !!NS;
 
     if (!_IsSecure() && allowNonSecure)
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     if (m == 13 || m == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     if (_InITBlock() && !_LastInITBlock())
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     TRACEI(BX, T1, "m=%u allowNonSecure=%u R[m]=0x%x", m, allowNonSecure, _GetR(m));
 
@@ -8270,13 +8857,13 @@ private:
     bool allowNonSecure = !!NS;
 
     if (!_IsSecure() && allowNonSecure)
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     if (m == 13 || m == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     if (_InITBlock() && !_LastInITBlock())
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     TRACEI(BLX, T1, "m=%u allowNonSecure=%u", m, allowNonSecure);
 
@@ -8302,7 +8889,7 @@ private:
 
     if (_HaveMainExt())
       if (d == 15 && _InITBlock() && !_LastInITBlock())
-        throw Exception(ExceptionType::UNPREDICTABLE);
+        THROW_UNPREDICTABLE();
 
     TRACEI(MOV_reg, T1, "d=%u m=%u", d, m);
 
@@ -8365,7 +8952,7 @@ private:
     bool     setflags = false;
 
     if (d == 15 && _InITBlock() && !_LastInITBlock())
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     SRType   shiftT   = SRType_LSL;
     uint32_t shiftN   = 0;
@@ -8420,10 +9007,10 @@ private:
     uint32_t shiftN   = 0;
 
     if (d == 15 && _InITBlock() && !_LastInITBlock())
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     if (d == 15 && m == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     TRACEI(ADD_reg, T2, "d=%u n=%u m=%u S=%u shiftT=%u shiftN=%u", d, n, m, setflags, shiftT, shiftN);
 
@@ -8451,7 +9038,7 @@ private:
       CUNPREDICTABLE_UNDEFINED();
 
     if (n == 15 || m == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     TRACEI(CMP_reg, T2, "n=%u m=%u shiftT=%u shiftN=%u", n, m, shiftT, shiftN);
 
@@ -9106,7 +9693,7 @@ private:
     bool     nonzero  = !!op;
 
     if (_InITBlock())
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     TRACEI(CBNZ_CBZ, T1, "n=%u imm32=0x%x nonzero=%u", n, imm32, nonzero);
 
@@ -9314,8 +9901,6 @@ private:
     uint32_t Rd = GETBITS(instr, 0, 2);
     uint32_t Rm = GETBITS(instr, 3, 5);
 
-    CHECK01(BIT(6), 0);
-
     uint32_t d        = Rd;
     uint32_t m        = Rm;
     uint32_t rotation = 0;
@@ -9430,7 +10015,7 @@ private:
     bool enable   = !im;
     bool disable  = !!im;
     if (_InITBlock())
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     if (!I && !F)
       CUNPREDICTABLE_UNDEFINED();
@@ -9467,7 +10052,7 @@ private:
       CUNPREDICTABLE_UNDEFINED();
 
     if (GETBIT(registers,15) && _InITBlock() && !_LastInITBlock())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     TRACEI(LDM, T3, "n=%u wback=%u registers=0x%x", n, wback, registers);
 
@@ -9486,13 +10071,13 @@ private:
 
     ASSERT(mask != 0b0000);
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     if (firstCond == 0b1111 || (firstCond == 0b1110 && _BitCount(mask) != 1))
       CUNPREDICTABLE_UNDEFINED();
 
     if (_InITBlock())
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     TRACEI(IT, T1, "firstCond=0x%x mask=0x%x", firstCond, mask);
 
@@ -9782,7 +10367,7 @@ private:
     uint32_t imm32 = _SignExtend(imm8<<1, 9, 32);
 
     if (_InITBlock())
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     _s.curCondOverride = cond;
     TRACEI(B, T1, "imm32=0x%x cond=%u", imm32, cond);
@@ -9801,7 +10386,7 @@ private:
 
     uint32_t imm32 = _SignExtend(imm11<<1, 12, 32);
     if (_InITBlock() && !_LastInITBlock())
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     TRACEI(B, T2, "imm32=0x%x", imm32);
 
@@ -10058,10 +10643,10 @@ private:
     ASSERT((coproc & 0b1110) != 0b1010);
 
     if (!P && !U && !D && !W)
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     bool     index  = !!P; // Always true in the T32 instruction set
     bool     add    = !!U;
@@ -10095,10 +10680,10 @@ private:
     ASSERT((coproc & 0b1110) != 0b1010);
 
     if (!P && !U && !D && !W)
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t n      = Rn;
     uint32_t cp     = coproc;
@@ -10128,10 +10713,10 @@ private:
     ASSERT((coproc & 0b1110) != 0b1010);
 
     if (!P && !U && !D && !W)
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t n      = Rn;
     uint32_t cp     = coproc;
@@ -10139,7 +10724,7 @@ private:
     bool     index  = !!P, add = !!U, wback = !!W;
 
     if (n == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_STC_STC2(n, cp, imm32, index, add, wback);
@@ -10161,7 +10746,7 @@ private:
     ASSERT((coproc & 0b1110) != 0b1010);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t cp = coproc;
 
@@ -10227,17 +10812,17 @@ private:
     ASSERT((coproc & 0b1110) != 0b1010);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t t    = Rt;
     uint32_t t2   = Rt2;
     uint32_t cp   = coproc;
 
     if (t == 15 || t2 == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     if (t == 13 || t2 == 13)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_MRRC_MRRC2(t, t2, cp);
@@ -10256,20 +10841,20 @@ private:
     uint32_t CRm    = GETBITS(instr    , 0, 3);
 
     if ((coproc & 0b1110) == 0b1010)
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t t    = Rt;
     uint32_t t2   = Rt2;
     uint32_t cp   = coproc;
 
     if (t == 15 || t2 == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     if (t == 13 || t2 == 13)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_MRRC_MRRC2(t, t2, cp);
@@ -10290,17 +10875,17 @@ private:
     ASSERT((coproc & 0b1110) != 0b1010);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t t    = Rt;
     uint32_t t2   = Rt2;
     uint32_t cp   = coproc;
 
     if (t == 15 || t2 == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     if (t == 13 || t2 == 13)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_MCRR_MCRR2(t, t2, cp);
@@ -10319,20 +10904,20 @@ private:
     uint32_t CRm    = GETBITS(instr    , 0, 3);
 
     if ((coproc & 0b1110) == 0b1010)
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t t    = Rt;
     uint32_t t2   = Rt2;
     uint32_t cp   = coproc;
 
     if (t == 15 || t2 == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     if (t == 13 || t2 == 13)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_MCRR_MCRR2(t, t2, cp);
@@ -10388,13 +10973,13 @@ private:
     ASSERT((coproc & 0b1110) != 0b1010);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t t    = Rt;
     uint32_t cp   = coproc;
 
     if (t == 13)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_MRC_MRC2(t, cp);
@@ -10414,16 +10999,16 @@ private:
     uint32_t CRm    = GETBITS(instr    , 0, 3);
 
     if ((coproc & 0b1110) == 0b1010)
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t t    = Rt;
     uint32_t cp   = coproc;
 
     if (t == 13)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_MRC_MRC2(t, cp);
@@ -10445,13 +11030,13 @@ private:
     ASSERT((coproc & 0b1110) != 0b1010);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t t    = Rt;
     uint32_t cp   = coproc;
 
     if (t == 15 || t == 13)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_MCR_MCR2(t, cp);
@@ -10471,16 +11056,16 @@ private:
     uint32_t CRm    = GETBITS(instr    , 0, 3);
 
     if ((coproc & 0b1110) == 0b1010)
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t t    = Rt;
     uint32_t cp   = coproc;
 
     if (t == 15 || t == 13)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_MCR_MCR2(t, cp);
@@ -10630,7 +11215,7 @@ private:
     uint32_t Rm     = GETBITS(instr    , 0, 3);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t dLo      = RdLo;
     uint32_t dHi      = RdHi;
@@ -10639,7 +11224,7 @@ private:
     bool     setflags = false;
 
     if ((dLo == 13 || dLo == 15) || (dHi == 13 || dHi == 15) || (n == 13 || n == 15) || (m == 13 || m == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     if (dHi == dLo)
       CUNPREDICTABLE_UNDEFINED();
@@ -10660,7 +11245,7 @@ private:
     uint32_t Rm     = GETBITS(instr    , 0, 3);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t dLo      = RdLo;
     uint32_t dHi      = RdHi;
@@ -10669,7 +11254,7 @@ private:
     bool     setflags = false;
 
     if ((dLo == 13 || dLo == 15) || (dHi == 13 || dHi == 15) || (n == 13 || n == 15) || (m == 13 || m == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     if (dHi == dLo)
       CUNPREDICTABLE_UNDEFINED();
@@ -10695,7 +11280,7 @@ private:
     uint32_t m        = Rm;
 
     if ((d == 13 || d == 15) || (n == 13 || n == 15) || (m == 13 || m == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_SDIV(d, n, m);
@@ -10718,7 +11303,7 @@ private:
     uint32_t m        = Rm;
 
     if ((d == 13 || d == 15) || (n == 13 || n == 15) || (m == 13 || m == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_UDIV(d, n, m);
@@ -10736,7 +11321,7 @@ private:
     uint32_t Rm     = GETBITS(instr    , 0, 3);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t dLo      = RdLo;
     uint32_t dHi      = RdHi;
@@ -10745,7 +11330,7 @@ private:
     bool     setflags = false;
 
     if ((dLo == 13 || dLo == 15) || (dHi == 13 || dHi == 15) || (n == 13 || n == 15) || (m == 13 || m == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     if (dHi == dLo)
       CUNPREDICTABLE_UNDEFINED();
@@ -10766,7 +11351,7 @@ private:
     uint32_t Rm     = GETBITS(instr    , 0, 3);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t dLo      = RdLo;
     uint32_t dHi      = RdHi;
@@ -10775,7 +11360,7 @@ private:
     bool     setflags = false;
 
     if ((dLo == 13 || dLo == 15) || (dHi == 13 || dHi == 15) || (n == 13 || n == 15) || (m == 13 || m == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     if (dHi == dLo)
       CUNPREDICTABLE_UNDEFINED();
@@ -10945,7 +11530,7 @@ private:
     ASSERT(Ra != 0b1111);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t d        = Rd;
     uint32_t n        = Rn;
@@ -10954,7 +11539,7 @@ private:
     bool     setflags = false;
 
     if ((d == 13 || d == 15) || (n == 13 || n == 15) || (m == 13 || m == 15) || a == 13)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_MLA(d, n, m, a, setflags);
@@ -10972,7 +11557,7 @@ private:
     uint32_t Rm   = GETBITS(instr    , 0, 3);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t d        = Rd;
     uint32_t n        = Rn;
@@ -10980,7 +11565,7 @@ private:
     uint32_t a        = Ra;
 
     if ((d == 13 || d == 15) || (n == 13 || n == 15) || (m == 13 || m == 15) || (a == 13 || a == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_MLS(d, n, m, a);
@@ -10997,7 +11582,7 @@ private:
     uint32_t Rm   = GETBITS(instr    , 0, 3);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t d        = Rd;
     uint32_t n        = Rn;
@@ -11005,7 +11590,7 @@ private:
     bool     setflags = false;
 
     if ((d == 13 || d == 15) || (n == 13 || n == 15) || (m == 13 || m == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_MUL(d, n, m, setflags);
@@ -11145,7 +11730,7 @@ private:
     uint32_t Rm2    = GETBITS(instr    , 0, 3);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     if (Rm != Rm2)
       CUNPREDICTABLE_UNDEFINED();
@@ -11154,7 +11739,7 @@ private:
     uint32_t m        = Rm;
 
     if ((d == 13 || d == 15) || (m == 13 || m == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_CLZ(d, m);
@@ -11171,7 +11756,7 @@ private:
     uint32_t Rm2    = GETBITS(instr    , 0, 3);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     if (Rm != Rm2)
       CUNPREDICTABLE_UNDEFINED();
@@ -11180,7 +11765,7 @@ private:
     uint32_t m        = Rm;
 
     if ((d == 13 || d == 15) || (m == 13 || m == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_REV(d, m);
@@ -11197,7 +11782,7 @@ private:
     uint32_t Rm2    = GETBITS(instr    , 0, 3);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     if (Rm != Rm2)
       CUNPREDICTABLE_UNDEFINED();
@@ -11206,7 +11791,7 @@ private:
     uint32_t m        = Rm;
 
     if ((d == 13 || d == 15) || (m == 13 || m == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_REV16(d, m);
@@ -11223,7 +11808,7 @@ private:
     uint32_t Rm2    = GETBITS(instr    , 0, 3);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     if (Rm != Rm2)
       CUNPREDICTABLE_UNDEFINED();
@@ -11232,7 +11817,7 @@ private:
     uint32_t m        = Rm;
 
     if ((d == 13 || d == 15) || (m == 13 || m == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_RBIT(d, m);
@@ -11249,7 +11834,7 @@ private:
     uint32_t Rm2    = GETBITS(instr    , 0, 3);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     if (Rm != Rm2)
       CUNPREDICTABLE_UNDEFINED();
@@ -11258,7 +11843,7 @@ private:
     uint32_t m        = Rm;
 
     if ((d == 13 || d == 15) || (m == 13 || m == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_REVSH(d, m);
@@ -11356,7 +11941,7 @@ private:
     uint32_t Rm     = GETBITS(instr    , 0, 3);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     CHECK01(BIT(6), 0);
 
@@ -11365,7 +11950,7 @@ private:
     uint32_t rotation = (rotate<<3);
 
     if ((d == 13 || d == 15) || (m == 13 || m == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_SXTB(d, m, rotation);
@@ -11382,14 +11967,16 @@ private:
     uint32_t Rm     = GETBITS(instr    , 0, 3);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
+
+    CHECK01(BIT(6), 0);
 
     uint32_t d        = Rd;
     uint32_t m        = Rm;
     uint32_t rotation = (rotate<<3);
 
     if ((d == 13 || d == 15) || (m == 13 || m == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_UXTB(d, m, rotation);
@@ -11406,7 +11993,7 @@ private:
     uint32_t Rm     = GETBITS(instr    , 0, 3);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     CHECK01(BIT(6), 0);
 
@@ -11415,7 +12002,7 @@ private:
     uint32_t rotation = (rotate<<3);
 
     if ((d == 13 || d == 15) || (m == 13 || m == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_SXTH(d, m, rotation);
@@ -11432,7 +12019,7 @@ private:
     uint32_t Rm     = GETBITS(instr    , 0, 3);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     CHECK01(BIT(6), 0);
 
@@ -11441,7 +12028,7 @@ private:
     uint32_t rotation = (rotate<<3);
 
     if ((d == 13 || d == 15) || (m == 13 || m == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_UXTH(d, m, rotation);
@@ -11460,7 +12047,7 @@ private:
     uint32_t Rs   = GETBITS(instr    , 0, 3);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t d        = Rd;
     uint32_t m        = Rm;
@@ -11469,7 +12056,7 @@ private:
     SRType   shiftT   = _DecodeRegShift(type);
 
     if ((d == 13 || d == 15) || (m == 13 || m == 15) || (s == 13 || s == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_MOV_MOVS_register_shifted_register(d, m, s, setflags, shiftT);
@@ -11531,14 +12118,14 @@ private:
         case 0b0'0:
         case 0b1'0:
         case 0b1'1:
-          throw Exception(ExceptionType::UNPREDICTABLE);
+          THROW_UNPREDICTABLE();
 
         case 0b0'1:
           if (op3 == 0b1110'1001'0111'1111) {
             // SG
             _DecodeExecute32_SG_T1(instr, pc);
           } else
-            throw Exception(ExceptionType::UNPREDICTABLE);
+            THROW_UNPREDICTABLE();
           break;
 
         default:
@@ -11635,7 +12222,7 @@ private:
     ASSERT(!(P && W && !U));
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t t      = Rt;
     uint32_t t2     = Rt2;
@@ -11643,7 +12230,7 @@ private:
     bool     add    = !!U;
 
     if ((t == 13 || t == 15) || (t2 == 13 || t2 == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     if (t == t2)
       CUNPREDICTABLE_UNDEFINED();
@@ -11796,7 +12383,7 @@ private:
     uint32_t n  = Rn;
 
     if ((t == 13 || t == 15) || n == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_STLB(t, n);
@@ -11818,7 +12405,7 @@ private:
     uint32_t n  = Rn;
 
     if ((t == 13 || t == 15) || n == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_STLH(t, n);
@@ -11840,7 +12427,7 @@ private:
     uint32_t n  = Rn;
 
     if ((t == 13 || t == 15) || n == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_STL(t, n);
@@ -11864,7 +12451,7 @@ private:
     uint32_t n  = Rn;
 
     if ((d == 13 || d == 15) || (t == 13 || t == 15) || n == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     if (d == n || d == t)
       CUNPREDICTABLE_UNDEFINED();
@@ -11891,7 +12478,7 @@ private:
     uint32_t n  = Rn;
 
     if ((d == 13 || d == 15) || (t == 13 || t == 15) || n == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     if (d == n || d == t)
       CUNPREDICTABLE_UNDEFINED();
@@ -11918,7 +12505,7 @@ private:
     uint32_t n  = Rn;
 
     if ((d == 13 || d == 15) || (t == 13 || t == 15) || n == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     if (d == n || d == t)
       CUNPREDICTABLE_UNDEFINED();
@@ -11942,7 +12529,7 @@ private:
     uint32_t t  = Rt;
     uint32_t n  = Rn;
     if ((t == 13 || t == 15) || n == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_LDAB(t, n);
@@ -11963,7 +12550,7 @@ private:
     uint32_t t  = Rt;
     uint32_t n  = Rn;
     if ((t == 13 || t == 15) || n == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_LDAH(t, n);
@@ -11984,7 +12571,7 @@ private:
     uint32_t t  = Rt;
     uint32_t n  = Rn;
     if ((t == 13 || t == 15) || n == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_LDA(t, n);
@@ -12005,7 +12592,7 @@ private:
     uint32_t t  = Rt;
     uint32_t n  = Rn;
     if ((t == 13 || t == 15) || n == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_LDAEXB(t, n);
@@ -12026,7 +12613,7 @@ private:
     uint32_t t  = Rt;
     uint32_t n  = Rn;
     if ((t == 13 || t == 15) || n == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_LDAEXH(t, n);
@@ -12047,7 +12634,7 @@ private:
     uint32_t t  = Rt;
     uint32_t n  = Rn;
     if ((t == 13 || t == 15) || n == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_LDAEX(t, n);
@@ -12110,7 +12697,7 @@ private:
     uint32_t n = Rn;
 
     if ((t == 13 || t == 15) || n == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_LDREXB(t, n);
@@ -12131,7 +12718,7 @@ private:
     uint32_t n = Rn;
 
     if ((t == 13 || t == 15) || n == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_LDREXH(t, n);
@@ -12154,7 +12741,7 @@ private:
     uint32_t n = Rn;
 
     if ((d == 13 || d == 15) || (t == 13 || t == 15) || n == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     if (d == n || d == t)
       CUNPREDICTABLE_UNDEFINED();
@@ -12180,7 +12767,7 @@ private:
     uint32_t n = Rn;
 
     if ((d == 13 || d == 15) || (t == 13 || t == 15) || n == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     if (d == n || d == t)
       CUNPREDICTABLE_UNDEFINED();
@@ -12200,7 +12787,7 @@ private:
     uint32_t Rm = GETBITS(instr    , 0, 3);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     CHECK01(BITS(8,11), BITS(12,15));
 
@@ -12209,10 +12796,10 @@ private:
     bool     isTBH  = !!H;
 
     if (n == 13 || (m == 13 || m == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     if (_InITBlock() && !_LastInITBlock())
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_TBB(n, m, isTBH);
@@ -12255,7 +12842,7 @@ private:
 
     ASSERT(t != 15);
     if ((d == 13 || d == 15) || t == 13 || n == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     if (d == n || d == t)
       CUNPREDICTABLE_UNDEFINED();
@@ -12281,7 +12868,7 @@ private:
     uint32_t imm32  = _ZeroExtend(imm8<<2, 32);
 
     if ((t == 13 || t == 15) || n == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_LDREX(t, n, imm32);
@@ -12307,10 +12894,10 @@ private:
     bool     forceUnpriv  = !!T;
 
     if ((d == 13 || d == 15) || n == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     if (alt && !_IsSecure())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_TT(d, n, alt, forceUnpriv);
@@ -12373,7 +12960,7 @@ private:
     uint32_t regList  = GETBITS(instr    ,0 ,12);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     CHECK01(BIT(13) | BIT(15), 0);
 
@@ -12382,7 +12969,7 @@ private:
     bool     wback      = !!W;
 
     if (n == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     if (_BitCount(registers) < 2)
       CUNPREDICTABLE_UNDEFINED();
@@ -12409,7 +12996,7 @@ private:
     uint32_t regList  = GETBITS(instr    , 0,12);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     CHECK01(BIT(13), 0);
 
@@ -12421,10 +13008,10 @@ private:
       CUNPREDICTABLE_UNDEFINED();
 
     if (GETBIT(registers, 15) && _InITBlock() && !_LastInITBlock())
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     if (wback && GETBIT(registers, n))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     TRACEI(LDM, T2, "n=%u registers=0x%x wback=%u", n, registers, wback);
 
@@ -12444,7 +13031,7 @@ private:
     uint32_t regList  = GETBITS(instr    , 0,12);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     CHECK01(BIT(13) | BIT(15), 0);
 
@@ -12453,7 +13040,7 @@ private:
     bool      wback     = !!W;
 
     if (n == 15) // XXX
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     if (_BitCount(registers) < 2)
       CUNPREDICTABLE_UNDEFINED();
@@ -12480,7 +13067,7 @@ private:
     uint32_t regList  = GETBITS(instr    , 0,12);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     CHECK01(BIT(13), 0);
 
@@ -12489,7 +13076,7 @@ private:
     bool     wback      = !!W;
 
     if (n == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     if (_BitCount(registers) < 2)
       CUNPREDICTABLE_UNDEFINED();
@@ -12498,7 +13085,7 @@ private:
       CUNPREDICTABLE_UNDEFINED();
 
     if (GETBIT(registers,15) && _InITBlock() && !_LastInITBlock())
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     if (wback && GETBIT(registers, n))
       CUNPREDICTABLE_UNDEFINED();
@@ -12515,7 +13102,7 @@ private:
     uint32_t op0 = GETBITS(instr>>16, 0, 3);
     switch (op0) {
       case 0b1111:
-        throw Exception(ExceptionType::UNPREDICTABLE);
+        THROW_UNPREDICTABLE();
 
       default:
         // Load/store dual (immediate, post-indexed)
@@ -12559,7 +13146,7 @@ private:
     ASSERT(Rn != 0b1111);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t t = Rt, t2 = Rt2, n = Rn, imm32 = _ZeroExtend(imm8<<2, 32);
     bool index = !!P, add = !!U, wback = !!W;
@@ -12567,7 +13154,7 @@ private:
       CUNPREDICTABLE_UNDEFINED();
 
     if (n == 15 || (t == 13 || t == 15) || (t2 == 13 || t2 == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_STRD_immediate(t, t2, n, imm32, index, add, wback);
@@ -12591,7 +13178,7 @@ private:
     ASSERT(Rn != 0b1111);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t t = Rt, t2 = Rt2, n = Rn, imm32 = _ZeroExtend(imm8<<2, 32);
     bool index = !!P, add = !!U, wback = !!W;
@@ -12835,7 +13422,7 @@ private:
     uint32_t Rm   = GETBITS(instr    , 0, 3);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     CHECK01(BIT(15), 0);
 
@@ -12844,7 +13431,7 @@ private:
     auto [shiftT, shiftN] = _DecodeImmShift(type, (imm3<<2) | imm2);
 
     if (n == 15 || (m == 13 || m == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_CMP_register(n, m, shiftT, shiftN);
@@ -12865,7 +13452,7 @@ private:
     uint32_t Rm   = GETBITS(instr    , 0, 3);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t d        = Rd;
     uint32_t n        = Rn;
@@ -12874,7 +13461,7 @@ private:
     auto [shiftT, shiftN] = _DecodeImmShift(type, (imm3<<2) | imm2);
 
     if ((d == 13 || d == 15) || (n == 13 || n == 15) || (m == 13 || m == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_RSB_register(d, n, m, setflags, shiftT, shiftN);
@@ -12892,13 +13479,13 @@ private:
     uint32_t imm8 = GETBITS(instr    , 0, 7);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t n        = Rn;
     uint32_t imm32    = _T32ExpandImm((i<<11) | (imm3<<8) | imm8);
 
     if (n == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_CMP_immediate(n, imm32);
@@ -12919,7 +13506,7 @@ private:
 
     ASSERT(!(Rd == 0b1111 && S));
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     CHECK01(BIT(15), 0);
 
@@ -12929,10 +13516,10 @@ private:
     auto [shiftT, shiftN] = _DecodeImmShift(type, (imm3<<2) | imm2);
 
     if (d == 13 || (shiftT != SRType_LSL || shiftN > 3))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     if ((d == 15 && !S) || (m == 13 || m == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     TRACEI(SUB_SP_minus_reg, T1, "d=%u m=%u S=%u shiftT=%u shiftN=%u", d, m, setflags, shiftT, shiftN);
 
@@ -12957,7 +13544,7 @@ private:
     ASSERT(!(Rd == 0b1111 && S));
     ASSERT(Rn != 0b1101);
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     CHECK01(BIT(15), 0);
 
@@ -12968,7 +13555,7 @@ private:
     auto [shiftT, shiftN] = _DecodeImmShift(type, (imm3<<2) | imm2);
 
     if (d == 13 || (d == 15 && !S) || n == 15 || (m == 13 || m == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     TRACEI(SUB_reg, T2, "d=%u n=%u m=%u S=%u shiftT=%u shiftN=%u", d, n, m, setflags, shiftT, shiftN);
 
@@ -12999,7 +13586,7 @@ private:
     uint32_t Rm   = GETBITS(instr    , 0, 3);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     CHECK01(BIT(15), 0);
 
@@ -13010,7 +13597,7 @@ private:
     auto [shiftT, shiftN] = _DecodeImmShift(type, (imm3<<2) | imm2);
 
     if ((d == 13 || d == 15) || (n == 13 || n == 15) || (m == 13 || m == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_ADC_register(d, n, m, setflags, shiftT, shiftN);
@@ -13031,7 +13618,7 @@ private:
     uint32_t Rm   = GETBITS(instr    , 0, 3);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     CHECK01(BIT(15), 0);
 
@@ -13042,7 +13629,7 @@ private:
     auto [shiftT, shiftN] = _DecodeImmShift(type, (imm3<<2) | imm2);
 
     if ((d == 13 || d == 15) || (n == 13 || n == 15) || (m == 13 || m == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_SBC_register(d, n, m, setflags, shiftT, shiftN);
@@ -13061,7 +13648,7 @@ private:
     uint32_t Rm   = GETBITS(instr    , 0, 3);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     CHECK01(BIT(15), 0);
 
@@ -13070,7 +13657,7 @@ private:
     auto [shiftT, shiftN] = _DecodeImmShift(type, (imm3<<2) | imm2);
 
     if (n == 15 || (m == 13 || m == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_CMN_register(n, m, shiftT, shiftN);
@@ -13091,7 +13678,7 @@ private:
 
     ASSERT(!(Rd == 0b1111 && S));
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     CHECK01(BIT(15), 0);
 
@@ -13101,10 +13688,10 @@ private:
     auto [shiftT, shiftN] = _DecodeImmShift(type, (imm3<<2) | imm2);
 
     if (d == 13 || (shiftT != SRType_LSL || shiftN > 3))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     if ((d == 15 && !S) || (m == 13 || m == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_ADD_SP_plus_register(d, m, setflags, shiftT, shiftN);
@@ -13127,7 +13714,7 @@ private:
     ASSERT(!(Rd == 0b1111 && S));
     ASSERT(Rn != 0b1101);
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     CHECK01(BIT(15), 0);
 
@@ -13138,7 +13725,7 @@ private:
     auto [shiftT, shiftN] = _DecodeImmShift(type, (imm3<<2) | imm2);
 
     if (d == 13 || (d == 15 && !S) || n == 15 || (m == 13 || m == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_ADD_register(d, n, m, setflags, shiftT, shiftN);
@@ -13157,7 +13744,7 @@ private:
     uint32_t Rm   = GETBITS(instr    , 0, 3);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     CHECK01(BIT(15), 0);
 
@@ -13165,7 +13752,7 @@ private:
     uint32_t  m         = Rm;
     auto [shiftT, shiftN] = _DecodeImmShift(type, (imm3<<2)|imm2);
     if ((n == 13 || n == 15) || (m == 13 || m == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     TRACEI(TEQ_reg, T1, "n=%u m=%u shiftT=%u shiftN=%u", n, m, shiftT, shiftN);
 
@@ -13189,7 +13776,7 @@ private:
 
     ASSERT(!(Rn == 0b1111 && S));
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     CHECK01(BIT(15), 0);
 
@@ -13199,7 +13786,7 @@ private:
     bool      setflags  = !!S;
     auto [shiftT, shiftN] = _DecodeImmShift(type, (imm3<<2)|imm2);
     if (d == 13 || (d == 15 && !S) || (n == 13 || n == 15) || (m == 13 || m == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     TRACEI(EOR_reg, T1, "d=%u n=%u m=%u S=%u shiftT=%u shiftN=%u", d, n, m, setflags, shiftT, shiftN);
 
@@ -13221,7 +13808,7 @@ private:
     uint32_t Rm   = GETBITS(instr    , 0, 3);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     CHECK01(BIT(15), 0);
 
@@ -13230,7 +13817,7 @@ private:
     bool      setflags  = !!S;
     auto [shiftT, shiftN] = _DecodeImmShift(type, (imm3<<2)|imm2);
     if ((d == 13 || d == 15) || (m == 13 || m == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     TRACEI(MVN_reg, T1, "d=%u m=%u S=%u shiftT=%u shiftN=%u", d, m, setflags, shiftT, shiftN);
 
@@ -13254,7 +13841,7 @@ private:
 
     ASSERT(Rn != 0b1111);
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     CHECK01(BIT(15), 0);
 
@@ -13264,7 +13851,7 @@ private:
     bool      setflags  = !!S;
     auto [shiftT, shiftN] = _DecodeImmShift(type, (imm3<<2)|imm2);
     if ((d == 13 || d == 15) || n == 13 || (m == 13 || m == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     TRACEI(ORN_reg, T1, "d=%u n=%u m=%u S=%u shiftT=%u shiftN=%u", d, n, m, setflags, shiftT, shiftN);
 
@@ -13289,7 +13876,7 @@ private:
 
     // ---- EXECUTE -------------------------------------------------
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t d        = Rd;
     uint32_t m        = Rm;
@@ -13298,10 +13885,10 @@ private:
 
     if (!setflags && ((imm3<<4) | (imm2<<2) | type) == 0b0000000) {
       if (d == 15 || m == 15 || (d == 13 && m == 13))
-        throw Exception(ExceptionType::UNPREDICTABLE);
+        THROW_UNPREDICTABLE();
     } else {
       if ((d == 13 || d == 15) || (m == 13 || m == 15))
-        throw Exception(ExceptionType::UNPREDICTABLE);
+        THROW_UNPREDICTABLE();
     }
 
     _Exec_MOV_register(d, m, setflags, shiftT, shiftN);
@@ -13322,7 +13909,7 @@ private:
     uint32_t Rm   = GETBITS(instr    , 0, 3);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     CHECK01(BIT(15), 0);
 
@@ -13333,7 +13920,7 @@ private:
     auto [shiftT, shiftN] = _DecodeImmShift(type, (imm3<<2) | imm2);
 
     if ((d == 13 || d == 15) || (n == 13 || n == 15) || (m == 13 || m == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_BIC_register(d, n, m, setflags, shiftT, shiftN);
@@ -13352,7 +13939,7 @@ private:
     uint32_t Rm   = GETBITS(instr    , 0, 3);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     CHECK01(BIT(15), 0);
 
@@ -13361,7 +13948,7 @@ private:
     auto [shiftT, shiftN] = _DecodeImmShift(type, (imm3<<2) | imm2);
 
     if ((n == 13 || n == 15) || (m == 13 || m == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_TST_register(n, m, shiftT, shiftN);
@@ -13383,7 +13970,7 @@ private:
 
     ASSERT(!(Rd == 0b1111 && S));
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     CHECK01(BIT(15), 0);
 
@@ -13393,7 +13980,7 @@ private:
     bool     setflags = !!S;
     auto [shiftT, shiftN] = _DecodeImmShift(type, (imm3<<2) | imm2);
     if (d == 13 || (d == 15 && !S) || (n == 13 || n == 15) || (m == 13 || m == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_AND_register(d, n, m, setflags, shiftT, shiftN);
@@ -13415,7 +14002,7 @@ private:
 
     ASSERT(Rn != 0b1111);
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     CHECK01(BIT(15), 0);
 
@@ -13425,7 +14012,7 @@ private:
     bool      setflags  = !!S;
     auto [shiftT, shiftN] = _DecodeImmShift(type, (imm3<<2)|imm2);
     if ((d == 13 || d == 15) || n == 13 || (m == 13 || m == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     TRACEI(ORR_reg, T2, "d=%u n=%u m=%u S=%u shiftT=%u shiftN=%u", d, n, m, setflags, shiftT, shiftN);
 
@@ -13559,7 +14146,7 @@ private:
     uint32_t d = Rd;
 
     if ((d == 13 || d == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_MRS(d, SYSm);
@@ -13599,7 +14186,7 @@ private:
     uint32_t imm12  = GETBITS(instr    , 0,11);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t imm32 = _ZeroExtend((imm4<<12) | imm12, 32);
 
@@ -13668,7 +14255,7 @@ private:
     uint32_t option   = GETBITS(instr, 0, 3);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     CHECK01(BIT(11) | BIT(13), BITS(16+0,16+3));
 
@@ -13686,7 +14273,7 @@ private:
     // ---- DECODE --------------------------------------------------
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     CHECK01(BIT(11) | BIT(13), BITS(16+0,16+3));
 
@@ -13706,7 +14293,7 @@ private:
     // ---- DECODE --------------------------------------------------
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     CHECK01(BIT(11) | BIT(13), BITS(16+0,16+3));
 
@@ -13726,7 +14313,7 @@ private:
     // ---- DECODE --------------------------------------------------
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     CHECK01(BIT(11) | BIT(13), BITS(16+0,16+3));
 
@@ -13746,7 +14333,7 @@ private:
     // ---- DECODE --------------------------------------------------
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     CHECK01(BIT(11) | BIT(13), BITS(16+0,16+3));
 
@@ -13766,7 +14353,7 @@ private:
     // ---- DECODE --------------------------------------------------
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     CHECK01(BIT(11) | BIT(13), BITS(16+0,16+3));
 
@@ -13801,7 +14388,7 @@ private:
     }
 
     if ((n == 13 || n == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_MSR_register(n, mask, SYSm);
@@ -13823,12 +14410,12 @@ private:
     ASSERT(GETBITS(cond,1,3) != 0b111);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t imm32 = _SignExtend((S<<20) | (J2<<19) | (J1<<18) | (imm6<<12) | (imm11<<1), 21, 32);
 
     if (_InITBlock())
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_B(imm32);
@@ -13851,7 +14438,7 @@ private:
     uint32_t imm32  = _SignExtend((S<<24) | (I1<<23) | (I2<<22) | (imm10<<12) | (imm11 << 1), 25, 32);
 
     if (_InITBlock() && !_LastInITBlock())
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_B(imm32);
@@ -13874,7 +14461,7 @@ private:
     uint32_t imm32  = _SignExtend((S<<24) | (I1<<23) | (I2<<22) | (imm10<<12) | (imm11<<1), 25, 32);
 
     if (_InITBlock() && !_LastInITBlock())
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_BL(imm32);
@@ -14056,7 +14643,7 @@ private:
     uint32_t imm8 = GETBITS(instr    , 0, 7);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t d        = Rd;
     uint32_t n        = Rn;
@@ -14064,7 +14651,7 @@ private:
     uint32_t imm32    = _T32ExpandImm((i<<11) | (imm3<<8) | imm8);
 
     if ((d == 13 || d == 15) || (n == 13 || n == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_RSB_immediate(d, n, setflags, imm32);
@@ -14085,14 +14672,14 @@ private:
     ASSERT(!(Rd == 0b1111 && S));
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t d        = Rd;
     bool     setflags = !!S;
     uint32_t imm32    = _T32ExpandImm((i<<11) | (imm3<<8) | imm8);
 
     if (d == 15 && !S)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     TRACEI(SUB_SP_minus_imm, T2, "d=%u S=%u imm32=0x%x", d, setflags, imm32);
 
@@ -14112,13 +14699,13 @@ private:
     uint32_t imm8 = GETBITS(instr    , 0, 7);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t n        = Rn;
     uint32_t imm32    = _T32ExpandImm((i<<11) | (imm3<<8) | imm8);
 
     if (n == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_CMN_immediate(n, imm32);
@@ -14138,7 +14725,7 @@ private:
     uint32_t imm8 = GETBITS(instr    , 0, 7);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t d        = Rd;
     uint32_t n        = Rn;
@@ -14146,7 +14733,7 @@ private:
     uint32_t imm32    = _T32ExpandImm((i<<11) | (imm3<<8) | imm8);
 
     if ((d == 13 || d == 15) || (n == 13 || n == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_SBC_immediate(d, n, setflags, imm32);
@@ -14166,7 +14753,7 @@ private:
     uint32_t imm8 = GETBITS(instr    , 0, 7);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t d        = Rd;
     uint32_t n        = Rn;
@@ -14174,7 +14761,7 @@ private:
     uint32_t imm32    = _T32ExpandImm((i<<11) | (imm3<<8) | imm8);
 
     if ((d == 13 || d == 15) || (n == 13 || n == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_ADC_immediate(d, n, setflags, imm32);
@@ -14195,14 +14782,14 @@ private:
     ASSERT(!(Rd == 0b1111 && S));
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t d        = Rd;
     bool     setflags = !!S;
     uint32_t imm32    = _T32ExpandImm((i<<11) | (imm3<<8) | imm8);
 
     if (d == 15 && !S)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_ADD_SP_plus_immediate(d, setflags, imm32);
@@ -14220,13 +14807,13 @@ private:
     uint32_t imm8 = GETBITS(instr    , 0, 7);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t n        = Rn;
     auto [imm32, carry] = _T32ExpandImm_C((i<<11) | (imm3<<8) | imm8, GETBITSM(_s.xpsr, XPSR__C));
 
     if (n == 13 || n == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_TEQ_immediate(n, imm32, carry);
@@ -14248,7 +14835,7 @@ private:
     ASSERT(!(Rd == 0b1111 && S));
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t d        = Rd;
     uint32_t n        = Rn;
@@ -14256,7 +14843,7 @@ private:
     auto [imm32, carry] = _T32ExpandImm_C((i<<11) | (imm3<<8) | imm8, GETBITSM(_s.xpsr, XPSR__C));
 
     if (d == 13 || (d == 15 && !S) || (n == 13 || n == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_EOR_immediate(d, n, setflags, imm32, carry);
@@ -14275,14 +14862,14 @@ private:
     uint32_t imm8 = GETBITS(instr    , 0, 7);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t d        = Rd;
     bool     setflags = !!S;
     auto [imm32, carry] = _T32ExpandImm_C((i<<11) | (imm3<<8) | imm8, GETBITSM(_s.xpsr, XPSR__C));
 
     if (d == 13 || d == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_MVN_immediate(d, setflags, imm32, carry);
@@ -14304,7 +14891,7 @@ private:
     ASSERT(Rn != 0b1111);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t d        = Rd;
     uint32_t n        = Rn;
@@ -14312,7 +14899,7 @@ private:
     auto [imm32, carry] = _T32ExpandImm_C((i<<11) | (imm3<<8) | imm8, GETBITSM(_s.xpsr, XPSR__C));
 
     if ((d == 13 || d == 15) || n == 13)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_ORN_immediate(d, n, setflags, imm32, carry);
@@ -14330,12 +14917,12 @@ private:
     uint32_t imm8 = GETBITS(instr    , 0, 7);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t n = Rn;
     auto [imm32, carry] = _T32ExpandImm_C((i<<11) | (imm3<<8) | imm8, GETBITSM(_s.xpsr, XPSR__C));
     if (n == 13 || n == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_TST_immediate(n, imm32, carry);
@@ -14358,14 +14945,14 @@ private:
     ASSERT(Rn != 0b1101);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t  d         = Rd;
     uint32_t  n         = Rn;
     bool      setflags  = !!S;
     uint32_t  imm32     = _T32ExpandImm((i<<11) | (imm3<<8) | imm8);
     if (d == 13 || (d == 15 && !S) || n == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     TRACEI(SUB_imm, T3, "d=%u n=%u[0x%x] S=%u imm32=0x%x", d, n, _GetR(n), setflags, imm32);
 
@@ -14389,7 +14976,7 @@ private:
     ASSERT(!(Rd == 0b1111 && S));
     ASSERT(Rn != 0b1101);
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t  d         = Rd;
     uint32_t  n         = Rn;
@@ -14397,7 +14984,7 @@ private:
     uint32_t  imm32     = _T32ExpandImm((i<<11)|(imm3<<8)|imm8);
 
     if (d == 13 || (d == 15 && !S) || n == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     TRACEI(ADD_imm, T3, "d=%u n=%u S=%u imm32=0x%x", d, n, setflags, imm32);
 
@@ -14419,14 +15006,14 @@ private:
     uint32_t imm8 = GETBITS(instr    , 0, 7);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t d        = Rd;
     uint32_t n        = Rn;
     bool     setflags = !!S;
     auto [imm32, carry] = _T32ExpandImm_C((i<<11)|(imm3<<8)|imm8, GETBITSM(_s.xpsr, XPSR__C));
     if (d == 13 || d == 15 || n == 13 || n == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     TRACEI(BIC_imm, T1, "d=%u n=%u S=%u imm32=0x%x carry=%u", d, n, setflags, imm32, carry);
 
@@ -14449,14 +15036,14 @@ private:
 
     ASSERT(Rn != 0b1111);
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t d        = Rd;
     uint32_t n        = Rn;
     bool     setflags = !!S;
     auto [imm32, carry] = _T32ExpandImm_C((i<<11)|(imm3<<8)|imm8, GETBITSM(_s.xpsr, XPSR__C));
     if (d == 13 || d == 15 || n == 13)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     TRACEI(ORR_imm, T1, "d=%u n=%u S=%u imm32=0x%x carry=%u", d, n, setflags, imm32, carry);
 
@@ -14477,13 +15064,13 @@ private:
     uint32_t imm8 = GETBITS(instr    , 0, 7);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t d        = Rd;
     bool     setflags = !!S;
     auto [imm32, carry] = _T32ExpandImm_C((i<<11) | (imm3<<8) | imm8, GETBITSM(_s.xpsr, XPSR__C));
     if (d == 13 || d == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     TRACEI(MOV_imm, T2, "d=%u S=%u imm32=0x%x carry=%u", d, setflags, imm32, carry);
 
@@ -14499,21 +15086,21 @@ private:
     // ---- DECODE --------------------------------------------------
     uint32_t i    = GETBITS(instr>>16,10,10);
     uint32_t S    = GETBITS(instr>>16, 4, 4);
-    uint32_t Rn   = GETBITS(instr    , 0, 3);
+    uint32_t Rn   = GETBITS(instr>>16, 0, 3);
     uint32_t imm3 = GETBITS(instr    ,12,14);
     uint32_t Rd   = GETBITS(instr    , 8,11);
     uint32_t imm8 = GETBITS(instr    , 0, 7);
 
     ASSERT(!(Rd == 0b1111 && S));
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t  d         = Rd;
     uint32_t  n         = Rn;
     bool      setflags  = !!S;
     auto [imm32, carry] = _T32ExpandImm_C((i<<11) | (imm3<<8) | imm8, GETBITSM(_s.xpsr, XPSR__C));
     if (d == 13 || (d == 15 && !S) || (n == 13 || n == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     TRACEI(AND_imm, T1, "d=%u n=%u S=%u imm32=0x%x carry=%u", d, n, setflags, imm32, carry);
 
@@ -14624,7 +15211,7 @@ private:
     ASSERT(Rn != 0b1101);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t  d         = Rd;
     uint32_t  n         = Rn;
@@ -14632,7 +15219,7 @@ private:
     uint32_t  imm32     = _ZeroExtend((i<<11)|(imm3<<8)|imm8, 32);
 
     if (d == 13 || d == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     TRACEI(SUB_imm, T4, "d=%u n=%u S=%u imm32=0x%x", d, n, setflags, imm32);
 
@@ -14656,7 +15243,7 @@ private:
     ASSERT(Rn != 0b1101);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t  d         = Rd;
     uint32_t  n         = Rn;
@@ -14664,7 +15251,7 @@ private:
     uint32_t  imm32     = _ZeroExtend((i<<11)|(imm3<<8)|imm8, 32);
 
     if (d == 13 || d == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     TRACEI(ADD_imm, T4, "d=%u n=%u S=%u imm32=0x%x", d, n, setflags, imm32);
 
@@ -14684,14 +15271,14 @@ private:
     uint32_t imm8 = GETBITS(instr    , 0, 7);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t d        = Rd;
     bool     setflags = false;
     uint32_t imm32    = _ZeroExtend((i<<11) | (imm3<<8) | imm8, 32);
 
     if (d == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_SUB_SP_minus_immediate(d, setflags, imm32);
@@ -14709,14 +15296,14 @@ private:
     uint32_t imm8 = GETBITS(instr    , 0, 7);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t d        = Rd;
     bool     setflags = false;
     uint32_t imm32    = _ZeroExtend((i<<11) | (imm3<<8) | imm8, 32);
 
     if (d == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_ADD_SP_plus_immediate(d, setflags, imm32);
@@ -14734,13 +15321,13 @@ private:
     uint32_t imm8 = GETBITS(instr    , 0, 7);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t d      = Rd;
     uint32_t imm32  = _ZeroExtend((i<<11) | (imm3<<8) | imm8, 32);
     bool     add    = true;
     if (d == 13 || d == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_ADR(d, imm32, add);
@@ -14758,14 +15345,14 @@ private:
     uint32_t imm8 = GETBITS(instr    , 0, 7);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     uint32_t d      = Rd;
     uint32_t imm32  = _ZeroExtend((i<<11) | (imm3<<8) | imm8, 32);
     bool     add    = false;
 
     if (d == 13 || d == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_ADR(d, imm32, add);
@@ -14802,7 +15389,7 @@ private:
     uint32_t imm16  = (imm4<<12) | (i<<11) | (imm3<<8) | imm8;
 
     if (d == 13 || d == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_MOVT(d, imm16);
@@ -14826,7 +15413,7 @@ private:
     bool     carry    = UNKNOWN_VAL(false);
 
     if (d == 13 || d == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     TRACEI(MOV_imm, T3, "d=%u imm32=0x%x", d, imm32);
 
@@ -14922,7 +15509,7 @@ private:
     ASSERT(!sh || imm3 || imm2);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     CHECK01(BIT(5) | BIT(16+10), 0);
 
@@ -14932,7 +15519,7 @@ private:
     auto [shiftT, shiftN] = _DecodeImmShift(sh<<1, (imm3<<2) | imm2);
 
     if ((d == 13 || d == 15) || (n == 13 || n == 15))
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_SSAT(d, n, saturateTo, shiftT, shiftN);
@@ -14954,7 +15541,7 @@ private:
     ASSERT(!sh || imm3 || imm2);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     CHECK01(BIT(5) | BIT(16+10), 0);
 
@@ -14964,7 +15551,7 @@ private:
     auto [shiftT, shiftN] = _DecodeImmShift(sh<<1, (imm3<<2) | imm2);
 
     if ((d == 13 || d == 15) || (n == 13 || n == 15))
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_USAT(d, n, saturateTo, shiftT, shiftN);
@@ -14983,7 +15570,7 @@ private:
     uint32_t widthm1  = GETBITS(instr    , 0, 4);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     CHECK01(BIT(5) | BIT(16+10), 0);
 
@@ -14997,7 +15584,7 @@ private:
       CUNPREDICTABLE_UNDEFINED();
 
     if ((d == 13 || d == 15) || (n == 13 || n == 15))
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_SBFX(d, n, lsbit, widthminus1, msbit);
@@ -15016,7 +15603,7 @@ private:
     uint32_t widthm1  = GETBITS(instr    , 0, 4);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     CHECK01(BIT(5) | BIT(16+10), 0);
 
@@ -15030,7 +15617,7 @@ private:
       CUNPREDICTABLE_UNDEFINED();
 
     if ((d == 13 || d == 15) || (n == 13 || n == 15))
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_UBFX(d, n, lsbit, widthminus1, msbit);
@@ -15161,7 +15748,7 @@ private:
 
     ASSERT(Rn != 0b1111);
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     CHECK01(BIT(5) | BIT(16+10), 0);
 
@@ -15173,7 +15760,7 @@ private:
       CUNPREDICTABLE_UNDEFINED();
 
     if (d == 13 || d == 15 || n == 13)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     TRACEI(BFI, T1, "d=%u n=%u msbit=%u lsbit=%u", d, n, msbit, lsbit);
 
@@ -15193,7 +15780,7 @@ private:
     uint32_t msb  = GETBITS(instr, 0, 4);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     CHECK01(BIT(5) | BIT(16+10), 0);
 
@@ -15205,7 +15792,7 @@ private:
       CUNPREDICTABLE_UNDEFINED();
 
     if (d == 13 || d == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     TRACEI(BFC, T1, "d=%u msbit=%u lsbit=%u", d, msbit, lsbit);
 
@@ -15363,7 +15950,7 @@ private:
     ASSERT(Rn != 0b1111);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t n      = Rn;
     uint32_t imm32  = _ZeroExtend(imm12, 32);
@@ -15387,7 +15974,7 @@ private:
     ASSERT(Rn != 0b1111);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t t      = Rt;
     uint32_t n      = Rn;
@@ -15395,7 +15982,7 @@ private:
     bool     index  = true, add = true, wback = false;
 
     if (t == 13)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_LDRSB_immediate(t, n, imm32, index, add, wback);
@@ -15415,7 +16002,7 @@ private:
     ASSERT(Rn != 0b1111);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t t      = Rt;
     uint32_t n      = Rn;
@@ -15423,7 +16010,7 @@ private:
     bool     index  = true, add = true, wback = false;
 
     if (t == 13)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_LDRSH_immediate(t, n, imm32, index, add, wback);
@@ -15499,7 +16086,7 @@ private:
     ASSERT(Rn != 0b1111);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t t         = Rt;
     uint32_t n         = Rn;
@@ -15507,7 +16094,7 @@ private:
     uint32_t imm32     = _ZeroExtend(imm8, 32);
 
     if (t == 13 || t == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_LDRSBT(t, n, postindex, add, registerForm, imm32);
@@ -15526,7 +16113,7 @@ private:
     ASSERT(Rn != 0b1111);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t t         = Rt;
     uint32_t n         = Rn;
@@ -15534,7 +16121,7 @@ private:
     uint32_t imm32     = _ZeroExtend(imm8, 32);
 
     if (t == 13 || t == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_LDRSHT(t, n, postindex, add, registerForm, imm32);
@@ -15627,7 +16214,7 @@ private:
     ASSERT(P || W);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t t      = Rt;
     uint32_t n      = Rn;
@@ -15640,7 +16227,7 @@ private:
       CUNPREDICTABLE_UNDEFINED();
 
     if (t == 13 || (t == 15 && W))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_LDRSB_immediate(t, n, imm32, index, add, wback);
@@ -15665,7 +16252,7 @@ private:
     ASSERT(P || W);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t t      = Rt;
     uint32_t n      = Rn;
@@ -15678,7 +16265,7 @@ private:
       CUNPREDICTABLE_UNDEFINED();
 
     if (t == 13 || (t == 15 && W))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_LDRSH_immediate(t, n, imm32, index, add, wback);
@@ -15733,7 +16320,7 @@ private:
     ASSERT(Rn != 0b1111);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t n      = Rn;
     uint32_t m      = Rm;
@@ -15742,7 +16329,7 @@ private:
     uint32_t shiftN = imm2;
 
     if (m == 13 || m == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_PLI_register(n, m, add, shiftT, shiftN);
@@ -15763,7 +16350,7 @@ private:
     ASSERT(Rn != 0b1111);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t t      = Rt;
     uint32_t n      = Rn;
@@ -15773,7 +16360,7 @@ private:
     uint32_t shiftN = imm2;
 
     if (t == 13 || (m == 13 || m == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_LDRSB_register(t, n, m, index, add, wback, shiftT, shiftN);
@@ -15794,7 +16381,7 @@ private:
     ASSERT(Rn != 0b1111);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t t      = Rt;
     uint32_t n      = Rn;
@@ -15804,7 +16391,7 @@ private:
     uint32_t shiftN = imm2;
 
     if (t == 13 || (m == 13 || m == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_LDRSH_register(t, n, m, index, add, wback, shiftT, shiftN);
@@ -15868,7 +16455,7 @@ private:
     ASSERT(Rn != 0b1111);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t t            = Rt;
     uint32_t n            = Rn;
@@ -15878,7 +16465,7 @@ private:
     uint32_t imm32        = _ZeroExtend(imm8, 32);
 
     if (t == 13 || t == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_LDRBT(t, n, postindex, add, registerForm, imm32);
@@ -15897,7 +16484,7 @@ private:
     ASSERT(Rn != 0b1111);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t t            = Rt;
     uint32_t n            = Rn;
@@ -15907,7 +16494,7 @@ private:
     uint32_t imm32        = _ZeroExtend(imm8, 32);
 
     if (t == 13 || t == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_LDRHT(t, n, postindex, add, registerForm, imm32);
@@ -15926,7 +16513,7 @@ private:
     ASSERT(Rn != 0b1111);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t t            = Rt;
     uint32_t n            = Rn;
@@ -15936,7 +16523,7 @@ private:
     uint32_t imm32        = _ZeroExtend(imm8, 32);
 
     if (t == 13 || t == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_LDRT(t, n, postindex, add, registerForm, imm32);
@@ -15955,7 +16542,7 @@ private:
     ASSERT(Rn != 0b1111);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t t            = Rt;
     uint32_t n            = Rn;
@@ -15965,7 +16552,7 @@ private:
     uint32_t imm32        = _ZeroExtend(imm8, 32);
 
     if (t == 13 || t == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_STRBT(t, n, postindex, add, registerForm, imm32);
@@ -15984,7 +16571,7 @@ private:
     ASSERT(Rn != 0b1111);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t t            = Rt;
     uint32_t n            = Rn;
@@ -15994,7 +16581,7 @@ private:
     uint32_t imm32        = _ZeroExtend(imm8, 32);
 
     if (t == 13 || t == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_STRHT(t, n, postindex, add, registerForm, imm32);
@@ -16013,7 +16600,7 @@ private:
     ASSERT(Rn != 0b1111);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t t            = Rt;
     uint32_t n            = Rn;
@@ -16023,7 +16610,7 @@ private:
     uint32_t imm32        = _ZeroExtend(imm8, 32);
 
     if (t == 13 || t == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_STRT(t, n, postindex, add, registerForm, imm32);
@@ -16139,7 +16726,7 @@ private:
     ASSERT(Rn != 0b1111);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t n      = Rn;
     uint32_t imm32  = _ZeroExtend(imm8, 32);
@@ -16214,10 +16801,10 @@ private:
     ASSERT(!(P && U && !W));
 
     if (!P && !W)
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t t      = Rt;
     uint32_t n      = Rn;
@@ -16228,7 +16815,7 @@ private:
       CUNPREDICTABLE_UNDEFINED();
 
     if (t == 15 && _InITBlock() && !_LastInITBlock())
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_LDR_immediate(t, n, imm32, index, add, wback);
@@ -16252,10 +16839,10 @@ private:
     ASSERT(!(P && U && !W));
 
     if (!P && !W)
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t t      = Rt;
     uint32_t n      = Rn;
@@ -16266,10 +16853,10 @@ private:
       CUNPREDICTABLE_UNDEFINED();
 
     if (t == 13)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     if (t == 15 && W)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_LDRB_immediate(t, n, imm32, index, add, wback);
@@ -16293,10 +16880,10 @@ private:
     ASSERT(!(P && U && !W));
 
     if (!P && !W)
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t t      = Rt;
     uint32_t n      = Rn;
@@ -16307,10 +16894,10 @@ private:
       CUNPREDICTABLE_UNDEFINED();
 
     if (t == 13)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     if (t == 15 && W)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_LDRH_immediate(t, n, imm32, index, add, wback);
@@ -16333,7 +16920,7 @@ private:
     ASSERT(!(Rn == 0b1111 || (!P && !W)));
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t t      = Rt;
     uint32_t n      = Rn;
@@ -16341,7 +16928,7 @@ private:
     bool     index  = !!P, add = !!U, wback = !!W;
 
     if (t == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     if (wback && n == t)
       CUNPREDICTABLE_UNDEFINED();
@@ -16367,7 +16954,7 @@ private:
     ASSERT(!(Rn == 0b1111 || (!P && !W)));
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t t      = Rt;
     uint32_t n      = Rn;
@@ -16375,7 +16962,7 @@ private:
     bool     index  = !!P, add = !!U, wback = !!W;
 
     if (t == 13 || t == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     if (wback && n == t)
       CUNPREDICTABLE_UNDEFINED();
@@ -16401,7 +16988,7 @@ private:
     ASSERT(!(Rn == 0b1111 || (!P && !W)));
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t t      = Rt;
     uint32_t n      = Rn;
@@ -16409,7 +16996,7 @@ private:
     bool     index  = !!P, add = !!U, wback = !!W;
 
     if (t == 13 || t == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     if (wback && n == t)
       CUNPREDICTABLE_UNDEFINED();
@@ -16470,7 +17057,7 @@ private:
     ASSERT(Rn != 0b1111);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t n      = Rn;
     uint32_t imm32  = _ZeroExtend(imm8, 32);
@@ -16490,7 +17077,7 @@ private:
     uint32_t imm12  = GETBITS(instr    , 0,11);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t n      = 15;
     uint32_t imm32  = _ZeroExtend(imm12, 32);
@@ -16513,14 +17100,14 @@ private:
     ASSERT(Rt != 0b1111);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t t      = Rt;
     uint32_t imm32  = _ZeroExtend(imm12, 32);
     bool     add    = !!U;
 
     if (t == 13)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_LDRSB_literal(t, imm32, add);
@@ -16539,14 +17126,14 @@ private:
     ASSERT(Rt != 0b1111);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t t      = Rt;
     uint32_t imm32  = _ZeroExtend(imm12, 32);
     bool     add    = !!U;
 
     if (t == 13)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_LDRSH_literal(t, imm32, add);
@@ -16643,7 +17230,7 @@ private:
     ASSERT(Rn != 0b1111);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t  t = Rt;
     uint32_t  n = Rn;
@@ -16653,7 +17240,7 @@ private:
     uint32_t  shiftN = imm2;
 
     if (t == 15 || (m == 13 || m == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     TRACEI(STR_reg, T2, "t=%u n=%u m=%u shiftT=%u shiftN=%u", t, n, m, shiftT, shiftN);
 
@@ -16675,7 +17262,7 @@ private:
     ASSERT(Rn != 0b1111);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t  t = Rt;
     uint32_t  n = Rn;
@@ -16685,7 +17272,7 @@ private:
     uint32_t  shiftN = imm2;
 
     if ((t == 13 || t == 15) || (m == 13 || m == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     TRACEI(STRB_reg, T2, "t=%u n=%u m=%u shiftT=%u shiftN=%u", t, n, m, shiftT, shiftN);
 
@@ -16707,7 +17294,7 @@ private:
     ASSERT(Rn != 0b1111);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t  t = Rt;
     uint32_t  n = Rn;
@@ -16717,7 +17304,7 @@ private:
     uint32_t  shiftN = imm2;
 
     if ((t == 13 || t == 15) || (m == 13 || m == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     TRACEI(STRH_reg, T2, "t=%u n=%u m=%u shiftT=%u shiftN=%u", t, n, m, shiftT, shiftN);
 
@@ -16739,7 +17326,7 @@ private:
     ASSERT(Rn != 0b1111);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t  n       = Rn;
     uint32_t  m       = Rm;
@@ -16748,7 +17335,7 @@ private:
     uint32_t  shiftN  = imm2; // XXX error in ISA manual
 
     if (m == 13 || m == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     TRACEI(PLD_reg, RO, "n=%u m=%u shiftT=%u shiftN=%u", n, m, shiftT, shiftN);
 
@@ -16770,7 +17357,7 @@ private:
     ASSERT(Rn != 0b1111);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t  t = Rt;
     uint32_t  n = Rn;
@@ -16780,10 +17367,10 @@ private:
     uint32_t  shiftN = imm2;
 
     if (m == 13 || m == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     if (t == 15 && _InITBlock() && !_LastInITBlock())
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     TRACEI(LDR_reg, T2, "t=%u n=%u m=%u shiftL=%u", t, n, m, shiftN);
 
@@ -16805,7 +17392,7 @@ private:
     ASSERT(Rt != 0b1111);
     ASSERT(Rn != 0b1111);
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t  t = Rt;
     uint32_t  n = Rn;
@@ -16815,7 +17402,7 @@ private:
     uint32_t  shiftN = imm2;
 
     if (t == 13 || (m == 13 || m == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     TRACEI(LDRB_reg, T2, "t=%u n=%u m=%u shiftL=%u", t, n, m, shiftN);
 
@@ -16837,7 +17424,7 @@ private:
     ASSERT(Rt != 0b1111);
     ASSERT(Rn != 0b1111);
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t  t = Rt;
     uint32_t  n = Rn;
@@ -16847,7 +17434,7 @@ private:
     uint32_t  shiftN = imm2;
 
     if (t == 13 || (m == 13 || m == 15))
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     TRACEI(LDRH_reg, T2, "t=%u n=%u m=%u shiftL=%u", t, n, m, shiftN);
 
@@ -16913,14 +17500,14 @@ private:
 
     ASSERT(Rt != 0b1111);
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t t      = Rt;
     uint32_t imm32  = _ZeroExtend(imm12, 32);
     bool     add    = !!U;
 
     if (t == 13)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_LDRH_literal(t, imm32, add);
@@ -16938,14 +17525,14 @@ private:
 
     ASSERT(Rt != 0b1111);
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t t      = Rt;
     uint32_t imm32  = _ZeroExtend(imm12, 32);
     bool     add    = !!U;
 
     if (t == 13)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_LDRB_literal(t, imm32, add);
@@ -16961,7 +17548,7 @@ private:
     uint32_t imm12  = GETBITS(instr    , 0,11);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t imm32  = _ZeroExtend(imm12, 32);
     bool     add    = !!U;
@@ -16981,14 +17568,14 @@ private:
     uint32_t U      = GETBITS(instr>>16, 7, 7);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t t      = Rt;
     uint32_t imm32  = _ZeroExtend(imm12, 32);
     bool     add    = !!U;
 
     if (t == 15 && _InITBlock() && !_LastInITBlock())
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     TRACEI(LDR_lit, T2, "t=%u imm32=0x%x add=%u", t, imm32, add);
 
@@ -17065,7 +17652,7 @@ private:
     ASSERT(Rn != 0b1111);
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t n      = Rn;
     uint32_t imm32  = _ZeroExtend(imm32, 32);
@@ -17087,10 +17674,10 @@ private:
     uint32_t imm12  = GETBITS(instr    , 0,11);
 
     if (Rn == 0b1111)
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t t     = Rt;
     uint32_t n     = Rn;
@@ -17098,7 +17685,7 @@ private:
     bool     index = true, add = true, wback = false;
 
     if (t == 13 || t == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_STRB_immediate(t, n, imm32, index, add, wback);
@@ -17115,10 +17702,10 @@ private:
     uint32_t imm12  = GETBITS(instr    , 0,11);
 
     if (Rn == 0b1111)
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t t     = Rt;
     uint32_t n     = Rn;
@@ -17126,7 +17713,7 @@ private:
     bool     index = true, add = true, wback = false;
 
     if (t == 13 || t == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     // ---- EXECUTE -------------------------------------------------
     _Exec_STRH_immediate(t, n, imm32, index, add, wback);
@@ -17144,7 +17731,7 @@ private:
 
     ASSERT(Rn != 0b1111);
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t  t     = Rt;
     uint32_t  n     = Rn;
@@ -17152,7 +17739,7 @@ private:
     bool      index = true, add = true, wback = false;
 
     if (t == 15)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     TRACEI(STR_imm, T3, "t=%u n=%u imm32=0x%x", t, n, imm32);
 
@@ -17173,7 +17760,7 @@ private:
     ASSERT(Rt != 0b1111);
     ASSERT(Rn != 0b1111);
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t  t     = Rt;
     uint32_t  n     = Rn;
@@ -17181,7 +17768,7 @@ private:
     bool      index = true, add = true, wback = false;
 
     if (t == 13)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     TRACEI(LDRB_imm, T2, "t=%u n=%u imm32=0x%x", t, n, imm32);
 
@@ -17202,7 +17789,7 @@ private:
     ASSERT(Rt != 0b1111);
     ASSERT(Rn != 0b1111);
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t  t     = Rt;
     uint32_t  n     = Rn;
@@ -17210,7 +17797,7 @@ private:
     bool      index = true, add = true, wback = false;
 
     if (t == 13)
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     TRACEI(LDRH_imm, T2, "t=%u n=%u imm32=0x%x", t, n, imm32);
 
@@ -17230,7 +17817,7 @@ private:
 
     ASSERT(Rn != 0b1111);
     if (!_HaveMainExt())
-      throw Exception(ExceptionType::UNDEFINED);
+      THROW_UNDEFINED();
 
     uint32_t  t     = Rt;
     uint32_t  n     = Rn;
@@ -17238,7 +17825,7 @@ private:
     bool      index = true, add = true, wback = false;
 
     if (t == 15 && _InITBlock() && !_LastInITBlock())
-      throw Exception(ExceptionType::UNPREDICTABLE);
+      THROW_UNPREDICTABLE();
 
     TRACEI(LDR_imm, T3, "t=%u n=%u imm32=0x%x", t, n, imm32);
 
@@ -17546,7 +18133,7 @@ private:
 
     if (allowNonSecure && !(target & BIT(0))) {
       if (!_IsAligned(_GetSP(), 8))
-        throw Exception(ExceptionType::UNPREDICTABLE);
+        THROW_UNPREDICTABLE();
 
       uint32_t addr = _GetSP() - 8;
 
@@ -20371,7 +20958,7 @@ private:
       return;
 
     //EncodingSpecificOperations
-    throw Exception(ExceptionType::UNDEFINED);
+    THROW_UNDEFINED();
   }
 
   /* _Exec_UDIV {{{4
@@ -20509,4 +21096,5 @@ private:
   CpuNest         _n{};
   Device         &_dev;
   SimulatorConfig _cfg;
+  SysTickDevice   _sysTickS, _sysTickNS;
 };
