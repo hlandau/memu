@@ -303,7 +303,8 @@ int main(int argc, char **argv) {
   sa.sa_flags   = SA_RESTART;
   sigaction(SIGINT, &sa, NULL);
 
-  Simulator sim(dev, cfg);
+  GlobalMonitor gm;
+  Simulator sim(dev, gm, cfg);
   IntrBox   intrBox{sim};
   uint32_t  i = 0;
   for (;;) {

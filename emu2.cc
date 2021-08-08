@@ -7,6 +7,8 @@
 #include <thread>
 #include <mutex>
 #include <condition_variable>
+#include <limits>
+#include <unordered_map>
 
 /* Preprocessor Utilities                                                  {{{1
  * ============================================================================
@@ -55,7 +57,7 @@
  *
  *  Add missing TRACEIs
  *
- *  Monitors/Load Exclusive/etc., _ClearExclusiveByAddress
+ *  Test monitor support
  *  Proper register implementation -- ~done for essential registers
  *  Debug stuff
  *  S_HALT support
@@ -91,6 +93,7 @@
 #define IMPL_DEF_DROP_PREV_GEN_EXC                    1
 #define IMPL_DEF_BASELINE_NO_SW_ACCESS_DWT            0
 #define IMPL_DEF_BASELINE_NO_SW_ACCESS_FPB            0
+#define IMPL_DEF_LOCAL_MON_CHECK_ADDR                 1
 
 // Verify Configuration
 #if NUM_FPB_COMP > 126
@@ -1507,13 +1510,137 @@ private:
   std::condition_variable _cv;
 };
 
+/* Internal Helpers: MonitorState {{{2
+ * ==============================
+ */
+template<typename T>
+static inline T SatSub(T x, T y) {
+  T r;
+  if (__builtin_sub_overflow(x, y, &r))
+    return std::numeric_limits<T>::min();
+  else
+    return r;
+}
+
+template<typename T>
+static inline T SatAdd(T x, T y) {
+  T r;
+  if (__builtin_add_overflow(x, y, &r))
+    return std::numeric_limits<T>::max();
+  else
+    return r;
+}
+
+struct MonitorState {
+  bool ContainsAny(phys_t a, uint32_t sz) {
+    ASSERT(sz);
+    return size && a >= SatSub<phys_t>(addr, sz-1) && a <= SatAdd<phys_t>(addr, size-1);
+  }
+
+  bool ContainsAll(phys_t a, uint32_t sz) {
+    ASSERT(sz);
+    return size && a >= addr && SatAdd<phys_t>(a, sz-1) <= SatAdd<phys_t>(addr, size-1);
+  }
+
+  phys_t    addr{};
+  uint32_t  size{}; // zero: open access state, nonzero: exclusive access state
+};
+
+/* GlobalMonitor {{{2
+ * =============
+ * Implements an ARMv8-M global monitor to be shared between PEs.
+ *
+ * ALL methods of this class are non-thread-safe and require locking the mutex
+ * by calling Lock() and holding the std::unique_lock returned by it, before
+ * attempting to use any other method of this class. This locking is done
+ * outside of GlobalMonitor to provide flexibility in usage patterns (e.g.,
+ * calling IsExclusive followed by ClearExclusiveByAddress while processing a
+ * STREX, which must be done atomically).
+ *
+ * For simplicity the mutex used is a recursive mutex, so nested Lock calls can
+ * be made. This simplifies our simulator code.
+ * 
+ * TODO § B7.3 R_HLHS: If the global monitor is not implemented for an address
+ * range or memory type: ... (BusFault, etc.)
+ */
+struct GlobalMonitor {
+  using lock_type = std::unique_lock<std::recursive_mutex>;
+
+  GlobalMonitor(bool checkAddresses=true) :_checkAddresses(checkAddresses) {}
+  ~GlobalMonitor() { Lock(); }
+
+  lock_type Lock() { return lock_type{_m}; }
+
+  // Mark a range covering at least [addr, addr+size) as belonging to the
+  // specified PE.
+  void MarkExclusive(phys_t addr, int procID, uint32_t size) {
+    auto &s = _states[procID];
+
+    // § B7.3.1 R_MPKM: "A Load-Exclusive instruction by one PE has no effect
+    // on the global monitor state for any other PE." We do not call
+    // _ClearExclusiveByAddress here.
+
+    s.addr = addr;
+    s.size = size;
+  }
+
+  // Clear global exclusive monitor for all PEs except the one specified.
+  void ClearExclusiveByAddress(phys_t addr, int exceptProcID, uint32_t size) {
+    for (auto &x :_states)
+      if (x.first != exceptProcID && x.second.ContainsAny(addr, size))
+        x.second.size = 0;
+  }
+
+  // Is there a global record for an extent of address space covering at least
+  // [addr, addr+size) marked as belong to the specified PE?
+  bool IsExclusive(phys_t addr, int procID, uint32_t size) {
+    auto &s = _states[procID];
+
+    // § B7.3.1 R_MFGC: [...] "If no address is marked as exclusive access for
+    // the requesting PE, the store does not succeed."
+    if (!s.size)
+      return false;
+
+    // "If the address accessed is marked for exclusive access in the global
+    // monitor state machine for any other PE than that state machine
+    // transitions to Open Access state."
+    // This is handled automatically in MemA_with_priv_security; successful
+    // stores call ClearExclusiveByAddress on shareable memory (i.e., on memory
+    // where the global monitor, i.e. this method, was consulted).
+
+    // § B7.3.1 R_MFGC: [...] "If a different physical address is marked as
+    // exclusive access for the requesting PE, it is implementation defined
+    // whether the store succeeds or not."
+    if (!_checkAddresses)
+      return true;
+
+    // § B7.3.1 R_MFGC: [...] "The store is guaranteed to succeed only if
+    // the physical address accessed is marked as exclusive access for the
+    // requesting PE and both the local monitor and the global monitor state
+    // machines for the requesting PE are in the exclusive access state."
+    return s.ContainsAll(addr, size);
+  }
+
+private:
+  // We maintain one _State for each processor ID; "only a single outstanding
+  // exclusive access to shareable memory for each PE" is supported by the ISA.
+  // The range represented is [addr, addr+size). If size is zero, this record
+  // is currently invalid, meaning that the entry for that PE is in the "Open
+  // Access" state. If size is nonzero, the entry for that PE is in the
+  // "Exclusive Access" state.
+  std::recursive_mutex                  _m;
+  std::unordered_map<int, MonitorState> _states;
+  bool                                  _checkAddresses;
+};
+
 /* Simulator {{{2
  * =========
  */
-template<typename Device=IDevice, typename SimulatorConfig=SimpleSimulatorConfig, typename SysTickDevice=SysTickDevice_Real>
+template<typename Device=IDevice, typename SimulatorConfig=SimpleSimulatorConfig, typename SysTickDevice=SysTickDevice_Real, typename GlobalMonitor=GlobalMonitor>
 struct Simulator {
-  Simulator(Device &dev, const SimulatorConfig &cfg=SimulatorConfig()) :_dev(dev), _cfg(cfg) {
+  Simulator(Device &dev, GlobalMonitor &gm, const SimulatorConfig &cfg=SimulatorConfig(), int procID=0) :_dev(dev), _cfg(cfg), _procID(procID), _lm(IMPL_DEF_LOCAL_MON_CHECK_ADDR), _gm(gm) {
     ASSERT(cfg.MaxExc() < NUM_EXC);
+    ASSERT(cfg.MaxExc() <= _MaxExceptionNum());
 
     ASSERT(cfg.IsaVersion() >= 7 && cfg.IsaVersion() <= 8);
     if (_HaveSecurityExt())
@@ -3066,6 +3193,31 @@ private:
     st.SysTickSetConfig(enable, tickInt, freq, reloadValue, clearCount ? 0 : -1);
   }
 
+  /* LocalMonitor {{{3
+   * ============
+   * Implements an ARMv8-M local monitor for a specific PE.
+   */
+  struct LocalMonitor {
+    LocalMonitor(bool checkAddresses=true) :_checkAddresses(checkAddresses) {}
+
+    void MarkExclusive(phys_t addr, uint32_t size) {
+      _s.addr = addr;
+      _s.size = size;
+    }
+
+    bool IsExclusive(phys_t addr, uint32_t size) {
+      return _s.size && (!_checkAddresses || _s.ContainsAll(addr, size));
+    }
+
+    void ClearExclusive() {
+      _s.size = 0;
+    }
+
+  private:
+    MonitorState  _s{};
+    bool          _checkAddresses;
+  };
+
   /* Architectural Support Functions {{{3
    * ===============================
    */
@@ -3256,12 +3408,14 @@ private:
   /* _ClearExclusiveLocal {{{4
    * --------------------
    */
-  void _ClearExclusiveLocal(int procID) {}
+  void _ClearExclusiveLocal(int procID) {
+    _lm.ClearExclusive();
+  }
 
   /* _ProcessorID {{{4
    * ------------
    */
-  int _ProcessorID() { return 0; }
+  int _ProcessorID() { return _procID; }
 
   /* _SetEventRegister {{{4
    * -----------------
@@ -4955,7 +5109,8 @@ private:
    * ------------------------
    */
   void _ClearExclusiveByAddress(uint32_t addr, int exclProcID, int size) {
-    // TODO
+    auto lk = _gm.Lock();
+    _gm.ClearExclusiveByAddress(addr, exclProcID, size);
   }
 
   /* _IsAligned {{{4
@@ -7956,7 +8111,8 @@ private:
    * covering at least size bytes from the address.
    */
   void _MarkExclusiveGlobal(uint32_t addr, int processorID, int size) {
-    // TODO
+    auto lk = _gm.Lock();
+    _gm.MarkExclusive(addr, processorID, size);
   }
 
   /* _MarkExclusiveLocal {{{4
@@ -7965,7 +8121,7 @@ private:
    * covering at least size bytes from the address.
    */
   void _MarkExclusiveLocal(uint32_t addr, int processorID, int size) {
-    // TODO
+    _lm.MarkExclusive(addr, size);
   }
 
   /* _ExclusiveMonitorsPass {{{4
@@ -8005,7 +8161,8 @@ private:
    * address.
    */
   bool _IsExclusiveGlobal(uint32_t addr, int processorID, int size) {
-    return false; // TODO
+    auto lk = _gm.Lock();
+    return _gm.IsExclusive(addr, processorID, size);
   }
 
   /* _IsExclusiveLocal {{{4
@@ -8015,7 +8172,7 @@ private:
    * address.
    */
   bool _IsExclusiveLocal(uint32_t addr, int processorID, int size) {
-    return false; // TODO
+    return _lm.IsExclusive(addr, size);
   }
 
   /* _CountLeadingZeroBits {{{4
@@ -20569,6 +20726,12 @@ private:
 
     //EncodingSpecificOperations
     uint32_t addr = _GetR(n);
+
+    // IMPLEMENTATION SPECIFIC: Must hold GM lock for duration of
+    // ExclusiveMonitorsPass and _MemO, which must occur atomically. _MemO
+    // might also acquire a lock, but the mutex is recursive, so this is OK.
+    auto lk = _gm.Lock();
+
     if (_ExclusiveMonitorsPass(addr, 1)) {
       _MemO(addr, 1, GETBITS(_GetR(t), 0, 7));
       _SetR(d, _ZeroExtend(0, 32));
@@ -20586,6 +20749,12 @@ private:
 
     //EncodingSpecificOperations
     uint32_t addr = _GetR(n);
+
+    // IMPLEMENTATION SPECIFIC: Must hold GM lock for duration of
+    // ExclusiveMonitorsPass and _MemO, which must occur atomically. _MemO
+    // might also acquire a lock, but the mutex is recursive, so this is OK.
+    auto lk = _gm.Lock();
+
     if (_ExclusiveMonitorsPass(addr, 2)) {
       _MemO(addr, 2, GETBITS(_GetR(t), 0,15));
       _SetR(d, _ZeroExtend(0, 32));
@@ -20603,6 +20772,12 @@ private:
 
     //EncodingSpecificOperations
     uint32_t addr = _GetR(n);
+
+    // IMPLEMENTATION SPECIFIC: Must hold GM lock for duration of
+    // ExclusiveMonitorsPass and _MemO, which must occur atomically. _MemO
+    // might also acquire a lock, but the mutex is recursive, so this is OK.
+    auto lk = _gm.Lock();
+
     if (_ExclusiveMonitorsPass(addr, 4)) {
       _MemO(addr, 4, _GetR(t));
       _SetR(d, _ZeroExtend(0, 32));
@@ -20805,6 +20980,12 @@ private:
 
     //EncodingSpecificOperations
     uint32_t addr = _GetR(n) + imm32;
+
+    // IMPLEMENTATION SPECIFIC: Must hold GM lock for duration of
+    // ExclusiveMonitorsPass and _MemO, which must occur atomically. _MemO
+    // might also acquire a lock, but the mutex is recursive, so this is OK.
+    auto lk = _gm.Lock();
+
     if (_ExclusiveMonitorsPass(addr, 4)) {
       _MemA(addr, 4, _GetR(t));
       _SetR(d, _ZeroExtend(0, 32));
@@ -20822,6 +21003,12 @@ private:
 
     //EncodingSpecificOperations
     uint32_t addr = _GetR(n);
+
+    // IMPLEMENTATION SPECIFIC: Must hold GM lock for duration of
+    // ExclusiveMonitorsPass and _MemO, which must occur atomically. _MemO
+    // might also acquire a lock, but the mutex is recursive, so this is OK.
+    auto lk = _gm.Lock();
+
     if (_ExclusiveMonitorsPass(addr, 1)) {
       _MemA(addr, 1, GETBITS(_GetR(t), 0, 7));
       _SetR(d, _ZeroExtend(0, 32));
@@ -20839,6 +21026,12 @@ private:
 
     //EncodingSpecificOperations
     uint32_t addr = _GetR(n);
+
+    // IMPLEMENTATION SPECIFIC: Must hold GM lock for duration of
+    // ExclusiveMonitorsPass and _MemO, which must occur atomically. _MemO
+    // might also acquire a lock, but the mutex is recursive, so this is OK.
+    auto lk = _gm.Lock();
+
     if (_ExclusiveMonitorsPass(addr, 2)) {
       _MemA(addr, 2, GETBITS(_GetR(t), 0,15));
       _SetR(d, _ZeroExtend(0, 32));
@@ -21313,4 +21506,7 @@ private:
   Device         &_dev;
   SimulatorConfig _cfg;
   SysTickDevice   _sysTickS, _sysTickNS;
+  int             _procID;
+  LocalMonitor    _lm;
+  GlobalMonitor  &_gm;
 };
