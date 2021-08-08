@@ -50,9 +50,6 @@
 /* ARMv8-M Simulator                                                       {{{1
  * ============================================================================
  * TODO LIST:
- *  _SleepOnExit          - sorta done
- *  _WaitForInterrupt     - sorta done
- *  _WaitForEvent         - sorta done
  *  _SendEvent
  *  DMB, DSB, ISB         - effectively no-ops
  *  _SCS_UpdateStatusRegs
@@ -772,7 +769,7 @@ enum :uint32_t {
   EXIT_CAUSE__WFE             = BIT(1), // Last instruction was WFE
   EXIT_CAUSE__YIELD           = BIT(2), // Last instruction was YIELD
   EXIT_CAUSE__DBG             = BIT(3), // Last instruction was DBG. This is architecturally a NOP but is reported here for debugging use.
-  EXIT_CAUSE__SLEEP_ON_EXIT   = BIT(4), // TODO
+  EXIT_CAUSE__SLEEP_ON_EXIT   = BIT(4), // We just exited an exception and SLEEPONEXIT is enabled.
 };
 
 struct CpuState {
@@ -1102,6 +1099,12 @@ struct ISysTickDevice {
    * Sets a callback to be called on an unspecified thread whenever the tick
    * interrupt occurs. Both tickInt and the timer itself must be enabled. To
    * disable the callback after enabling it, pass nullptr.
+   *
+   * As a special case, when f is specified as nullptr, the method must only
+   * return once it is guaranteed that no call to the old callback function is
+   * currently taking place or will take place in the future. Changes from one
+   * non-nullptr value of f to another non-nullptr value of f do not require
+   * the implementation to offer this guarantee.
    */
   virtual void SysTickSetCallback(void (*f)(void *arg), void *arg) = 0;
 };
@@ -1220,8 +1223,15 @@ struct SysTickDevice_Real final :ISysTickDevice {
     _cb     = f;
     _cbArg  = arg;
 
-    if (!_cb)
+    if (!_cb) {
+      // If we are clearing the callback, ensure that _TCallback()
+      // has not already loaded old values of (_cb, _cbArg) and is about
+      // to call them. When SysTickSetCallback is called with a nullptr cb,
+      // it is guaranteed that no further calls to the old callback will
+      // occur once it returns.
+      std::unique_lock lk2{_mfull};
       return;
+    }
 
     auto [_, era] = _GetCurrentAndEra();
     _lastCbEra = era;
@@ -1290,7 +1300,16 @@ private:
 
   // Functions beginning _T are called on our callback thread.
   void _TCallback() {
-    std::unique_lock lk{_m};
+    // Additional lock for the entire _TCallback() call which we do not unlock
+    // during the cb() invocation. This allows us to ensure that a _TCallback()
+    // call is not in progress during a clearing of the callback function
+    // (SysTickSetCallback(nullptr, nullptr)). If SysTickSetCallback(nullptr, nullptr) is in progress
+    // when we start executing _TCallback(), it may have already acquired _m
+    // and will then wait forever for _mfull, so we need to use a deadlock
+    // avoidance algorithm here.
+    std::unique_lock lk2{_mfull, std::defer_lock};
+    std::unique_lock lk {_m,     std::defer_lock};
+    std::lock(lk2, lk);
     auto cb     = _cb;
     auto cbArg  = _cbArg;
 
@@ -1306,7 +1325,7 @@ private:
 
 private:
   // Mutex.
-  std::mutex  _m;
+  std::mutex  _m, _mfull;
 
   // Values updated by SetConfig.
   bool        _enable{}, _tickInt{};
@@ -1322,6 +1341,108 @@ private:
   DeadlineCaller  _dc;
   void          (*_cb)(void *arg){};
   void           *_cbArg{};
+};
+
+/* IntrBox {{{2
+ * =======
+ * An interrupt box is used to manage the delivery of external and NMI
+ * interrupts to the Simulator. SysTick is handled internally by the simulator.
+ *
+ * The Simulator itself is not thread-safe and access to it must be
+ * synchronized. This utility enables easy threaded delivery of external
+ * interrupts and NMI events to the Simulator and allows WFI to be implemented
+ * by a top-level loop.
+ *
+ * When using this class, it is essential that TriggerNMI and TriggerExtInt
+ * always be called using this class and the equivalent methods on the
+ * Simulator class not be called directly, as IntrBox needs to know about these
+ * events so it can cause its WaitForInterrupt method to return. Unlike the
+ * equivalent methods on the simulator class, these methods can be called from
+ * arbitrary threads.
+ *
+ * If you want to access the simulator from multiple threads, you can use the
+ * mutex accessed via the GetMutex() method to synchronize such access.
+ */
+template<typename Sim>
+struct IntrBox {
+  IntrBox(Sim &sim) :_sim(sim) {
+    int numSysTick = _sim.GetNumSysTick();
+    if (numSysTick)
+      _sim.GetSysTick(false).SysTickSetCallback([](void *arg) { static_cast<IntrBox*>(arg)->_TCallback(false); }, this);
+    if (numSysTick == 2)
+      _sim.GetSysTick(true).SysTickSetCallback([](void *arg) { static_cast<IntrBox*>(arg)->_TCallback(true); }, this);
+  }
+
+  ~IntrBox() {
+    std::unique_lock lk{_m};
+
+    int numSysTick = _sim.GetNumSysTick();
+    if (numSysTick)
+      _sim.GetSysTick(false).SysTickSetCallback(nullptr, nullptr);
+    if (numSysTick == 2)
+      _sim.GetSysTick(true).SysTickSetCallback(nullptr, nullptr);
+  }
+
+  // Waits for an interrupt condition. Returns immediately if the simulator
+  // already has an exception which it can (but for the fact that PRIMASK might
+  // be set) take immediately. Otherwise, returns whenever an exception next
+  // occurs, which could be SysTick, or a call to TriggerNMI or TriggerExtInt
+  // on this class.
+  void WaitForInterrupt() {
+    std::unique_lock lk{_m};
+
+    for (;;) {
+      if (_sim.IsExceptionPending(/*ignorePrimask=*/true))
+        return;
+
+      _cv.wait(lk);
+    }
+  }
+
+  // Inject an NMI. Unlike the equivalent method on Sim, can be called from any
+  // thread.
+  void TriggerNMI() {
+    std::unique_lock lk{_m};
+    _sim.TriggerNMI();
+    _XWakeupEvent();
+  }
+
+  // Inject an external interrupt. Unlike the equivalent method on Sim,
+  // can be called from any thread.
+  void TriggerExtInt(uint32_t intrNo, bool setNotClear=true) {
+    std::unique_lock lk{_m};
+    _sim.TriggerExtInt(intrNo, setNotClear);
+    if (setNotClear)
+      _XWakeupEvent();
+  }
+
+  // Trigger a generic WFI wakeup event. This is useful for waking up from WFI
+  // in the event of a non-interrupt wakeup event (e.g. reset, implementation
+  // defined wakeup events, etc.)
+  // May be called from any thread.
+  void WakeupEvent() {
+    std::unique_lock lk{_m};
+    _XWakeupEvent();
+  }
+
+  // Accesses a mutex which can be used to synchronize access to Simulator.
+  std::mutex &GetMutex() { return _m; }
+
+private:
+  void _XWakeupEvent() { // can be called on any thread, must hold lock
+    _cv.notify_all();
+  }
+
+  // Called on SysTick callback thread only.
+  void _TCallback(bool ns) {
+    std::unique_lock lk{_m};
+    _XWakeupEvent();
+  }
+
+private:
+  Sim &_sim;
+  std::mutex              _m;
+  std::condition_variable _cv;
 };
 
 /* Simulator {{{2
@@ -1483,6 +1604,33 @@ struct Simulator {
    * ----------
    */
   CpuNest &GetCpuNest() { return _n; }
+
+  /* GetNumSysTick {{{4
+   * -------------
+   * Returns the number of SysTick timers implemented. Return value is in range
+   * [0,2].
+   */
+  int GetNumSysTick() { return _HaveSysTick(); }
+
+  /* GetSysTick {{{4
+   * ----------
+   * Retrieves the specified SysTick device. If no SysTick is implemented, or
+   * only one SysTick is implemented and ns is true, the behaviour is
+   * undefined.
+   */
+  SysTickDevice &GetSysTick(bool ns) { return _SystResolve(ns); }
+
+  /* IsExceptionPending {{{4
+   * ------------------
+   * Determines if an exception is pending to be taken immediately. If
+   * ignorePrimask is true, the value of PRIMASK ignored; PRIMASK is treated as
+   * though it is zero. Other priority criteria are still checked. Setting
+   * ignorePrimask to true is useful for implementing the WFI wakeup criterion.
+   */
+  bool IsExceptionPending(bool ignorePrimask) {
+    auto [canTakeExc, _1, _2] = _PendingExceptionDetails(/*ignorePrimask=*/ignorePrimask);
+    return canTakeExc;
+  }
 
 private:
   /* Memory-Mapped Register Implementation {{{3
@@ -2795,6 +2943,7 @@ private:
    * ------------
    */
   SysTickDevice &_SystResolve(bool ns) {
+    assert(_HaveSysTick());
     assert(!ns || _HaveSysTick() == 2);
     return ns ? _sysTickNS : _sysTickS;
   }
@@ -5586,8 +5735,11 @@ private:
   // XXX: Unfortunately the ARM ISA manual exceptionally does not give a definition
   // for this function. Its definition has been estimated via reference to qemu's codebase.
   //
+  // XXX: This function has been augmented relative to the ARM ISA manual to add an argument
+  // `ignorePrimask`, which is useful for implementing WFI.
+  //
   // TODO: DHCSR.C_MASKINTS
-  std::tuple<bool, int, bool> _PendingExceptionDetails() {
+  std::tuple<bool, int, bool> _PendingExceptionDetails(bool ignorePrimask=false) {
     // XXX: Not specified exactly where SysTick should be checked, so we choose
     // to check it here like everything else.
     bool systIntrS  = (_HaveSysTick() && _SystGetIntrFlag(false, true));
@@ -5601,7 +5753,7 @@ private:
     // priority value if there is no pending interrupt so there is an interrupt
     // to be handled iff this is true.
     auto [pendingPrio, pendingExcNo, excIsSecure] = _PendingExceptionDetailsActual();
-    bool canTakePendingExc = (_ExecutionPriority() > pendingPrio);
+    bool canTakePendingExc = (_ExecutionPriority(ignorePrimask) > pendingPrio);
 
     if (!canTakePendingExc)
       return {false, 0, false};
@@ -6049,7 +6201,7 @@ private:
    * ------------
    */
   void _SleepOnExit() {
-    // TODO
+    // Handling this is the responsibility of the code calling into the Simulator.
     _s.exitCause |= EXIT_CAUSE__SLEEP_ON_EXIT;
   }
 
@@ -6057,7 +6209,7 @@ private:
    * -----------------
    */
   void _WaitForInterrupt() {
-    // TODO
+    // Handling this is the responsibility of the code calling into the Simulator.
     _s.exitCause |= EXIT_CAUSE__WFI;
   }
 
@@ -6065,7 +6217,7 @@ private:
    * -------------
    */
   void _WaitForEvent() {
-    // TODO
+    // Handling this is the responsibility of the code calling into the Simulator.
     _s.exitCause |= EXIT_CAUSE__WFE;
   }
 
@@ -7425,8 +7577,10 @@ private:
 
   /* _ExecutionPriority {{{4
    * ------------------
+   * XXX: This has been augmented relative to the ISA manual psuedocode to add
+   * an argument `ignorePrimask`, to assist in the implementation of WFI.
    */
-  int _ExecutionPriority() {
+  int _ExecutionPriority(bool ignorePrimask=false) {
     int boostedPri = _HighestPri();
 
     int priSNsPri = _RestrictedNSPri();
@@ -7452,15 +7606,17 @@ private:
       }
     }
 
-    if (_s.primaskNS & 1) {
-      if (!(InternalLoad32(REG_AIRCR_S) & REG_AIRCR__PRIS))
-        boostedPri = 0;
-      else if (boostedPri > priSNsPri)
-        boostedPri = priSNsPri;
-    }
+    if (!ignorePrimask) {
+      if (_s.primaskNS & 1) {
+        if (!(InternalLoad32(REG_AIRCR_S) & REG_AIRCR__PRIS))
+          boostedPri = 0;
+        else if (boostedPri > priSNsPri)
+          boostedPri = priSNsPri;
+      }
 
-    if (_s.primaskS & 1)
-      boostedPri = 0;
+      if (_s.primaskS & 1)
+        boostedPri = 0;
+    }
 
     if (_HaveMainExt()) {
       if (_s.faultmaskNS & 1) {
