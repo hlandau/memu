@@ -10,64 +10,24 @@
  */
 template<typename T>
 struct RouterDevice :IDevice {
-  int Load32(phys_t addr, uint32_t &v) override {
+  int Load(phys_t addr, int size, uint32_t flags, uint32_t &v) override {
     IDevice *dev = _Resolve(addr);
     if (!dev) {
-      printf("  B:L32 %x -> BusFault\n", addr);
+      printf("  B:L%2d %x -> BusFault\n", size, addr);
       return -1;
     }
 
-    return dev->Load32(addr, v);
+    return dev->Load(addr, size, flags, v);
   }
 
-  int Load16(phys_t addr, uint16_t &v) override {
+  int Store(phys_t addr, int size, uint32_t flags, uint32_t v) override {
     IDevice *dev = _Resolve(addr);
     if (!dev) {
-      printf("  B:L16 %x -> BusFault\n", addr);
+      printf("  B:S%2d %x <- 0x%x BusFault", size, addr, v);
       return -1;
     }
 
-    return dev->Load16(addr, v);
-  }
-
-  int Load8(phys_t addr, uint8_t &v) override {
-    IDevice *dev = _Resolve(addr);
-    if (!dev) {
-      printf("  B:L8  %x -> BusFault\n", addr);
-      return -1;
-    }
-
-    return dev->Load8(addr, v);
-  }
-
-  int Store32(phys_t addr, uint32_t v) override {
-    IDevice *dev = _Resolve(addr);
-    if (!dev) {
-      printf("  B:S32 %x <- 0x%x BusFault\n", addr, v);
-      return -1;
-    }
-
-    return dev->Store32(addr, v);
-  }
-
-  int Store16(phys_t addr, uint16_t v) override {
-    IDevice *dev = _Resolve(addr);
-    if (!dev) {
-      printf("  B:S16 %x <- 0x%x BusFault\n", addr, v);
-      return -1;
-    }
-
-    return dev->Store16(addr, v);
-  }
-
-  int Store8(phys_t addr, uint8_t v) override {
-    IDevice *dev = _Resolve(addr);
-    if (!dev) {
-      printf("  B:S8  %x <- 0x%x BusFault\n", addr, v);
-      return -1;
-    }
-
-    return dev->Store8(addr, v);
+    return dev->Store(addr, size, flags, v);
   }
 
 private:
@@ -110,61 +70,35 @@ struct RamDevice final :RangeDevice {
 
   uint8_t *GetBuf() { return _buf; }
 
-  int Load32(phys_t addr, uint32_t &v) override {
-    if (addr < _base || addr+3 >= _base + _len)
+  int Load(phys_t addr, int size, uint32_t flags, uint32_t &v) override {
+    if (addr < _base || addr + size - 1 >= _base + _len)
       return -1;
 
     addr -= _base;
-    v = *(uint32_t*)(_buf + addr);
-    TRACE("L32 0x%8x -> 0x%x\n", addr+_base, v);
+    switch (size) {
+      case 4: v = *(uint32_t*)(_buf + addr); break;
+      case 2: v = *(uint16_t*)(_buf + addr); break;
+      case 1: v = *(uint8_t *)(_buf + addr); break;
+      default: ASSERT(false);
+    }
+
+    TRACE("L%2d 0x%08x -> 0x%x\n", size, addr+_base, v);
     return 0;
   }
 
-  int Load16(phys_t addr, uint16_t &v) override {
-    if (addr < _base || addr+1 >= _base + _len)
+  int Store(phys_t addr, int size, uint32_t flags, uint32_t v) override {
+    if (addr < _base || addr + size - 1 >= _base + _len)
       return -1;
 
     addr -= _base;
-    v = *(uint16_t*)(_buf + addr);
-    return 0;
-  }
+    switch (size) {
+      case 4: *(uint32_t*)(_buf + addr) = v; break;
+      case 2: *(uint16_t*)(_buf + addr) = v; break;
+      case 1: *(uint8_t *)(_buf + addr) = v; break;
+      default: ASSERT(false);
+    }
 
-  int Load8(phys_t addr, uint8_t &v) override {
-    if (addr < _base || addr >= _base + _len)
-      return -1;
-
-    addr -= _base;
-    v = *(uint8_t*)(_buf + addr);
-    return 0;
-  }
-
-  int Store32(phys_t addr, uint32_t v) override {
-    if (addr < _base || addr+3 >= _base + _len)
-      return -1;
-
-    TRACE("S32 0x%8x <- 0x%x\n", addr, v);
-    addr -= _base;
-    *(uint32_t*)(_buf + addr) = v;
-    return 0;
-  }
-
-  int Store16(phys_t addr, uint16_t v) override {
-    if (addr < _base || addr+1 >= _base + _len)
-      return -1;
-
-    TRACE("S16 0x%8x <- 0x%x\n", addr, v);
-    addr -= _base;
-    *(uint16_t*)(_buf + addr) = v;
-    return 0;
-  }
-
-  int Store8(phys_t addr, uint8_t v) override {
-    if (addr < _base || addr >= _base + _len)
-      return -1;
-
-    TRACE("S8 0x%8x <- 0x%x\n", addr, v);
-    addr -= _base;
-    *(uint8_t*)(_buf + addr) = v;
+    TRACE("S%2d 0x%08x <- 0x%x\n", size, addr+_base, v);
     return 0;
   }
 
@@ -178,11 +112,11 @@ private:
 struct UartDevice final :RangeDevice {
   UartDevice(phys_t base) :RangeDevice(base, 0x1000) {}
 
-  int Load32(phys_t addr, uint32_t &v) {
+  int Load(phys_t addr, int size, uint32_t flags, uint32_t &v) override {
     return 0;
   }
 
-  int Store32(phys_t addr, uint32_t v) {
+  int Store(phys_t addr, int size, uint32_t flags, uint32_t v) override {
     for (int i=0; i<4; ++i, v >>= 8)
       if (auto vv = v & 0xFF) {
         if (vv == '\n')

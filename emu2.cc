@@ -902,13 +902,63 @@ enum :uint32_t {
   DEBUG_PIN__SPNIDEN    = BIT(3),
 };
 
+enum :uint32_t {
+  LS_FLAG__ATYPE__MASK    = BITS(0,2),
+    LS_FLAG__ATYPE__NORMAL   = AccType_NORMAL,
+    LS_FLAG__ATYPE__ORDERED  = AccType_ORDERED,
+    LS_FLAG__ATYPE__STACK    = AccType_STACK,
+    LS_FLAG__ATYPE__LAZYFP   = AccType_LAZYFP,
+    LS_FLAG__ATYPE__IFETCH   = AccType_IFETCH,
+    LS_FLAG__ATYPE__VECTABLE = AccType_VECTABLE,
+  LS_FLAG__PRIV           = BIT (3),
+  LS_FLAG__NS             = BIT (4),
+  LS_FLAG__DEVICE         = BIT (5),
+  LS_FLAG__DEVTYPE__MASK  = BITS(6,7),
+    LS_FLAG__DEVTYPE__GRE     = DeviceType_GRE,
+    LS_FLAG__DEVTYPE__nGRE    = DeviceType_nGRE,
+    LS_FLAG__DEVTYPE__nGnRE   = DeviceType_nGnRE,
+    LS_FLAG__DEVTYPE__nGnRnE  = DeviceType_nGnRnE,
+  LS_FLAG__IATTR__MASK    = BITS(8,9),
+    LS_FLAG__IATTR__NC        = 0,
+    LS_FLAG__IATTR__WB        = 1,
+    LS_FLAG__IATTR__WT        = 2,
+  LS_FLAG__OATTR__MASK    = BITS(10,11),
+    LS_FLAG__OATTR__NC        = 0,
+    LS_FLAG__OATTR__WB        = 1,
+    LS_FLAG__OATTR__WT        = 2,
+  LS_FLAG__IHINT__MASK    = BITS(12,13),
+    LS_FLAG__IHINT__NO_ALLOC  = 0,
+    LS_FLAG__IHINT__WALLOC    = 1,
+    LS_FLAG__IHINT__RALLOC    = 2,
+    LS_FLAG__IHINT__RWALLOC   = 3,
+  LS_FLAG__OHINT__MASK    = BITS(14,15),
+    LS_FLAG__OHINT__NO_ALLOC  = 0,
+    LS_FLAG__OHINT__WALLOC    = 1,
+    LS_FLAG__OHINT__RALLOC    = 2,
+    LS_FLAG__OHINT__RWALLOC   = 3,
+  LS_FLAG__ITRANSIENT     = BIT(16),
+  LS_FLAG__OTRANSIENT     = BIT(17),
+  LS_FLAG__SHAREABLE      = BIT(18),
+  LS_FLAG__OSHAREABLE     = BIT(19),
+  LS_FLAG__WRITE          = BIT(20), // Implied by whether Load*() or Store*() is called, but included anyway
+
+  LS_FLAG__DEFAULT        = 0,
+};
+
+static inline uint32_t MaskBySize(uint32_t v, int size) {
+  return v & BITS(0, 8*size-1);
+}
+
 struct IDevice {
-  virtual int Load32(phys_t addr, uint32_t &v) { return -1; }
-  virtual int Load16(phys_t addr, uint16_t &v) { return -1; }
-  virtual int Load8(phys_t addr, uint8_t &v) { return -1; }
-  virtual int Store32(phys_t addr, uint32_t v) { return -1; }
-  virtual int Store16(phys_t addr, uint16_t v) { return -1; }
-  virtual int Store8(phys_t addr, uint8_t v) { return -1; }
+  // Load/store. addr is a physical address. is a size must be in {1,2,4} and
+  // specifies the size of the load/store in bytes. flags are LS_FLAG__*.
+  // When calling Load, if size is not 4, the implementation must ensure that
+  // the bits [size*8:31] are zero. When calling Store, if size is not 4, the
+  // caller must ensure that bits [size*8:31] are zero. Failure to meet either
+  // of these requirements results in undefined behaviour. Return nonzero on
+  // error/BusFault.
+  virtual int Load(phys_t addr, int size, uint32_t flags, uint32_t &v) = 0;
+  virtual int Store(phys_t addr, int size, uint32_t flags, uint32_t v) = 0;
 
   virtual std::tuple<bool, bool, bool, uint8_t, bool> IDAUCheck(uint32_t addr) {
     return {false, true, true, 0, false};
@@ -1578,12 +1628,7 @@ struct Simulator {
     ad.accAttrs.isPriv  = true;
     ad.accAttrs.accType = AccType_NORMAL;
 
-    if (size == 4)
-      return _Load32(ad, v);
-    else if (size == 2)
-      return _Load16(ad, v);
-    else
-      return _Load8 (ad, v);
+    return _Load(ad, size, v);
   }
 
   /* DebugStore {{{4
@@ -1603,12 +1648,7 @@ struct Simulator {
     ad.accAttrs.isPriv  = true;
     ad.accAttrs.accType = AccType_NORMAL;
 
-    if (size == 4)
-      return _Store32(ad, v);
-    else if (size == 2)
-      return _Store16(ad, v);
-    else
-      return _Store8 (ad, v);
+    return _Store(ad, size, v);
   }
 
   /* GetCpuState {{{4
@@ -4052,116 +4092,84 @@ private:
    */
   int _ThisInstrLength() { return _s.thisInstrLength; }
 
-  /* _Load8 {{{4
+  /* _CalcDescriptorFlags {{{4
+   * --------------------
+   */
+  static inline uint32_t _CalcDescriptorFlags(AddressDescriptor memAddrDesc) {
+    uint32_t flags = 0;
+
+    if (memAddrDesc.accAttrs.isWrite)
+      flags |= LS_FLAG__WRITE;
+    if (memAddrDesc.accAttrs.isPriv)
+      flags |= LS_FLAG__PRIV;
+    flags |= PUTBITSM(memAddrDesc.accAttrs.accType, LS_FLAG__ATYPE__MASK);
+    if (memAddrDesc.memAttrs.memType == MemType_Device)
+      flags |= LS_FLAG__DEVICE;
+    flags |= PUTBITSM(memAddrDesc.memAttrs.device, LS_FLAG__DEVTYPE__MASK);
+    flags |= PUTBITSM(memAddrDesc.memAttrs.innerAttrs, LS_FLAG__IATTR__MASK);
+    flags |= PUTBITSM(memAddrDesc.memAttrs.outerAttrs, LS_FLAG__OATTR__MASK);
+    flags |= PUTBITSM(memAddrDesc.memAttrs.innerHints, LS_FLAG__IHINT__MASK);
+    flags |= PUTBITSM(memAddrDesc.memAttrs.outerHints, LS_FLAG__OHINT__MASK);
+    if (memAddrDesc.memAttrs.ns)
+      flags |= LS_FLAG__NS;
+    if (memAddrDesc.memAttrs.innerTransient)
+      flags |= LS_FLAG__ITRANSIENT;
+    if (memAddrDesc.memAttrs.outerTransient)
+      flags |= LS_FLAG__OTRANSIENT;
+    if (memAddrDesc.memAttrs.shareable)
+      flags |= LS_FLAG__SHAREABLE;
+    if (memAddrDesc.memAttrs.outerShareable)
+      flags |= LS_FLAG__OSHAREABLE;
+
+    return flags;
+  }
+
+  /* _Load {{{4
+   * -----
+   */
+  int _Load(AddressDescriptor memAddrDesc, int size, uint32_t &v) {
+    if (memAddrDesc.physAddr >= 0xE000'0000 && memAddrDesc.physAddr < 0xE010'0000) {
+      if (size != 4)
+        // Non-32 bit accesses to SCS are UNPREDICTABLE; generate BusFault.
+        return 1;
+
+      return _NestLoad32(memAddrDesc.physAddr, memAddrDesc.accAttrs.isPriv, !memAddrDesc.memAttrs.ns, v);
+    }
+
+    return _dev.Load(memAddrDesc.physAddr, size, _CalcDescriptorFlags(memAddrDesc), v);
+  }
+
+  /* _Store {{{4
    * ------
    */
-  int _Load8(AddressDescriptor memAddrDesc, uint8_t &v) {
-    if (memAddrDesc.physAddr >= 0xE000'0000 && memAddrDesc.physAddr < 0xE010'0000)
-      // Non-32 bit accesses to SCS are UNPREDICTABLE; generate BusFault.
-      return 1;
+  int _Store(AddressDescriptor memAddrDesc, int size, uint32_t v) {
+    if (memAddrDesc.physAddr >= 0xE000'0000 && memAddrDesc.physAddr < 0xE010'0000) {
+      if (size != 4)
+        // Non-32 bit accesses to SCS are UNPREDICTABLE; generate BusFault.
+        return 1;
 
-    return _dev.Load8(memAddrDesc.physAddr, v);
-  }
-
-  /* _Load16 {{{4
-   * -------
-   */
-  int _Load16(AddressDescriptor memAddrDesc, uint16_t &v) {
-    if (memAddrDesc.physAddr >= 0xE000'0000 && memAddrDesc.physAddr < 0xE010'0000)
-      // Non-32 bit accesses to SCS are UNPREDICTABLE; generate BusFault.
-      return 1;
-
-    return _dev.Load16(memAddrDesc.physAddr, v);
-  }
-
-  /* _Load32 {{{4
-   * -------
-   */
-  int _Load32(AddressDescriptor memAddrDesc, uint32_t &v) {
-    if (memAddrDesc.physAddr >= 0xE000'0000 && memAddrDesc.physAddr < 0xE010'0000)
-      return _NestLoad32(memAddrDesc.physAddr, memAddrDesc.accAttrs.isPriv, !memAddrDesc.memAttrs.ns, v);
-
-    return _dev.Load32(memAddrDesc.physAddr, v);
-  }
-
-  /* _Store8 {{{4
-   * -------
-   */
-  int _Store8(AddressDescriptor memAddrDesc, uint8_t v) {
-    if (memAddrDesc.physAddr >= 0xE000'0000 && memAddrDesc.physAddr < 0xE010'0000)
-      // Non-32 bit accesses to SCS are UNPREDICTABLE; generate BusFault.
-      return 1;
-
-    return _dev.Store8(memAddrDesc.physAddr, v);
-  }
-
-  /* _Store16 {{{4
-   * --------
-   */
-  int _Store16(AddressDescriptor memAddrDesc, uint16_t v) {
-    if (memAddrDesc.physAddr >= 0xE000'0000 && memAddrDesc.physAddr < 0xE010'0000)
-      // Non-32 bit accesses to SCS are UNPREDICTABLE; generate BusFault.
-      return 1;
-
-    return _dev.Store16(memAddrDesc.physAddr, v);
-  }
-
-  /* _Store32 {{{4
-   * --------
-   */
-  int _Store32(AddressDescriptor memAddrDesc, uint32_t v) {
-    if (memAddrDesc.physAddr >= 0xE000'0000 && memAddrDesc.physAddr < 0xE010'0000)
       return _NestStore32(memAddrDesc.physAddr, memAddrDesc.accAttrs.isPriv, !memAddrDesc.memAttrs.ns, v);
+    }
 
-    return _dev.Store32(memAddrDesc.physAddr, v);
+    return _dev.Store(memAddrDesc.physAddr, size, _CalcDescriptorFlags(memAddrDesc), v);
   }
 
   /* _GetMem {{{4
    * -------
    */
   std::tuple<bool,uint32_t> _GetMem(AddressDescriptor memAddrDesc, int size) {
-    switch (size) {
-      case 1: {
-        uint8_t v;
-        if (_Load8(memAddrDesc, v))
-          return {true,0};
-        else
-          return {false,v};
-      }
-      case 2: {
-        uint16_t v;
-        if (_Load16(memAddrDesc, v))
-          return {true,0};
-        else
-          return {false,v};
-      }
-      case 4: {
-        uint32_t v;
-        if (_Load32(memAddrDesc, v))
-          return {true,0};
-        else
-          return {false,v};
-      }
-      default:
-        assert(false);
-        break;
-    }
+    uint32_t v;
+    if (_Load(memAddrDesc, size, v))
+      return {true, 0};
+    else
+      return {false, v};
   }
 
   /* _SetMem {{{4
    * -------
    */
   bool _SetMem(AddressDescriptor memAddrDesc, int size, uint32_t v) {
-    switch (size) {
-      case 1:
-        return !!_Store8(memAddrDesc, (uint8_t)v);
-      case 2:
-        return !!_Store16(memAddrDesc, (uint16_t)v);
-      case 4:
-        return !!_Store32(memAddrDesc, (uint32_t)v);
-      default:
-        assert(false);
-    }
+    return !!_Store(memAddrDesc, size, MaskBySize(v, size));
   }
 
   /* _HaveHaltingDebug {{{4
