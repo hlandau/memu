@@ -51,7 +51,6 @@
  * ============================================================================
  * TODO LIST:
  *  _SendEvent
- *  DMB, DSB, ISB         - effectively no-ops
  *  _SCS_UpdateStatusRegs
  *
  *  Add missing TRACEIs
@@ -3253,21 +3252,27 @@ private:
    * ----------------------------------
    */
   void _InstructionSynchronizationBarrier(uint8_t option) {
-    // No-op.
+    // See _DataMemoryBarrier.
+    std::atomic_thread_fence(std::memory_order_seq_cst);
   }
 
   /* _DataSynchronizationBarrier {{{4
    * ---------------------------
    */
   void _DataSynchronizationBarrier(uint8_t option) {
-    // No-op.
+    // See _DataMemoryBarrier.
+    std::atomic_thread_fence(std::memory_order_seq_cst);
   }
 
   /* _DataMemoryBarrier {{{4
    * ------------------
    */
   void _DataMemoryBarrier(uint8_t option) {
-    // No-op.
+    // Emulated program has requested a data memory barrier. Though it's very
+    // unlikely with the complexity of the simulator that we will need to
+    // perform such a barrier on the host it's not conceptually impossible, so
+    // we execute a barrier just in case.
+    std::atomic_thread_fence(std::memory_order_seq_cst);
   }
 
   /* _HaveFPB {{{4
