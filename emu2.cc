@@ -66,13 +66,14 @@
  *
  *  SCR.SEVONPEND: Exceptions entering the pending state should cause SetEventRegister
  *  Check NVIC usage of _excEnable/_excPending/_excActive; should we use _SetPending etc.?
+ *  DHCSR.C_MASKINTS
  */
 
 /* Simulator Compile-Time Configuration {{{2
  * ====================================
  */
-#define NUM_MPU_REGION_S    8
-#define NUM_MPU_REGION_NS   8
+#define NUM_MPU_REGION_S    16
+#define NUM_MPU_REGION_NS   16
 #define NUM_SAU_REGION      8
 #define NUM_DWT_COMP        4
 #define NUM_FPB_COMP        4
@@ -929,13 +930,22 @@ struct IDevice {
 struct SimpleSimulatorConfig {
   bool HaveMainExt() const { return this->main; }
   bool HaveSecurityExt() const { return this->security; }
-
-  int MaxExc() const { return this->maxExc; }
-
-  uint32_t InitialVtor() const { return this->initialVtor; }
-
-  int IsaVersion() const { return this->isaVersion; }
+  bool HaveFPB() const { return this->fpb; }
+  bool HaveDWT() const { return this->dwt; }
+  bool HaveITM() const { return this->itm; }
+  bool HaveFPExt() const { return this->fpExt; }
   int SysTick() const { return this->sysTick; }
+  bool HaveHaltingDebug() const { return this->haltingDebug; }
+  bool HaveDSPExt() const { return this->dspExt; }
+  uint8_t NumMpuRegionS() const { return this->numMpuRegionS; }
+  uint8_t NumMpuRegionNS() const { return this->numMpuRegionNS; }
+  uint8_t NumSauRegion() const { return this->numSauRegion; }
+  int MaxExc() const { return this->maxExc; }
+  uint32_t InitialVtor() const { return this->initialVtor; }
+  int IsaVersion() const { return this->isaVersion; }
+  uint64_t SystIntFreq() const { return this->systIntFreq; }
+  uint64_t SystExtFreq() const { return this->systExtFreq; }
+  uint8_t PriorityBits() const { return this->priorityBits; }
 
   // -----------------------------------------
   bool      main            = true;         // Whether the simulated CPU supports the Main extension.
@@ -944,16 +954,19 @@ struct SimpleSimulatorConfig {
   bool      dwt             = true;         // Whether the simulated CPU supports the DWT extension.
   bool      itm             = true;         // Whether the simulated CPU supports the ITM extension.
   bool      fpExt           = true;         // Whether the simulated CPU supports the floating point extension.
-  int       sysTick         = 2;            // Whether the simulated CPU supports the SysTick feature.
+  int       sysTick         = 2;            // Whether the simulated CPU supports the SysTick feature. 1=Single, 2=Dual
   bool      haltingDebug    = true;         // Whether the simulated CPU supports the halting debug feature.
-  bool      dsp             = false;        // Whether the simulated CPU supports the DSP extension.
-  uint32_t  mpuRegions      = 8;            // Number of MPU regions supported. 0 for no MPU.
-  uint32_t  cpuid           = 0xFFFF'FFFF;  // Specifies the value of the CPUID register.
+  bool      dspExt          = false;        // Whether the simulated CPU supports the DSP extension.
+  uint8_t   numMpuRegionS   = NUM_MPU_REGION_S;   // Number of MPU regions supported. 0 for no MPU.
+  uint8_t   numMpuRegionNS  = NUM_MPU_REGION_NS;  // May not exceed NUM_MPU_REGION_{S,NS}.
+  uint8_t   numSauRegion    = NUM_SAU_REGION;     // May not exceed NUM_SAU_REGION. 0 for no SAU.
+  //uint32_t  cpuid           = 0xFFFF'FFFF;// Specifies the value of the CPUID register.
   int       maxExc          = NUM_EXC-1;    // Maximum number of exceptions supported.
   uint32_t  initialVtor     = 0;            // Initial VTOR value
   int       isaVersion      = 8;            // ISA version (7 or 8)
   uint64_t  systIntFreq     = 100'000'000;  // SysTick frequency when CLKSOURCE=1 (PE).
   uint64_t  systExtFreq     = 0;            // SysTick frequency when CLKSOURCE=0 (external). 0 to disable.
+  uint8_t   priorityBits    = 8;            // Number of priority bits [3, 8]. Ignored for !main.
 };
 
 /* DeadlineCaller {{{2
@@ -1464,6 +1477,10 @@ struct Simulator {
         ASSERT(cfg.SysTick() == 1);
     }
 
+    ASSERT(cfg.NumMpuRegionS() <= NUM_MPU_REGION_S);
+    ASSERT(cfg.NumMpuRegionNS() <= NUM_MPU_REGION_NS);
+    ASSERT(cfg.NumSauRegion() <= NUM_SAU_REGION);
+
     _ColdReset();
   }
 
@@ -1623,12 +1640,13 @@ struct Simulator {
   /* IsExceptionPending {{{4
    * ------------------
    * Determines if an exception is pending to be taken immediately. If
-   * ignorePrimask is true, the value of PRIMASK ignored; PRIMASK is treated as
-   * though it is zero. Other priority criteria are still checked. Setting
-   * ignorePrimask to true is useful for implementing the WFI wakeup criterion.
+   * ignorePrimask is true, the value of PRIMASK is ignored; that is, PRIMASK
+   * is treated as though it is zero. Other priority criteria are still
+   * checked. Setting ignorePrimask to true is useful for implementing the WFI
+   * wakeup criterion.
    */
   bool IsExceptionPending(bool ignorePrimask) {
-    auto [canTakeExc, _1, _2] = _PendingExceptionDetails(/*ignorePrimask=*/ignorePrimask);
+    auto [canTakeExc, _1, _2] = _PendingExceptionDetails(ignorePrimask);
     return canTakeExc;
   }
 
@@ -1704,12 +1722,26 @@ private:
     return _HaveFPB() && (nat != NAT_SW || IMPL_DEF_BASELINE_NO_SW_ACCESS_FPB || _HaveMainExt());
   }
 
+  /* _NestPrioBits {{{4
+   * -------------
+   */
+  uint8_t _NestPrioBits() {
+    uint8_t numBits;
+
+    if (_HaveMainExt()) {
+      numBits = _cfg.PriorityBits();
+      ASSERT(numBits >= 3);
+    } else
+      numBits = 2;
+
+    return numBits;
+  }
+
   /* _NestMaskPrio {{{4
    * -------------
    */
   uint8_t _NestMaskPrio(uint8_t m) {
-    // TODO
-    return m;
+    return m & BITS((8-_NestPrioBits()),7);
   }
 
   /* _NestAccessClassify {{{4
@@ -1881,8 +1913,8 @@ private:
 
       case REG_NSACR:         return _n.nsacr;
 
-      case REG_MPU_TYPE_S:    return PUTBITSM(NUM_MPU_REGION_S,  REG_MPU_TYPE__DREGION);
-      case REG_MPU_TYPE_NS:   return PUTBITSM(NUM_MPU_REGION_NS, REG_MPU_TYPE__DREGION);
+      case REG_MPU_TYPE_S:    return PUTBITSM(_NumMpuRegionS(),  REG_MPU_TYPE__DREGION);
+      case REG_MPU_TYPE_NS:   return PUTBITSM(_NumMpuRegionNS(), REG_MPU_TYPE__DREGION);
 
       case REG_MPU_CTRL_S:    return _n.mpuCtrlS;
       case REG_MPU_CTRL_NS:   return _n.mpuCtrlNS;
@@ -1895,29 +1927,29 @@ private:
       case REG_MPU_MAIR1_S:   return _n.mpuMair1S;
       case REG_MPU_MAIR1_NS:  return _n.mpuMair1NS;
 
-      case REG_MPU_RBAR_S:    return _n.mpuRnrS  < NUM_MPU_REGION_S  ? _n.mpuRbarS [_n.mpuRnrS ] : 0;
-      case REG_MPU_RBAR_A1_S: return _n.mpuRnrS+1< NUM_MPU_REGION_S  ? _n.mpuRbarS [_n.mpuRnrS+1] : 0;
-      case REG_MPU_RBAR_A2_S: return _n.mpuRnrS+2< NUM_MPU_REGION_S  ? _n.mpuRbarS [_n.mpuRnrS+2] : 0;
-      case REG_MPU_RBAR_A3_S: return _n.mpuRnrS+3< NUM_MPU_REGION_S  ? _n.mpuRbarS [_n.mpuRnrS+3] : 0;
-      case REG_MPU_RBAR_NS:   return _n.mpuRnrNS < NUM_MPU_REGION_NS ? _n.mpuRbarNS[_n.mpuRnrNS ] : 0;
-      case REG_MPU_RBAR_A1_NS:return _n.mpuRnrNS+1<NUM_MPU_REGION_NS ? _n.mpuRbarNS[_n.mpuRnrNS+1] : 0;
-      case REG_MPU_RBAR_A2_NS:return _n.mpuRnrNS+2<NUM_MPU_REGION_NS ? _n.mpuRbarNS[_n.mpuRnrNS+2] : 0;
-      case REG_MPU_RBAR_A3_NS:return _n.mpuRnrNS+3<NUM_MPU_REGION_NS ? _n.mpuRbarNS[_n.mpuRnrNS+3] : 0;
+      case REG_MPU_RBAR_S:    return _n.mpuRnrS  < _NumMpuRegionS()  ? _n.mpuRbarS [_n.mpuRnrS ] : 0;
+      case REG_MPU_RBAR_A1_S: return _n.mpuRnrS+1< _NumMpuRegionS()  ? _n.mpuRbarS [_n.mpuRnrS+1] : 0;
+      case REG_MPU_RBAR_A2_S: return _n.mpuRnrS+2< _NumMpuRegionS()  ? _n.mpuRbarS [_n.mpuRnrS+2] : 0;
+      case REG_MPU_RBAR_A3_S: return _n.mpuRnrS+3< _NumMpuRegionS()  ? _n.mpuRbarS [_n.mpuRnrS+3] : 0;
+      case REG_MPU_RBAR_NS:   return _n.mpuRnrNS < _NumMpuRegionNS() ? _n.mpuRbarNS[_n.mpuRnrNS ] : 0;
+      case REG_MPU_RBAR_A1_NS:return _n.mpuRnrNS+1<_NumMpuRegionNS() ? _n.mpuRbarNS[_n.mpuRnrNS+1] : 0;
+      case REG_MPU_RBAR_A2_NS:return _n.mpuRnrNS+2<_NumMpuRegionNS() ? _n.mpuRbarNS[_n.mpuRnrNS+2] : 0;
+      case REG_MPU_RBAR_A3_NS:return _n.mpuRnrNS+3<_NumMpuRegionNS() ? _n.mpuRbarNS[_n.mpuRnrNS+3] : 0;
 
-      case REG_MPU_RLAR_S:    return _n.mpuRnrS  < NUM_MPU_REGION_S  ? _n.mpuRlarS [_n.mpuRnrS ] : 0;
-      case REG_MPU_RLAR_A1_S: return _n.mpuRnrS+1< NUM_MPU_REGION_S  ? _n.mpuRlarS [_n.mpuRnrS+1] : 0;
-      case REG_MPU_RLAR_A2_S: return _n.mpuRnrS+2< NUM_MPU_REGION_S  ? _n.mpuRlarS [_n.mpuRnrS+2] : 0;
-      case REG_MPU_RLAR_A3_S: return _n.mpuRnrS+3< NUM_MPU_REGION_S  ? _n.mpuRlarS [_n.mpuRnrS+3] : 0;
-      case REG_MPU_RLAR_NS:   return _n.mpuRnrNS < NUM_MPU_REGION_NS ? _n.mpuRlarNS[_n.mpuRnrNS] : 0;
-      case REG_MPU_RLAR_A1_NS:return _n.mpuRnrNS+1< NUM_MPU_REGION_NS ? _n.mpuRlarNS[_n.mpuRnrNS+1] : 0;
-      case REG_MPU_RLAR_A2_NS:return _n.mpuRnrNS+2< NUM_MPU_REGION_NS ? _n.mpuRlarNS[_n.mpuRnrNS+2] : 0;
-      case REG_MPU_RLAR_A3_NS:return _n.mpuRnrNS+3< NUM_MPU_REGION_NS ? _n.mpuRlarNS[_n.mpuRnrNS+3] : 0;
+      case REG_MPU_RLAR_S:    return _n.mpuRnrS  < _NumMpuRegionS()  ? _n.mpuRlarS [_n.mpuRnrS ] : 0;
+      case REG_MPU_RLAR_A1_S: return _n.mpuRnrS+1< _NumMpuRegionS()  ? _n.mpuRlarS [_n.mpuRnrS+1] : 0;
+      case REG_MPU_RLAR_A2_S: return _n.mpuRnrS+2< _NumMpuRegionS()  ? _n.mpuRlarS [_n.mpuRnrS+2] : 0;
+      case REG_MPU_RLAR_A3_S: return _n.mpuRnrS+3< _NumMpuRegionS()  ? _n.mpuRlarS [_n.mpuRnrS+3] : 0;
+      case REG_MPU_RLAR_NS:   return _n.mpuRnrNS < _NumMpuRegionNS() ? _n.mpuRlarNS[_n.mpuRnrNS] : 0;
+      case REG_MPU_RLAR_A1_NS:return _n.mpuRnrNS+1< _NumMpuRegionNS() ? _n.mpuRlarNS[_n.mpuRnrNS+1] : 0;
+      case REG_MPU_RLAR_A2_NS:return _n.mpuRnrNS+2< _NumMpuRegionNS() ? _n.mpuRlarNS[_n.mpuRnrNS+2] : 0;
+      case REG_MPU_RLAR_A3_NS:return _n.mpuRnrNS+3< _NumMpuRegionNS() ? _n.mpuRlarNS[_n.mpuRnrNS+3] : 0;
 
       case REG_SAU_CTRL:      return _n.sauCtrl;
-      case REG_SAU_TYPE:      return PUTBITSM(NUM_SAU_REGION, REG_SAU_TYPE__SREGION);
+      case REG_SAU_TYPE:      return PUTBITSM(_NumSauRegion(), REG_SAU_TYPE__SREGION);
       case REG_SAU_RNR:       return _n.sauRnr;
-      case REG_SAU_RBAR:      return _n.sauRnr < NUM_SAU_REGION ? _n.sauRbar[_n.sauRnr] : 0;
-      case REG_SAU_RLAR:      return _n.sauRnr < NUM_SAU_REGION ? _n.sauRlar[_n.sauRnr] : 0;
+      case REG_SAU_RBAR:      return _n.sauRnr < _NumSauRegion() ? _n.sauRbar[_n.sauRnr] : 0;
+      case REG_SAU_RLAR:      return _n.sauRnr < _NumSauRegion() ? _n.sauRlar[_n.sauRnr] : 0;
 
       case REG_SFSR_S:        return _HaveMainExt() ? _n.sfsr : 0;
       case REG_SFAR_S:        return _HaveMainExt() ? _n.sfar : 0;
@@ -2540,82 +2572,82 @@ private:
         break;
 
       case REG_MPU_RBAR_S:
-        if (_n.mpuRnrS < NUM_MPU_REGION_S)
+        if (_n.mpuRnrS < _NumMpuRegionS())
           _n.mpuRbarS[_n.mpuRnrS] = v;
         break;
 
       case REG_MPU_RBAR_A1_S:
-        if (_n.mpuRnrS+1 < NUM_MPU_REGION_S)
+        if (_n.mpuRnrS+1 < _NumMpuRegionS())
           _n.mpuRbarS[_n.mpuRnrS+1] = v;
         break;
 
       case REG_MPU_RBAR_A2_S:
-        if (_n.mpuRnrS+2 < NUM_MPU_REGION_S)
+        if (_n.mpuRnrS+2 < _NumMpuRegionS())
           _n.mpuRbarS[_n.mpuRnrS+2] = v;
         break;
 
       case REG_MPU_RBAR_A3_S:
-        if (_n.mpuRnrS+3 < NUM_MPU_REGION_S)
+        if (_n.mpuRnrS+3 < _NumMpuRegionS())
           _n.mpuRbarS[_n.mpuRnrS+3] = v;
         break;
 
       case REG_MPU_RBAR_NS:
-        if (_n.mpuRnrNS < NUM_MPU_REGION_NS)
+        if (_n.mpuRnrNS < _NumMpuRegionNS())
           _n.mpuRbarNS[_n.mpuRnrNS] = v;
         break;
 
       case REG_MPU_RBAR_A1_NS:
-        if (_n.mpuRnrNS+1 < NUM_MPU_REGION_NS)
+        if (_n.mpuRnrNS+1 < _NumMpuRegionNS())
           _n.mpuRbarNS[_n.mpuRnrNS+1] = v;
         break;
 
       case REG_MPU_RBAR_A2_NS:
-        if (_n.mpuRnrNS+2 < NUM_MPU_REGION_NS)
+        if (_n.mpuRnrNS+2 < _NumMpuRegionNS())
           _n.mpuRbarNS[_n.mpuRnrNS+2] = v;
         break;
 
       case REG_MPU_RBAR_A3_NS:
-        if (_n.mpuRnrNS+3 < NUM_MPU_REGION_NS)
+        if (_n.mpuRnrNS+3 < _NumMpuRegionNS())
           _n.mpuRbarNS[_n.mpuRnrNS+3] = v;
         break;
 
       case REG_MPU_RLAR_S:
-        if (_n.mpuRnrS < NUM_MPU_REGION_S)
+        if (_n.mpuRnrS < _NumMpuRegionS())
           _n.mpuRlarS[_n.mpuRnrS] = v;
         break;
 
       case REG_MPU_RLAR_A1_S:
-        if (_n.mpuRnrS+1 < NUM_MPU_REGION_S)
+        if (_n.mpuRnrS+1 < _NumMpuRegionS())
           _n.mpuRlarS[_n.mpuRnrS+1] = v;
         break;
 
       case REG_MPU_RLAR_A2_S:
-        if (_n.mpuRnrS+2 < NUM_MPU_REGION_S)
+        if (_n.mpuRnrS+2 < _NumMpuRegionS())
           _n.mpuRlarS[_n.mpuRnrS+2] = v;
         break;
 
       case REG_MPU_RLAR_A3_S:
-        if (_n.mpuRnrS+3 < NUM_MPU_REGION_S)
+        if (_n.mpuRnrS+3 < _NumMpuRegionS())
           _n.mpuRlarS[_n.mpuRnrS+3] = v;
         break;
 
       case REG_MPU_RLAR_NS:
-        if (_n.mpuRnrNS < NUM_MPU_REGION_NS)
+        if (_n.mpuRnrNS < _NumMpuRegionNS())
           _n.mpuRlarNS[_n.mpuRnrNS] = v;
         break;
 
       case REG_MPU_RLAR_A1_NS:
-        if (_n.mpuRnrNS+1 < NUM_MPU_REGION_NS)
+        if (_n.mpuRnrNS+1 < _NumMpuRegionNS())
           _n.mpuRlarNS[_n.mpuRnrNS+1] = v;
         break;
 
       case REG_MPU_RLAR_A2_NS:
-        if (_n.mpuRnrNS+2 < NUM_MPU_REGION_NS)
+        if (_n.mpuRnrNS+2 < _NumMpuRegionNS())
           _n.mpuRlarNS[_n.mpuRnrNS+2] = v;
         break;
 
       case REG_MPU_RLAR_A3_NS:
-        if (_n.mpuRnrNS+3 < NUM_MPU_REGION_NS)
+        if (_n.mpuRnrNS+3 < _NumMpuRegionNS())
           _n.mpuRlarNS[_n.mpuRnrNS+3] = v;
         break;
 
@@ -2627,18 +2659,18 @@ private:
         break;
 
       case REG_SAU_RNR:
-        if (NUM_SAU_REGION)
+        if (_NumSauRegion())
           _n.sauRnr = v & REG_SAU_RNR__REGION;
         // TODO CONSTRAINED UNPREDICTABLE
         break;
 
       case REG_SAU_RBAR:
-        if (_n.sauRnr < NUM_SAU_REGION)
+        if (_n.sauRnr < _NumSauRegion())
           _n.sauRbar[_n.sauRnr] = v & ~BITS( 0, 4);
         break;
 
       case REG_SAU_RLAR:
-        if (_n.sauRnr < NUM_SAU_REGION)
+        if (_n.sauRnr < _NumSauRegion())
           _n.sauRlar[_n.sauRnr] = v & ~BITS( 2, 4);
         break;
 
@@ -2952,7 +2984,7 @@ private:
    * -------------
    */
   uint64_t _SystCalcFreq(bool clkSource) {
-    return clkSource ? _cfg.systIntFreq : _cfg.systExtFreq;
+    return clkSource ? _cfg.SystIntFreq() : _cfg.SystExtFreq();
   }
 
   /* _SystGetCountFlag {{{4
@@ -3058,7 +3090,7 @@ private:
    */
   std::tuple<uint32_t,uint32_t> _InternalLoadMpuSecureRegion(size_t idx) {
     printf("Bus internal load MPU secure region %zu\n", idx);
-    if (idx >= NUM_MPU_REGION_S)
+    if (idx >= _NumMpuRegionS())
       return {0,0}; // {RBAR,RLAR}
 
     return {_n.mpuRbarS[idx], _n.mpuRlarS[idx]};
@@ -3069,7 +3101,7 @@ private:
    */
   std::tuple<uint32_t,uint32_t> _InternalLoadMpuNonSecureRegion(size_t idx) {
     printf("Bus internal load MPU non-secure region %zu\n", idx);
-    if (idx >= NUM_MPU_REGION_NS)
+    if (idx >= _NumMpuRegionNS())
       return {0,0}; // {RBAR,RLAR}
 
     return {_n.mpuRbarNS[idx], _n.mpuRlarNS[idx]};
@@ -3080,7 +3112,7 @@ private:
    */
   std::tuple<uint32_t,uint32_t> _InternalLoadSauRegion(size_t idx) {
     printf("Bus internal load SAU region %zu\n", idx);
-    if (idx >= NUM_SAU_REGION)
+    if (idx >= _NumSauRegion())
       return {0,0}; // {RBAR,RLAR}
 
     return {_n.sauRbar[idx], _n.sauRlar[idx]};
@@ -3241,7 +3273,7 @@ private:
   /* _HaveFPB {{{4
    * --------
    */
-  bool _HaveFPB() { return true; }
+  bool _HaveFPB() { return _cfg.HaveFPB(); }
 
   /* _FPB_BreakpointMatch {{{4
    * --------------------
@@ -3268,17 +3300,17 @@ private:
   /* _HaveDWT {{{4
    * --------
    */
-  bool _HaveDWT() { return true; }
+  bool _HaveDWT() { return _cfg.HaveDWT(); }
 
   /* _HaveITM {{{4
    * --------
    */
-  bool _HaveITM() { return true; }
+  bool _HaveITM() { return _cfg.HaveITM(); }
 
   /* _HaveFPExt {{{4
    * ----------
    */
-  bool _HaveFPExt() { return true; }
+  bool _HaveFPExt() { return _cfg.HaveFPExt(); }
 
   /* _NoninvasiveDebugAllowed {{{4
    * ------------------------
@@ -3356,6 +3388,21 @@ private:
   bool _ExternalSecureNoninvasiveDebugEnabled() {
     return _ExternalNoninvasiveDebugEnabled() && !!(_dev.DebugPins() & (DEBUG_PIN__SPIDEN | DEBUG_PIN__SPNIDEN));
   }
+
+  /* _NumMpuRegionS {{{4
+   * --------------
+   */
+  uint8_t _NumMpuRegionS() { return _cfg.NumMpuRegionS(); }
+
+  /* _NumMpuRegionNS {{{4
+   * ---------------
+   */
+  uint8_t _NumMpuRegionNS() { return _cfg.NumMpuRegionNS(); }
+
+  /* _NumSauRegion {{{4
+   * -------------
+   */
+  uint8_t _NumSauRegion() { return _cfg.NumSauRegion(); }
 
   /* _CurrentCond {{{4
    * ------------
@@ -4115,7 +4162,7 @@ private:
   /* _HaveHaltingDebug {{{4
    * -----------------
    */
-  bool _HaveHaltingDebug() { return true; }
+  bool _HaveHaltingDebug() { return _cfg.HaveHaltingDebug(); }
 
   /* _CanHaltOnEvent {{{4
    * ---------------
@@ -4243,7 +4290,7 @@ private:
   /* _HaveDSPExt {{{4
    * -----------
    */
-  bool _HaveDSPExt() { return false; }
+  bool _HaveDSPExt() { return _cfg.HaveDSPExt(); }
 
   /* _GetR {{{4
    * -----
