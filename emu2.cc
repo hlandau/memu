@@ -64,10 +64,19 @@
  *  Full manual review
  *  Coprocessor handling
  *  Floating point support
+ *  Proper tail chaining when using SLEEPONEXIT
  *
  *  SCR.SEVONPEND: Exceptions entering the pending state should cause SetEventRegister
  *  Check NVIC usage of _excEnable/_excPending/_excActive; should we use _SetPending etc.?
  *  DHCSR.C_MASKINTS
+ *
+ *  ARMv7-M: CCR.NONBASETHRDENA, CCR.STKALIGN (always enabled in ARMv8-M)
+ *  ARMv7-M: AIRCR.VECTRESET (not implemented in ARMv8-M) -- local resets
+ *  ARMv7-M: Software ignores writes to CONTROL.SPSEL in handler mode?
+ *  ARMv7-M: MPU registers have different format
+ *  Cortex-M3/M4: MMFAR and BFAR are same register. MMFARVALID and BFARVALID cannot both be 1
+ *  Handle system resets externally to the Simulator like real hardware
+ *    to allow hosting code to handle the reset event
  */
 
 /* Simulator Compile-Time Configuration {{{2
@@ -953,7 +962,7 @@ static inline uint32_t MaskBySize(uint32_t v, int size) {
 }
 
 struct IDevice {
-  // Load/store. addr is a physical address. is a size must be in {1,2,4} and
+  // Load/store. addr is a physical address. size must be in {1,2,4} and
   // specifies the size of the load/store in bytes. flags are LS_FLAG__*.
   // When calling Load, if size is not 4, the implementation must ensure that
   // the bits [size*8:31] are zero. When calling Store, if size is not 4, the
@@ -3641,6 +3650,8 @@ private:
    */
   void _ResetSCSRegs() {
     _NestReset();
+    memset(_s.excEnable, 0, sizeof(_s.excEnable));
+    memset(_s.excPending, 0, sizeof(_s.excPending));
   }
 
   /* _IsCPEnabled {{{4
@@ -5028,7 +5039,7 @@ private:
       std::tie(error, value) = _GetMem(memAddrDesc, size);
 
       if (error) {
-        value = 0; // UNKNOWN
+        value = UNKNOWN_VAL(0xFFFF'FFFF);
         if (_HaveMainExt()) {
           if (accType == AccType_STACK)
             InternalOr32(REG_CFSR, REG_CFSR__BFSR__UNSTKERR);
@@ -7159,7 +7170,6 @@ private:
       _SetSP_Main_NonSecure(sp);
 
     // Begin Implementation-Specific Resets
-    _NestReset(); // Implementation-Specific
     _s.curCondOverride = -1;
     // End Implementation-Specific Resets
 
@@ -18685,7 +18695,7 @@ private:
       if (disable) {
         if (affectPRI)
           _SetPRIMASK(CHGBITSM(_GetPRIMASK(), PRIMASK__PM, 1));
-        if (affectFAULT)
+        if (affectFAULT && _ExecutionPriority() > -1)
           _SetFAULTMASK(CHGBITSM(_GetFAULTMASK(), FAULTMASK__FM, 1));
       }
     }
