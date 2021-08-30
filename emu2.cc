@@ -696,6 +696,8 @@ private:
 /* CPU State {{{3
  * ---------
  */
+#define SZ_FIELD(X) (#X, X)
+
 enum PEMode {
   PEMode_Thread,
   PEMode_Handler,
@@ -816,24 +818,26 @@ struct CpuState {
   uint64_t d[16];
 
   // Miscellaneous flags, including the event flag.
+  // Items marked (*) are only used inside a single tick and do not need to be
+  // serialized when preserving the simulator state.
   bool event;                     // The event flag.
-  bool pendingReturnOperation;
-  bool itStateChanged;            // Used to override next ITSTATE.
-  bool pcChanged;                 // Used to override next instruction address, e.g. when branching.
-  uint8_t nextInstrITState;       // Used only if itStateChanged is set. New ITSTATE.
-  uint32_t nextInstrAddr;         // Used only if pcChanged is set. Branch target address.
+  bool pendingReturnOperation;    // (*)
+  bool itStateChanged;            // (*) Used to override next ITSTATE.
+  bool pcChanged;                 // (*) Used to override next instruction address, e.g. when branching.
+  uint8_t nextInstrITState;       // (*) Used only if itStateChanged is set. New ITSTATE.
+  uint32_t nextInstrAddr;         // (*) Used only if pcChanged is set. Branch target address.
 
   // Information about the current instruction.
-  uint32_t thisInstr;             // instruction encoding
-  uint8_t  thisInstrLength;       // in bytes (2 or 4, or 0 if in lockup)
-  uint32_t thisInstrDefaultCond;
+  uint32_t thisInstr;             // (*) instruction encoding
+  uint8_t  thisInstrLength;       // (*) in bytes (2 or 4, or 0 if in lockup)
+  uint32_t thisInstrDefaultCond;  // (*)
 
   // Implementation-specific state. If set to a non-negative value, this is
   // used for _CurrentCond() instead of thisInstrDefaultCond. Can be used in
   // the decoder of a specific instruction to override the condition code (e.g.
   // for branch instructions which have a condition code field rather than
   // using ITSTATE). Defaults and is reset to -1 at the start of each cycle.
-  char      curCondOverride;
+  char      curCondOverride;      // (*)
 
   // Implementation-specific state. The simulator is advanced by calling
   // TopLevel in a loop. The caller may wish to control loop flow according to
@@ -843,6 +847,25 @@ struct CpuState {
   // instruction executed was not interesting, otherwise it is one of the
   // values in EXIT_CAUSE__*.
   uint32_t  exitCause;
+
+  template<typename Visitor>
+  void Visit(Visitor &v) {
+    v SZ_FIELD(r0) SZ_FIELD(r1) SZ_FIELD(r2) SZ_FIELD(r3)
+      SZ_FIELD(r4) SZ_FIELD(r5) SZ_FIELD(r6) SZ_FIELD(r7)
+      SZ_FIELD(r8) SZ_FIELD(r9) SZ_FIELD(r10) SZ_FIELD(r11)
+      SZ_FIELD(r12) SZ_FIELD(spMainNS) SZ_FIELD(spProcessNS)
+      SZ_FIELD(lr) SZ_FIELD(pc) SZ_FIELD(spMainS) SZ_FIELD(spProcessS)
+      SZ_FIELD(xpsr)
+      SZ_FIELD(psplimNS) SZ_FIELD(psplimS) SZ_FIELD(msplimNS) SZ_FIELD(msplimS)
+      SZ_FIELD(fpscr)
+      SZ_FIELD(primaskNS) SZ_FIELD(primaskS) SZ_FIELD(faultmaskNS) SZ_FIELD(faultmaskS)
+      SZ_FIELD(basepriNS) SZ_FIELD(basepriS) SZ_FIELD(controlNS) SZ_FIELD(controlS)
+      SZ_FIELD(curState)
+      SZ_FIELD(d)
+      SZ_FIELD(event)
+      SZ_FIELD(excEnable) SZ_FIELD(excActive) SZ_FIELD(excPending)
+      SZ_FIELD(exitCause);
+  }
 };
 
 /* Nest State {{{3
@@ -902,6 +925,46 @@ struct CpuNest {
   uint32_t systCsrS{REG_SYST_CSR__CLKSOURCE}, systCsrNS{REG_SYST_CSR__CLKSOURCE};
   uint32_t systRvrS{}, systRvrNS{};
   uint32_t systCalibS{}, systCalibNS{};
+
+  template<typename Visitor>
+  void Visit(Visitor &v) {
+    v SZ_FIELD(dwtCtrl)
+      SZ_FIELD(dwtComp)
+      SZ_FIELD(dwtFunction)
+      SZ_FIELD(fpCtrl)
+      SZ_FIELD(fpComp)
+      SZ_FIELD(cppwrS) SZ_FIELD(cppwrNS)
+      SZ_FIELD(nvicItns) SZ_FIELD(nvicIpr)
+      SZ_FIELD(cfsrS) SZ_FIELD(cfsrNS)
+      SZ_FIELD(hfsrS) SZ_FIELD(hfsrNS)
+      SZ_FIELD(dfsrS) SZ_FIELD(dfsrNS)
+      SZ_FIELD(mmfarS) SZ_FIELD(mmfarNS)
+      SZ_FIELD(bfarS) SZ_FIELD(bfarNS)
+      SZ_FIELD(shpr1S) SZ_FIELD(shpr1NS) SZ_FIELD(shpr2S) SZ_FIELD(shpr2NS) SZ_FIELD(shpr3S) SZ_FIELD(shpr3NS)
+      SZ_FIELD(ccrS) SZ_FIELD(ccrNS)
+      SZ_FIELD(scrS) SZ_FIELD(scrNS)
+      SZ_FIELD(aircrS) SZ_FIELD(aircrNS)
+      SZ_FIELD(cpacrS) SZ_FIELD(cpacrNS)
+      SZ_FIELD(nsacr)
+      SZ_FIELD(mpuTypeS) SZ_FIELD(mpuTypeNS)
+      SZ_FIELD(mpuCtrlS) SZ_FIELD(mpuCtrlNS)
+      SZ_FIELD(mpuRnrS) SZ_FIELD(mpuRnrNS)
+      SZ_FIELD(mpuMair0S) SZ_FIELD(mpuMair0NS) SZ_FIELD(mpuMair1S) SZ_FIELD(mpuMair1NS)
+      SZ_FIELD(mpuRbarS) SZ_FIELD(mpuRbarNS)
+      SZ_FIELD(mpuRlarS) SZ_FIELD(mpuRlarNS)
+      SZ_FIELD(sauCtrl) SZ_FIELD(sauRnr)
+      SZ_FIELD(sauRbar) SZ_FIELD(sauRlar)
+      SZ_FIELD(sfsr) SZ_FIELD(sfar)
+      SZ_FIELD(dauthCtrl)
+      SZ_FIELD(fpccrS) SZ_FIELD(fpccrNS)
+      SZ_FIELD(fpcarS) SZ_FIELD(fpcarNS)
+      SZ_FIELD(fpdscrS) SZ_FIELD(fpdscrNS)
+      SZ_FIELD(vtorS) SZ_FIELD(vtorNS)
+      SZ_FIELD(icsr) SZ_FIELD(dhcsr) SZ_FIELD(demcr)
+      SZ_FIELD(systCsrS) SZ_FIELD(systCsrNS)
+      SZ_FIELD(systRvrS) SZ_FIELD(systRvrNS)
+      SZ_FIELD(systCalibS) SZ_FIELD(systCalibNS);
+  }
 };
 
 /* IDevice {{{3
@@ -1313,6 +1376,19 @@ struct SysTickDevice_Real final :ISysTickDevice {
     _XUpdateCallback();
   }
 
+  template<typename Visitor>
+  void Visit(Visitor &v) {
+    v("enable", _enable)
+     ("tickInt", _tickInt)
+     ("freq", _freq)
+     ("reload", _reload)
+     ("initialCur", _initialCur)
+     ("epoch", _epoch)
+     ("lastCountFlagEra", _lastCountFlagEra)
+     ("lastIntrEra", _lastIntrEra)
+     ("lastCbEra", _lastCbEra);
+  }
+
 private:
   using time_point = std::chrono::steady_clock::time_point;
   // Functions beginning _X might be called on any thread (i.e., on the thread
@@ -1551,6 +1627,11 @@ struct MonitorState {
     return size && a >= addr && SatAdd<phys_t>(a, sz-1) <= SatAdd<phys_t>(addr, size-1);
   }
 
+  template<typename Visitor>
+  void Visit(Visitor &v) {
+    v SZ_FIELD(addr) SZ_FIELD(size);
+  }
+
   phys_t    addr{};
   uint32_t  size{}; // zero: open access state, nonzero: exclusive access state
 };
@@ -1628,6 +1709,11 @@ struct GlobalMonitor {
     // requesting PE and both the local monitor and the global monitor state
     // machines for the requesting PE are in the exclusive access state."
     return s.ContainsAll(addr, size);
+  }
+
+  template<typename Visitor>
+  void Visit(Visitor &v) {
+    v("states", _states);
   }
 
 private:
@@ -1796,6 +1882,24 @@ struct Simulator {
    * ----------
    */
   CpuNest &GetCpuNest() { return _n; }
+
+  /* Visit {{{4
+   * -----
+   * Visit state objects contained in this simulator.
+   */
+  template<typename Visitor>
+  void Visit(Visitor &v) {
+    v("cpu", _s)
+     ("nest", _n)
+     ("cfg", _cfg)
+     ("procID", _procID)
+     ("lm", _lm)
+     ("gm", _gm);
+    if (GetNumSysTick())
+      v("systick", _sysTickS);
+    if (GetNumSysTick() > 1)
+      v("systickNS", _sysTickNS);
+  }
 
   /* GetNumSysTick {{{4
    * -------------
