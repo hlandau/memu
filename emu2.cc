@@ -47,6 +47,8 @@
 #define likely(Expr)      (__builtin_expect(!!(Expr), 1))
 #define unlikely(Expr)    (__builtin_expect(!!(Expr), 0))
 #define UNREACHABLE()     do { __builtin_unreachable(); } while(0)
+#define _MEMU_BEGIN_NS(X) namespace X {
+#define _MEMU_END_NS(X)   }
 
 
 /* ARMv8-M Simulator                                                       {{{1
@@ -54,6 +56,9 @@
  * TODO LIST:
  *  _SendEvent
  *  _SCS_UpdateStatusRegs
+ *
+ *  Machine-readable TRACEI output instrumentation
+ *  Execution targets (redirectable _Exec_* calls)
  *
  *  Add missing TRACEIs
  *
@@ -78,6 +83,7 @@
  *  Handle system resets externally to the Simulator like real hardware
  *    to allow hosting code to handle the reset event
  */
+_MEMU_BEGIN_NS(memu)
 
 /* Simulator Compile-Time Configuration {{{2
  * ====================================
@@ -125,13 +131,14 @@ struct EmuTraceBlock {
 };
 
 #  define TRACE_BLOCK() EmuTraceBlock PP_CAT(_traceblk_,__COUNTER__)
-#  define TRACE(...) do { printf("T: "); for (size_t _traceI=0; _traceI<g_emuTraceIndent; ++_traceI) printf("  "); printf(__VA_ARGS__); } while(0)
+#  define TRACE(...) do { printf("T: "); for (size_t _traceI=0; _traceI<::memu::g_emuTraceIndent; ++_traceI) printf("  "); printf(__VA_ARGS__); } while(0)
 #  define TRACEI(Name, Encoding, ...) do { printf("%s: %08x " #Name " " #Encoding " ", _ConditionPassed() ? "I" : "i", pc); printf(__VA_ARGS__); printf("\n"); } while (0)
 #  define TRACEIU(Name, Encoding, ...) do { printf("I: %08x " #Name " " #Encoding " ", pc); printf(__VA_ARGS__); printf("\n"); } while (0)
 #else
 #  define TRACE_BLOCK()
 #  define TRACE(...) do {} while (0)
 #  define TRACEI(...) do {} while (0)
+#  define TRACEIU(...) do {} while (0)
 #endif
 
 #define ASSERT(Cond) do { if unlikely (!(Cond)) { printf("assertion fail on line %u: %s\n", __LINE__, #Cond); abort(); } } while(0)
@@ -1775,7 +1782,7 @@ struct Simulator {
    * ----------
    * Returns true iff the core is in locked up state.
    */
-  bool IsLockedUp() const {
+  bool IsLockedUp() {
     return GETBITSM(InternalLoad32(REG_DHCSR), REG_DHCSR__S_LOCKUP);
   }
 
@@ -21624,3 +21631,5 @@ private:
   LocalMonitor    _lm;
   GlobalMonitor  &_gm;
 };
+
+_MEMU_END_NS(memu)

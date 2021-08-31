@@ -4,12 +4,14 @@
 #include <histedit.h>
 #include <stdio.h>
 
+using memu::phys_t;
+
 /* RouterDevice {{{2
  * ============
  * An IDevice which routes to other devices.
  */
 template<typename T>
-struct RouterDevice :IDevice {
+struct RouterDevice :memu::IDevice {
   int Load(phys_t addr, int size, uint32_t flags, uint32_t &v) override {
     IDevice *dev = _Resolve(addr);
     if (!dev) {
@@ -39,7 +41,7 @@ private:
 /* RangeDevice {{{2
  * ===========
  */
-struct RangeDevice :IDevice {
+struct RangeDevice :memu::IDevice {
   RangeDevice(phys_t base, size_t len) :_base(base), _len(len) {}
 
   phys_t GetBase() const { return _base; }
@@ -180,7 +182,7 @@ static void _OnSigInt(int) {
   }
 }
 
-static int _DebugPrompt(Simulator<TestDevice> &sim) {
+static int _DebugPrompt(memu::Simulator<TestDevice> &sim) {
   int rc = 0;
   g_inDebugPrompt = true;
 
@@ -224,7 +226,7 @@ static int _DebugPrompt(Simulator<TestDevice> &sim) {
       printf("  R1  %08x  FM %2x %2x\n", st.r1, st.faultmaskS, st.faultmaskNS);
       printf("  R2  %08x  BP %02x %02x\n", st.r2, st.basepriS, st.basepriNS);
       printf("  R3  %08x  CTRL %x %x\n", st.r3, st.controlS, st.controlNS);
-      printf("  R4  %08x  %s %s %s\n", st.r4, st.curState == SecurityState_Secure ? "S " : "NS", st.event ? "EV" : "  ", st.pendingReturnOperation ? "PR" : "");
+      printf("  R4  %08x  %s %s %s\n", st.r4, st.curState == memu::SecurityState_Secure ? "S " : "NS", st.event ? "EV" : "  ", st.pendingReturnOperation ? "PR" : "");
       printf("  R5  %08x  A:%s\n", st.r5, activeS.c_str());
       printf("  R6  %08x  P:%s\n", st.r6, pendingS.c_str());
       printf("  R7  %08x  FPSCR  %08x\n", st.r7, st.fpscr);
@@ -277,7 +279,7 @@ int main(int argc, char **argv) {
   }
 
   TestDevice dev;
-  SimpleSimulatorConfig cfg;
+  memu::SimpleSimulatorConfig cfg;
 
   FILE *f = fopen(argv[1], "rb");
   fseek(f, 0, SEEK_END);
@@ -303,9 +305,9 @@ int main(int argc, char **argv) {
   sa.sa_flags   = SA_RESTART;
   sigaction(SIGINT, &sa, NULL);
 
-  GlobalMonitor gm;
-  Simulator sim(dev, gm, cfg);
-  IntrBox   intrBox{sim};
+  memu::GlobalMonitor gm;
+  memu::Simulator sim(dev, gm, cfg);
+  memu::IntrBox   intrBox{sim};
   uint32_t  i = 0;
   for (;;) {
     if unlikely (g_sigint) {
@@ -316,14 +318,16 @@ int main(int argc, char **argv) {
     sim.TopLevel();
 
     auto exitCause = sim.GetExitCause();
-    if (exitCause & EXIT_CAUSE__WFI) {
+    if (exitCause & memu::EXIT_CAUSE__WFI) {
       printf("=> waiting for interrupt i=%u\n", i++);
-      intrBox.WaitForInterrupt();
+      //intrBox.WaitForInterrupt();
     }
-    if (exitCause & EXIT_CAUSE__SLEEP_ON_EXIT) {
+    if (exitCause & memu::EXIT_CAUSE__SLEEP_ON_EXIT) {
       printf("=> sleeping on exit i=%u\n", i++);
-      intrBox.WaitForInterrupt();
+      //intrBox.WaitForInterrupt();
     }
+    if (sim.IsLockedUp())
+      break;
   }
 
   return 0;
