@@ -79,7 +79,6 @@
  *  ARMv7-M: AIRCR.VECTRESET (not implemented in ARMv8-M) -- local resets
  *  ARMv7-M: Software ignores writes to CONTROL.SPSEL in handler mode?
  *  ARMv7-M: MPU registers have different format
- *  Cortex-M3/M4: MMFAR and BFAR are same register. MMFARVALID and BFARVALID cannot both be 1
  *  Handle system resets externally to the Simulator like real hardware
  *    to allow hosting code to handle the reset event
  */
@@ -1083,6 +1082,7 @@ struct SimpleSimulatorConfig {
   uint64_t SystIntFreq() const { return this->systIntFreq; }
   uint64_t SystExtFreq() const { return this->systExtFreq; }
   uint8_t PriorityBits() const { return this->priorityBits; }
+  bool MmfarBfarMerged() const { return this->mmfarBfarMerged; }
 
   // -----------------------------------------
   bool      main            = true;         // Whether the simulated CPU supports the Main extension.
@@ -1104,6 +1104,7 @@ struct SimpleSimulatorConfig {
   uint64_t  systIntFreq     = 100'000'000;  // SysTick frequency when CLKSOURCE=1 (PE).
   uint64_t  systExtFreq     = 0;            // SysTick frequency when CLKSOURCE=0 (external). 0 to disable.
   uint8_t   priorityBits    = 8;            // Number of priority bits [3, 8]. Ignored for !main.
+  bool      mmfarBfarMerged = false;        // Are MMFAR, BFAR merged?
 };
 
 /* DeadlineCaller {{{2
@@ -2170,10 +2171,31 @@ private:
       case REG_DFSR_S:        return _HaveMainExt() || _HaveHaltingDebug() ? _n.dfsrS  : 0;
       case REG_DFSR_NS:       return _HaveMainExt() || _HaveHaltingDebug() ? _n.dfsrNS : 0;
 
-      case REG_MMFAR_S:       return _HaveMainExt() ? _n.mmfarS  : 0;
-      case REG_MMFAR_NS:      return _HaveMainExt() ? _n.mmfarNS : 0;
-      case REG_BFAR_S:        return _HaveMainExt() ? _n.bfarS   : 0;
-      case REG_BFAR_NS:       return _HaveMainExt() ? _n.bfarNS  : 0;
+      case REG_MMFAR_S:
+        if (!_HaveMainExt())
+          return 0;
+        if (_cfg.MmfarBfarMerged() && !(_n.cfsrS & REG_CFSR__MMFSR__MMARVALID))
+          return 0;
+        return _n.mmfarS;
+      case REG_MMFAR_NS:
+        if (!_HaveMainExt())
+          return 0;
+        if (_cfg.MmfarBfarMerged() && !(_n.cfsrNS & REG_CFSR__MMFSR__MMARVALID))
+          return 0;
+        return _n.mmfarNS;
+
+      case REG_BFAR_S:
+        if (!_HaveMainExt())
+          return 0;
+        if (_cfg.MmfarBfarMerged() && !(_n.cfsrS & REG_CFSR__BFSR__BFARVALID))
+          return 0;
+        return _n.bfarS;
+      case REG_BFAR_NS:
+        if (!_HaveMainExt())
+          return 0;
+        if (_cfg.MmfarBfarMerged() && !(_n.cfsrNS & REG_CFSR__BFSR__BFARVALID))
+          return 0;
+        return _n.bfarNS;
 
       case REG_SHPR1_S:       return _HaveMainExt() ? _n.shpr1S  : 0;
       case REG_SHPR1_NS:      return _HaveMainExt() ? _n.shpr1NS : 0;
@@ -2693,22 +2715,22 @@ private:
         break;
 
       case REG_MMFAR_S:
-        if (_HaveMainExt())
+        if (_HaveMainExt() && nat == NAT_Internal)
           _n.mmfarS = v;
         break;
 
       case REG_MMFAR_NS:
-        if (_HaveMainExt())
+        if (_HaveMainExt() && nat == NAT_Internal)
           _n.mmfarNS = v;
         break;
 
       case REG_BFAR_S:
-        if (_HaveMainExt())
+        if (_HaveMainExt() && nat == NAT_Internal)
           _n.bfarS = v;
         break;
 
       case REG_BFAR_NS:
-        if (_HaveMainExt())
+        if (_HaveMainExt() && nat == NAT_Internal)
           _n.bfarNS = v;
         break;
 
@@ -3391,6 +3413,13 @@ private:
   void InternalStore32(phys_t addr, uint32_t v) {
     ASSERT(addr >= 0xE000'0000);
     _NestStore32Actual(addr, v, NAT_Internal);
+  }
+
+  /* InternalMaskOr32 {{{4
+   * ----------------
+   */
+  void InternalMaskOr32(phys_t addr, uint32_t mask, uint32_t or_) {
+    InternalStore32(addr, (InternalLoad32(addr) & ~mask) | or_);
   }
 
   /* InternalOr32 {{{4
@@ -5177,7 +5206,8 @@ private:
             uint32_t bfar = InternalLoad32(REG_BFAR);
             bfar = CHGBITSM(bfar, REG_BFAR__ADDRESS, addr);
             InternalStore32(REG_BFAR, bfar);
-            InternalOr32(REG_CFSR, REG_CFSR__BFSR__BFARVALID | REG_CFSR__BFSR__PRECISERR);
+            InternalMaskOr32(REG_CFSR, _cfg.MmfarBfarMerged() ? REG_CFSR__MMFSR__MMARVALID : 0,
+              REG_CFSR__BFSR__BFARVALID | REG_CFSR__BFSR__PRECISERR);
           }
         }
 
@@ -5234,7 +5264,8 @@ private:
             InternalOr32(REG_CFSR, REG_CFSR__BFSR__LSPERR);
           else if (accType == AccType_NORMAL || accType == AccType_ORDERED) {
             InternalStore32(REG_BFAR, addr);
-            InternalOr32(REG_CFSR, REG_CFSR__BFSR__BFARVALID | REG_CFSR__BFSR__PRECISERR);
+            InternalMaskOr32(REG_CFSR, _cfg.MmfarBfarMerged() ? REG_CFSR__MMFSR__MMARVALID : 0,
+              REG_CFSR__BFSR__BFARVALID | REG_CFSR__BFSR__PRECISERR);
           }
         }
 
@@ -5508,12 +5539,13 @@ private:
           break;
       }
 
+      uint32_t mask = (_cfg.MmfarBfarMerged() && !!(fsr & REG_CFSR__MMFSR__MMARVALID)) ? REG_CFSR__BFSR__BFARVALID : 0;
       if (isSecure) {
-        InternalOr32(REG_CFSR_S, fsr);
+        InternalMaskOr32(REG_CFSR_S, mask, fsr);
         if (fsr & REG_CFSR__MMFSR__MMARVALID)
           InternalStore32(REG_MMFAR_S, addr);
       } else {
-        InternalOr32(REG_CFSR_NS, fsr);
+        InternalMaskOr32(REG_CFSR_NS, mask, fsr);
         if (fsr & REG_CFSR__MMFSR__MMARVALID)
           InternalStore32(REG_MMFAR_NS, addr);
       }
