@@ -46,7 +46,7 @@
 
 #define likely(Expr)      (__builtin_expect(!!(Expr), 1))
 #define unlikely(Expr)    (__builtin_expect(!!(Expr), 0))
-#define UNREACHABLE()     do { __builtin_unreachable(); } while(0)
+#define ASSUME_UNREACHABLE()     do { __builtin_unreachable(); } while(0)
 #define _MEMU_BEGIN_NS(X) namespace X {
 #define _MEMU_END_NS(X)   }
 
@@ -141,7 +141,8 @@ struct EmuTraceBlock {
 #  define TRACEIU(...) do {} while (0)
 #endif
 
-#define ASSERT(Cond) do { if unlikely (!(Cond)) { printf("assertion fail on line %u: %s\n", __LINE__, #Cond); abort(); } } while(0)
+#define ASSERT(Cond)    do { if unlikely (!(Cond)) { printf("assertion fail on line %u: %s\n", __LINE__, #Cond); abort(); } } while(0)
+#define UNREACHABLE()   do { printf("assertion fail on line %u: unreachable\n", __LINE__); abort(); } while(0)
 
 #if ENFORCE_SOFT_BITS
 #  define CHECK01(BitsOff, BitsOn)                                          \
@@ -212,6 +213,11 @@ using phys_t = uint32_t;
   // For CONSTRAINED UNPREDICTABLE which we choose to implement as UNDEFINED
 #define CUNPREDICTABLE_UNDEFINED() UNDEFINED_DEC()
 #define CUNPREDICTABLE_UNALIGNED() do { _ThrowUnaligned(); } while (0)
+// QUIET_UNPREDICTABLE is used for circumstances where UNPREDICTABLE occurs but
+// it is not feasible or desirable to raise an exception. Currently it is a
+// no-op besides trace output. In the future we might count the number of
+// events.
+#define QUIET_UNPREDICTABLE(...) do { TRACE("UNPREDICTABLE on %u: ", __LINE__); TRACE(__VA_ARGS__); } while (0)
 
 /* Exception {{{3
  * ---------
@@ -3252,8 +3258,7 @@ private:
           return;
         }
 
-        printf("Unsupported nest store 0x%08x <- 0x%08x\n", addr, v);
-        abort();
+        TRACE("Unsupported nest store 0x%08x <- 0x%08x\n", addr, v);
     }
   }
 
@@ -3356,6 +3361,12 @@ private:
    * -----------------
    */
   static bool _IsExceptionTaken(const Exception &e) { return e.GetType() == ExceptionType::EndOfInstruction; }
+
+  /* _IsUNPREDICTABLE {{{4
+   * ----------------
+   * Custom.
+   */
+  static bool _IsUNPREDICTABLE(const Exception &e) { return e.GetType() == ExceptionType::UNPREDICTABLE; }
 
   /* _MaskOrNonMain {{{4
    * --------------
@@ -3982,7 +3993,8 @@ private:
       case SRType_RRX:
         return _RRX_C(value, carryIn);
       default:
-        abort();
+        UNREACHABLE();
+        break;
     }
   }
 
@@ -4022,7 +4034,7 @@ private:
       case 13: return _LookUpSP();
       case 14: return RName_LR;
       case 15: return RName_PC;
-      default: abort();
+      default: UNREACHABLE();
     }
   }
 
@@ -4053,8 +4065,15 @@ private:
     RName     spName    = _LookUpSP_with_security_mode(true, mode);
     uint32_t  framePtr  = _GetSP(spName);
 
-    if (!_IsAligned(framePtr, 8))
-      THROW_UNPREDICTABLE();
+    if (!_IsAligned(framePtr, 8)) {
+      // XXX(UNPREDICTABLE): This is ultimately called from
+      // _InstructionAdvance() so we do not want to raise an exception here. We
+      // arbitrarily choose to resolve this by masking the low bit sto make the
+      // frame pointer aligned, which feels like a plausible thing a real CPU
+      // might do (TBD).
+      QUIET_UNPREDICTABLE("unaligned frame pointer on function return: 0x%x\n", framePtr);
+      framePtr &= ~7; // (UNPREDICTABLE)
+    }
 
     // Only stack locations, not the load order are architected
     uint32_t newPSR, newPC;
@@ -4334,7 +4353,7 @@ private:
         else
           return {SRType_ROR, imm5};
       default:
-        abort();
+        UNREACHABLE();
     }
   }
 
@@ -5276,9 +5295,14 @@ private:
     if (accType == AccType_VECTABLE || isPPBAccess)
       hit = true;
     else if (!(mpuCtrl & REG_MPU_CTRL__ENABLE)) {
-      if (mpuCtrl & REG_MPU_CTRL__HFNMIENA)
-        THROW_UNPREDICTABLE();
-      else
+      if (mpuCtrl & REG_MPU_CTRL__HFNMIENA) {
+        // XXX(UNPREDICTABLE): We do not want to throw UNPREDICTABLE here as this
+        // function can be ultimately called by _InstructionAdvance().
+        // Where the MPU is not enabled, we choose to handle this case the same as
+        // if this bit were not set.
+        QUIET_UNPREDICTABLE("HFNMIENA set when MPU not enabled\n");
+        hit = true;
+      } else
         hit = true;
     } else if (!(mpuCtrl & REG_MPU_CTRL__HFNMIENA) && negativePri)
       hit = true;
@@ -5354,8 +5378,13 @@ private:
         case 0b1000: memAttrs.device = DeviceType_nGRE; break;
         case 0b1100: memAttrs.device = DeviceType_GRE; break;
       }
-      if (GETBITS(attrField, 0, 1))
-        THROW_UNPREDICTABLE();
+      if (GETBITS(attrField, 0, 1)) {
+        // XXX(UNPREDICTABLE): This function may be called ultimately by
+        // _InstructionAdvance() so we should not raise UNPREDICTABLE here. If
+        // these reserved bits are set when they should not be, we simply
+        // ignore them, which is a plausible implementation.
+        QUIET_UNPREDICTABLE("invalid MAIR configuration\n");
+      }
     } else {
       unpackInner = true;
       memAttrs.memType        = MemType_Normal;
@@ -5363,8 +5392,10 @@ private:
       memAttrs.outerHints     = GETBITS(attrField, 4, 5);
       memAttrs.shareable      = (sh & BIT(1));
       memAttrs.outerShareable = (sh == 0b10);
-      if (sh == 0b01)
-        THROW_UNPREDICTABLE();
+      if (sh == 0b01) {
+        // XXX(UNPREDICTABLE): See above.
+        QUIET_UNPREDICTABLE("invalid MAIR configuration\n");
+      }
 
       if (GETBITS(attrField, 6, 7) == 0b00) {
         memAttrs.outerAttrs       = 0b10;
@@ -5384,9 +5415,13 @@ private:
     }
 
     if (unpackInner) {
-      if (GETBITS(attrField, 0, 3) == 0b0000)
-        THROW_UNPREDICTABLE();
-      else {
+      if (GETBITS(attrField, 0, 3) == 0b0000) {
+        // XXX(UNPREDICTABLE): See above.
+        QUIET_UNPREDICTABLE("invalid MAIR configuration\n");
+        memAttrs.innerAttrs     = 0;      // dummy values
+        memAttrs.innerHints     = 0;      //
+        memAttrs.innerTransient = false;  //
+      } else {
         if (GETBITS(attrField, 2, 3) == 0b00) {
           memAttrs.innerAttrs     = 0b10;
           memAttrs.innerHints     = GETBITS(attrField, 0, 1);
@@ -5408,8 +5443,13 @@ private:
           memAttrs.innerHints     = GETBITS(attrField, 0, 1);
           memAttrs.innerAttrs     = 0b11;
           memAttrs.innerTransient = false;
-        } else
-          THROW_UNPREDICTABLE();
+        } else {
+          // XXX(UNPREDICTABLE): See above.
+          QUIET_UNPREDICTABLE("invalid MAIR configuration\n");
+          memAttrs.innerAttrs     = 0;      // dummy values
+          memAttrs.innerHints     = 0;      // dummy values
+          memAttrs.innerTransient = false;  // dummy values
+        }
       }
     }
 
@@ -5431,7 +5471,13 @@ private:
         case 0b01: fault = false; break;
         case 0b10: fault = !isPriv || isWrite; break;
         case 0b11: fault = isWrite; break;
-        default: THROW_UNPREDICTABLE();
+        default:
+          // XXX(UNPREDICTABLE): This can be called ultimately from
+          // _InstructionAdvance() so we should not throw here. Instead, treat
+          // the access as faulting.
+          QUIET_UNPREDICTABLE("invalid MPU range permission configuration\n");
+          fault = true;
+          break;
       }
 
     if (!fault)
@@ -5510,8 +5556,12 @@ private:
       return;
 
     for (uint32_t i=0; i<numComp; ++i) {
-      if (_IsDWTConfigUnpredictable(i))
-        THROW_UNPREDICTABLE();
+      if (_IsDWTConfigUnpredictable(i)) {
+        // XXX(UNPREDICTABLE): We do not want to throw here. UNPREDICTABLE DWT configurations
+        // are simply not considered.
+        QUIET_UNPREDICTABLE("invalid DWT configuration (comparator %u)\n", i);
+        continue;
+      }
 
       bool daddrMatch   = _DWT_DataAddressMatch(i, daddr, dsize, read, nsReq);
       bool dvalueMatch  = _DWT_DataValueMatch(i, daddr, dvalue, dsize, read, nsReq);
@@ -5590,7 +5640,7 @@ private:
           case 0b00: matchLSC = true; linked = true; break;
           case 0b01: matchLSC = !read; linked = true; break;
           case 0b10: matchLSC = read; linked = true; break;
-          default: abort();
+          default: UNREACHABLE();
         }
         break;
     }
@@ -5625,8 +5675,11 @@ private:
     ASSERT(_Align(addr, size) == addr);
 
     // compAddr must be a multiple of compSize.
-    if (_Align(compAddr, compSize) != compSize)
-      THROW_UNPREDICTABLE();
+    if (_Align(compAddr, compSize) != compAddr) {
+      // XXX(UNPREDICTABLE): We do not want to throw here. Simply mask the bits.
+      QUIET_UNPREDICTABLE("DWT address comparison is not aligned (0x%x)\n", compAddr);
+      compAddr = _Align(compAddr, compSize);
+    }
 
     bool addrMatch    = (_Align(addr, compSize) == _Align(compAddr, size));
     bool addrGreater  = (addr > compAddr);
@@ -5687,7 +5740,7 @@ private:
           case 0b00: matchLSC = true; linked = true; break;
           case 0b01: matchLSC = !read; linked = true; break;
           case 0b10: matchLSC = read; linked = true; break;
-          default: abort();
+          default: UNREACHABLE();
         }
         break;
     }
@@ -5719,7 +5772,7 @@ private:
         case 1: dmask = 0b0001; break;
         case 2: dmask = 0b0011; break;
         case 4: dmask = 0b1111; break;
-        default: abort();
+        default: UNREACHABLE();
       }
     }
 
@@ -6573,8 +6626,13 @@ private:
     bool      toSecure  = _HaveSecurityExt() && GETBITSM(excReturn, EXC_RETURN__S);
     RName     spName    = _LookUpSP_with_security_mode(toSecure, mode);
     uint32_t  framePtr  = _GetSP(spName);
-    if (!_IsAligned(framePtr, 8))
-      THROW_UNPREDICTABLE();
+    if (!_IsAligned(framePtr, 8)) {
+      // XXX(UNPREDICTABLE): This function can be called ultimately from _InstructionAdvance()
+      // so we do not want to throw here. Simply mask the bits, which is plausibly what a real
+      // CPU might do.
+      QUIET_UNPREDICTABLE("unaligned frame pointer on exception return (0x%x)\n", framePtr);
+      framePtr &= ~7;
+    }
 
     uint32_t tmp;
     ExcInfo exc = _DefaultExcInfo();
@@ -6740,10 +6798,23 @@ private:
   std::tuple<ExcInfo, uint32_t> _ValidateExceptionReturn(uint32_t excReturn, int retExcNo) {
     bool error = false;
     assert(_CurrentMode() == PEMode_Handler);
-    if (GETBITS(excReturn, 7,23) != BITS(0,16) || GETBITS(excReturn, 1, 1))
-      THROW_UNPREDICTABLE();
-    if (!_HaveFPExt() && !GETBITSM(excReturn, EXC_RETURN__FTYPE))
-      THROW_UNPREDICTABLE();
+
+    // XXX: These are specified as UNPREDICTABLE. However, this function is
+    // ultimately called from _InstructionAdvance(), which does not execute in
+    // a context where UNPREDICTABLE can be suitably caught. Moreover given
+    // that this function is all about explicitly creating and returning ISA
+    // exceptions having it throw a (C++/psuedocode) exception seems odd.
+    // Most likely these bits are just ignored by actual CPUs. Ideally we
+    // would handle these as an error as we should be stricter than a real CPU
+    // if possible, but for now, treat them as no-ops.
+    if (GETBITS(excReturn, 7,23) != BITS(0,16) || GETBITS(excReturn, 1, 1)) {
+      TRACE("unpredictable exception return (0x%x)\n", excReturn);
+      //THROW_UNPREDICTABLE();
+    }
+    if (!_HaveFPExt() && !GETBITSM(excReturn, EXC_RETURN__FTYPE)) {
+      TRACE("unpredictable exception return (no FP)\n");
+      //THROW_UNPREDICTABLE();
+    }
 
     bool targetDomainSecure = !!GETBITSM(excReturn, EXC_RETURN__ES);
     bool excStateNonSecure;
@@ -6995,6 +7066,10 @@ private:
         // stage by instructions that have explicit condition codes.
         uint32_t len = is16bit ? 2 : 4;
 
+        // XXX: This is exactly as described in the pseudocode. However prose
+        // states that if bits [0:3] are zero but bits [4:7] are not, behaviour
+        // is UNPREDICTABLE. We should consider throwing UNPREDICTABLE in this
+        // case.
         uint32_t defaultCond = !GETBITS(_GetITSTATE(),0,3) ? 0b1110 : GETBITS(_GetITSTATE(),4,7);
         _SetThisInstrDetails(instr, len, defaultCond);
 
@@ -7014,7 +7089,16 @@ private:
           _DWT_InstructionMatch(pc);
 
       } catch (Exception e) {
-        if (_IsSEE(e) || _IsUNDEFINED(e)) {
+        // XXX: The psuedocode defines this as _IsSEE(e) || _IsUNDEFINED(e).
+        // Moreover, the comment below suggests that UNPREDICTABLE should not
+        // be caught here. However this seems to contradict the definition of
+        // UNPREDICTABLE in the glossary which states that a) UNPREDICTABLE
+        // must not do anything which could not be done with a sequence of
+        // non-UNPREDICTABLE instructions and b) UNPREDICTABLE can be
+        // implemented as UNDEFINED. For now, we disregard the comment below
+        // about not handling UNPREDICTABLE and treat all UNPREDICTABLE events
+        // as UNDEFINED.
+        if (_IsSEE(e) || _IsUNDEFINED(e) || _IsUNPREDICTABLE(e)) {
           TRACE("top-level SEE/UD exception\n");
           // Unallocated instructions in the NOP hint space and instructions that
           // fail their condition tests are treated like NOPs.
@@ -7781,8 +7865,12 @@ private:
       return;
 
     for (int i=0; i<GETBITSM(InternalLoad32(REG_DWT_CTRL), REG_DWT_CTRL__NUMCOMP); ++i) {
-      if (_IsDWTConfigUnpredictable(i))
-        THROW_UNPREDICTABLE();
+      if (_IsDWTConfigUnpredictable(i)) {
+        // XXX(UNPREDICTABLE): We do not want to throw here, so we simply do not consider
+        // invalid configurations.
+        QUIET_UNPREDICTABLE("DWT comparator %u has unpredictable configuration\n", i);
+        continue;
+      }
 
       bool instrAddrMatch = _DWT_InstructionAddressMatch(i, iaddr);
       if (!instrAddrMatch)
@@ -7866,7 +7954,10 @@ private:
         enabled = priv;
         break;
       case 0b10:
-        THROW_UNPREDICTABLE();
+        // XXX(UNPREDICTABLE): We do not want to throw here, so simply treat this as
+        // disabled.
+        enabled = false;
+        QUIET_UNPREDICTABLE("invalid CP enable value for CP %u\n", cp);
         break;
       case 0b11:
         enabled = true;
@@ -8062,7 +8153,7 @@ private:
       case 0b01: return SRType_LSR;
       case 0b10: return SRType_ASR;
       case 0b11: return SRType_ROR;
-      default: abort();
+      default: UNREACHABLE();
     }
   }
 
@@ -8206,7 +8297,8 @@ private:
           write = false, read = true;
           break;
         default:
-          abort();
+          UNREACHABLE();
+          break;
       }
 
     return {write, read, perms.region, perms.regionValid};
@@ -8599,7 +8691,8 @@ private:
         break;
 
       default:
-        abort();
+        UNREACHABLE();
+        break;
     }
   }
 
@@ -8639,7 +8732,8 @@ private:
         break;
 
       default:
-        abort();
+        UNREACHABLE();
+        break;
     }
   }
 
@@ -8898,7 +8992,8 @@ private:
         break;
 
       default:
-        abort();
+        UNREACHABLE();
+        break;
     }
   }
 
@@ -8991,7 +9086,8 @@ private:
         break;
 
       default:
-        abort();
+        UNREACHABLE();
+        break;
     }
   }
 
@@ -9427,7 +9523,8 @@ private:
         break;
 
       default:
-        abort();
+        UNREACHABLE();
+        break;
     }
   }
 
@@ -9612,7 +9709,8 @@ private:
         break;
 
       default:
-        abort();
+        UNREACHABLE();
+        break;
     }
   }
 
@@ -9832,7 +9930,8 @@ private:
         break;
 
       default:
-        abort();
+        UNREACHABLE();
+        break;
     }
   }
 
@@ -10167,7 +10266,8 @@ private:
         break;
 
       default:
-        abort();
+        UNREACHABLE();
+        break;
     }
   }
 
@@ -10236,7 +10336,8 @@ private:
         break;
 
       default:
-        abort();
+        UNREACHABLE();
+        break;
     }
   }
 
@@ -10325,7 +10426,8 @@ private:
         break;
 
       default:
-        abort();
+        UNREACHABLE();
+        break;
     }
   }
 
@@ -10627,7 +10729,8 @@ private:
         break;
 
       default:
-        abort();
+        UNREACHABLE();
+        break;
     }
   }
 
@@ -10961,7 +11064,8 @@ private:
         break;
 
       default:
-        abort();
+        UNREACHABLE();
+        break;
     }
   }
 
@@ -11012,12 +11116,14 @@ private:
             break;
 
           default:
-            abort();
+            UNREACHABLE();
+            break;
         }
         break;
 
       default:
-        abort();
+        UNREACHABLE();
+        break;
     }
   }
 
@@ -11287,7 +11393,8 @@ private:
         break;
 
       default:
-        abort();
+        UNREACHABLE();
+        break;
     }
   }
 
@@ -11447,7 +11554,8 @@ private:
         break;
 
       default:
-        abort();
+        UNREACHABLE();
+        break;
     }
   }
 
@@ -11649,7 +11757,8 @@ private:
             break;
 
           default:
-            abort();
+            UNREACHABLE();
+            break;
         }
         break;
 
@@ -11693,7 +11802,8 @@ private:
         break;
 
       default:
-        abort();
+        UNREACHABLE();
+        break;
     }
   }
 
@@ -11884,7 +11994,8 @@ private:
         break;
 
       default:
-        abort();
+        UNREACHABLE();
+        break;
     }
   }
 
@@ -12006,7 +12117,8 @@ private:
         break;
 
       default:
-        abort();
+        UNREACHABLE();
+        break;
     }
   }
 
@@ -12209,7 +12321,8 @@ private:
         break;
 
       default:
-        abort();
+        UNREACHABLE();
+        break;
     }
   }
 
@@ -12420,7 +12533,8 @@ private:
         break;
 
       default:
-        abort();
+        UNREACHABLE();
+        break;
     }
   }
 
@@ -12593,7 +12707,8 @@ private:
         break;
 
       default:
-        abort();
+        UNREACHABLE();
+        break;
     }
   }
 
@@ -12623,7 +12738,8 @@ private:
           break;
 
         default:
-          abort();
+          UNREACHABLE();
+          break;
       }
     } else {
       // Load/store dual (immediate, pre-indexed)
@@ -12770,7 +12886,8 @@ private:
           // Load-acquire/store-release
           _DecodeExecute32_0100_010_1_1xx(instr, pc);
         } else {
-          abort();
+          // ?
+          UNDEFINED_DEC();
         }
       }
     }
@@ -12857,7 +12974,8 @@ private:
         break;
 
       default:
-        abort();
+        UNREACHABLE();
+        break;
     }
   }
 
@@ -13172,7 +13290,8 @@ private:
         break;
 
       default:
-        abort();
+        UNREACHABLE();
+        break;
     }
   }
 
@@ -13308,14 +13427,14 @@ private:
     uint32_t Rt   = GETBITS(instr    ,12,15);
     uint32_t L_Rt = (L<<4) | Rt;
 
-    if (L_Rt != 0b0'1111) {
-      // STREX
-      _DecodeExecute32_STREX_T1(instr, pc);
-    } else if (L) {
+    if (L) {
       // LDREX
       _DecodeExecute32_LDREX_T1(instr, pc);
+    } else if (L_Rt != 0b0'1111) {
+      // STREX
+      _DecodeExecute32_STREX_T1(instr, pc);
     } else
-      abort();
+      UNREACHABLE();
   }
 
   /* _DecodeExecute32_STREX_T1 {{{4
@@ -13438,7 +13557,8 @@ private:
         break;
 
       default:
-        abort();
+        UNREACHABLE();
+        break;
     }
   }
 
@@ -13816,7 +13936,8 @@ private:
               break;
 
             default:
-              abort();
+              UNREACHABLE();
+              break;
           }
         } else {
           // ?
@@ -13899,7 +14020,8 @@ private:
         break;
 
       default:
-        abort();
+        UNREACHABLE();
+        break;
     }
   }
 
@@ -14575,7 +14697,8 @@ private:
                   break;
 
                 default:
-                  abort();
+                  UNREACHABLE();
+                  break;
               }
             } else {
               // Unallocated
@@ -14597,7 +14720,8 @@ private:
                   break;
 
                 default:
-                  abort();
+                  UNREACHABLE();
+                  break;
               }
             } else {
               switch (op2) {
@@ -14614,7 +14738,8 @@ private:
                   break;
 
                 default:
-                  abort();
+                  UNREACHABLE();
+                  break;
               }
             }
           }
@@ -14622,7 +14747,8 @@ private:
         break;
 
       default:
-        abort();
+        UNREACHABLE();
+        break;
     }
   }
 
@@ -14666,7 +14792,8 @@ private:
         break;
 
       default:
-        abort();
+        UNREACHABLE();
+        break;
     }
   }
 
@@ -15119,7 +15246,8 @@ private:
         break;
 
       default:
-        abort();
+        UNREACHABLE();
+        break;
     }
   }
 
@@ -15636,7 +15764,8 @@ private:
         break;
 
       default:
-        abort();
+        UNREACHABLE();
+        break;
     }
   }
 
@@ -15685,7 +15814,8 @@ private:
         break;
 
       default:
-        abort();
+        UNREACHABLE();
+        break;
     }
   }
 
@@ -15983,7 +16113,8 @@ private:
         break;
 
       default:
-        abort();
+        UNREACHABLE();
+        break;
     }
   }
 
@@ -16162,7 +16293,8 @@ private:
         break;
 
       default:
-        abort();
+        UNREACHABLE();
+        break;
     }
   }
 
@@ -16428,7 +16560,8 @@ private:
         break;
 
       default:
-        abort();
+        UNREACHABLE();
+        break;
     }
   }
 
@@ -16534,7 +16667,8 @@ private:
         break;
 
       default:
-        abort();
+        UNREACHABLE();
+        break;
     }
   }
 
@@ -16563,7 +16697,8 @@ private:
         break;
 
       default:
-        abort();
+        UNREACHABLE();
+        break;
     }
   }
 
@@ -16656,7 +16791,8 @@ private:
         break;
 
       default:
-        abort();
+        UNREACHABLE();
+        break;
     }
   }
 
@@ -16685,7 +16821,8 @@ private:
         break;
 
       default:
-        abort();
+        UNREACHABLE();
+        break;
     }
   }
 
@@ -16931,7 +17068,7 @@ private:
         break;
 
       default:
-        abort();
+        UNREACHABLE();
         break;
     }
   }
@@ -17151,7 +17288,8 @@ private:
         break;
 
       default:
-        abort();
+        UNREACHABLE();
+        break;
     }
   }
 
@@ -17535,7 +17673,8 @@ private:
         break;
 
       default:
-        abort();
+        UNREACHABLE();
+        break;
     }
   }
 
@@ -17706,7 +17845,8 @@ private:
         break;
 
       default:
-        abort();
+        UNREACHABLE();
+        break;
     }
   }
 
@@ -17974,11 +18114,15 @@ private:
 
       case 0b11'0:
       case 0b11'1:
+      case 0b00'0: // ?
+      case 0b01'0: // ?
+      case 0b10'0: // ?
         UNDEFINED_DEC();
         break;
 
       default:
-        abort();
+        UNREACHABLE();
+        break;
     }
   }
 
@@ -18128,8 +18272,14 @@ private:
         _DecodeExecute32_LDR_immediate_T3(instr, pc);
         break;
 
+      case 0b11'0: // ?
+      case 0b11'1: // ?
+        UNDEFINED_DEC();
+        break;
+
       default:
-        abort();
+        UNREACHABLE();
+        break;
     }
   }
 
