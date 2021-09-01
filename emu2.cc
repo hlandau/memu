@@ -1064,6 +1064,31 @@ struct IDevice {
  * compile-time removal of branches unrelated to the chosen profile.
  */
 struct SimpleSimulatorConfig {
+  constexpr SimpleSimulatorConfig() = default;
+
+  template<typename T>
+  constexpr SimpleSimulatorConfig(const T &o) {
+    main            = o.HaveMainExt();
+    security        = o.HaveSecurityExt();
+    fpb             = o.HaveFPB();
+    dwt             = o.HaveDWT();
+    itm             = o.HaveITM();
+    fpExt           = o.HaveFPExt();
+    sysTick         = o.SysTick();
+    haltingDebug    = o.HaveHaltingDebug();
+    dspExt          = o.HaveDSPExt();
+    numMpuRegionS   = o.NumMpuRegionS();
+    numMpuRegionNS  = o.NumMpuRegionNS();
+    numSauRegion    = o.NumSauRegion();
+    maxExc          = o.MaxExc();
+    initialVtor     = o.InitialVtor();
+    isaVersion      = o.IsaVersion();
+    systIntFreq     = o.SystIntFreq();
+    systExtFreq     = o.SystExtFreq();
+    priorityBits    = o.PriorityBits();
+    mmfarBfarMerged = o.MmfarBFarMerged();
+  }
+
   bool HaveMainExt() const { return this->main; }
   bool HaveSecurityExt() const { return this->security; }
   bool HaveFPB() const { return this->fpb; }
@@ -1105,6 +1130,124 @@ struct SimpleSimulatorConfig {
   uint64_t  systExtFreq     = 0;            // SysTick frequency when CLKSOURCE=0 (external). 0 to disable.
   uint8_t   priorityBits    = 8;            // Number of priority bits [3, 8]. Ignored for !main.
   bool      mmfarBfarMerged = false;        // Are MMFAR, BFAR merged?
+};
+
+/* CortexMConfigBase {{{2
+ * -----------------
+ */
+struct CortexMConfigBase {
+  constexpr bool HaveSecurityExt() const { return false; }
+  constexpr bool HaveFPExt() const { return false; }
+  constexpr bool HaveDSPExt() const { return false; }
+  constexpr bool HaveHaltingDebug() const { return debug; }
+  constexpr uint8_t NumMpuRegionS() const { return 0; }
+  constexpr uint8_t NumMpuRegionNS() const { return numMpuRegion; }
+  constexpr uint8_t NumSauRegion() const { return 0; }
+  constexpr uint32_t InitialVtor() const { return initialVtor; }
+  constexpr uint64_t SystIntFreq() const { return systIntFreq; }
+  constexpr uint64_t SystExtFreq() const { return systExtFreq; }
+  constexpr bool MmfarBfarMerged() const { return true; }
+
+  bool      debug         = true;
+  bool      dwt           = true;
+  int       sysTick       = 2;
+  uint8_t   numMpuRegion  = NUM_MPU_REGION_NS;
+  int       maxExc        = NUM_EXC-1;
+  uint32_t  initialVtor   = 0;
+  uint64_t  systIntFreq   = 100'000'000;
+  uint64_t  systExtFreq   = 0;
+};
+
+/* CortexM0pConfig {{{2
+ * ---------------
+ */
+struct CortexM0pConfig :CortexMConfigBase {
+  constexpr bool HaveMainExt() const { return false; }
+  constexpr int IsaVersion() const { return 6; }
+  constexpr int SysTick() const { return sysTick > 1 ? 1 : sysTick; }
+  constexpr uint8_t PriorityBits() const { return 2; }
+  constexpr int MaxExc() const { return maxExc > 48 ? 48 : maxExc; }
+  constexpr bool HaveFPB() const { return false; }
+  constexpr bool HaveDWT() const { return debug && dwt; }
+  constexpr bool HaveITM() const { return false; }
+};
+
+/* CortexM3M4ConfigBase {{{2
+ * --------------------
+ */
+struct CortexM3M4ConfigBase :CortexMConfigBase {
+  constexpr bool HaveMainExt() const { return true; }
+  constexpr int IsaVersion() { return 7; }
+  constexpr int SysTick() const { return sysTick > 1 ? 1 : sysTick; }
+  constexpr uint8_t PriorityBits() const { return priorityBits < 3 ? 3 : priorityBits; }
+  constexpr int MaxExc() const { return maxExc > 255 ? 255 : maxExc; }
+  constexpr bool HaveFPB() const { return debug && fpb; }
+  constexpr bool HaveDWT() const { return debug && (dwt || itm); }
+  constexpr bool HaveITM() const { return itm; }
+
+  bool      fpb           = true;
+  bool      itm           = true;
+  uint8_t   priorityBits  = 8;
+};
+
+/* CortexM3Config {{{2
+ * --------------
+ */
+struct CortexM3Config :CortexM3M4ConfigBase {
+};
+
+/* CortexM4Config {{{2
+ * --------------
+ */
+struct CortexM4Config :CortexM3M4ConfigBase {
+  constexpr bool HaveFPExt() const { return fpExt; }
+  constexpr bool HaveDSPExt() const { return dspExt; }
+
+  bool      fpExt         = false;
+  bool      dspExt        = false;
+};
+
+/* CortexM23Config {{{2
+ * ---------------
+ */
+struct CortexM23Config :CortexMConfigBase {
+  constexpr bool HaveMainExt() const { return false; }
+  constexpr bool HaveSecurityExt() const { return security; }
+  constexpr int IsaVersion() { return 8; }
+  constexpr int SysTick() const { return (sysTick > 1 && !HaveSecurityExt()) ? 1 : sysTick; }
+  constexpr uint8_t PriorityBits() const { return 2; }
+  constexpr int MaxExc() const { return maxExc > 255 ? 255 : maxExc; }
+  constexpr bool HaveFPB() const { return debug && fpb; }
+  constexpr bool HaveDWT() const { return debug && (dwt || itm); }
+  constexpr bool HaveITM() const { return itm; }
+
+  bool      security      = true;
+  bool      fpb           = true;
+  bool      itm           = true;
+};
+
+/* CortexM33Config {{{2
+ * ---------------
+ */
+struct CortexM33Config :CortexMConfigBase {
+  constexpr bool HaveMainExt() const { return true; }
+  constexpr bool HaveSecurityExt() const { return security; }
+  constexpr int IsaVersion() { return 8; }
+  constexpr int SysTick() const { return (sysTick > 1 && !HaveSecurityExt()) ? 1 : sysTick; }
+  constexpr uint8_t PriorityBits() const { return priorityBits < 3 ? 3 : priorityBits; }
+  constexpr int MaxExc() const { return maxExc > 496 ? 496 : maxExc; }
+  constexpr bool HaveFPB() const { return debug && fpb; }
+  constexpr bool HaveDWT() const { return debug && (dwt || itm); }
+  constexpr bool HaveITM() const { return itm; }
+  constexpr bool HaveFPExt() const { return fpExt; }
+  constexpr bool HaveDSPExt() const { return dspExt; }
+
+  bool      security      = true;
+  bool      fpb           = true;
+  bool      itm           = true;
+  uint8_t   priorityBits  = 8;
+  bool      fpExt         = false;
+  bool      dspExt        = false;
 };
 
 /* DeadlineCaller {{{2
