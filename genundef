@@ -1,0 +1,11 @@
+#!/bin/sh
+set -euo pipefail
+
+gen() {
+  cat emu2.cc | grep -E '#\s*define' | sed 's/^#\s*define\s\+\([a-zA-Z0-9_]\+\).*$/'"$1"'/'
+}
+
+gen '#undef \1' > memu_mundef.hpp
+gen '#pragma push_macro("\1")' > memu_mpush.hpp
+gen '#pragma pop_macro("\1")' > memu_mpop.hpp
+echo '#include "memu_mundef.hpp"' >> memu_mpush.hpp

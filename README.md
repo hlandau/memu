@@ -23,6 +23,10 @@ won't correspond exactly to ARMv7-M.
 
 [The TODO list can be found here.](https://github.com/hlandau/memu/blob/master/emu2.cc#L56)
 
+The script `genundef` can be used to generate a file which
+pushes/pops/undefines all macros defined in the C++17 file, if you don't want
+these macros to pollute your project.
+
 If you want to use it, I'd suggest emailing me to get some pointers.
 In any case, it's licenced under GPLv3 or, at your option, any later version.
 
